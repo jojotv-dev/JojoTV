@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Nuvio</string>
+    <string name="app_name">JojoTV</string>
     <string name="tv_channel_continue_watching">继续观看</string>
     <string name="type_movie">电影</string>
     <string name="type_movies">电影</string>
@@ -100,7 +100,7 @@
     <!-- HomeScreen -->
     <string name="home_no_addons">没有安装插件。请添加一个开始使用。</string>
     <string name="home_no_catalog_addons">没有安装目录插件。请安装一个目录插件以查看内容。</string>
-    <string name="auth_notice_nuvio_logged_out">您已退出 Nuvio 账号。请重新登录。</string>
+    <string name="auth_notice_nuvio_logged_out">您已退出 JojoTV 账号。请重新登录。</string>
     <string name="auth_notice_trakt_logged_out">您已退出 Trakt。请重新连接。</string>
     <string name="error_generic">发生错误</string>
 
@@ -350,22 +350,22 @@
     <string name="about_licenses_attributions">许可与致谢</string>
     <string name="about_licenses_attributions_subtitle">数据来源、致谢和 Android 许可</string>
     <string name="licenses_attributions_title">许可与致谢</string>
-    <string name="licenses_attributions_subtitle">Nuvio TV 使用的数据提供商、服务致谢和 Android 播放许可。</string>
+    <string name="licenses_attributions_subtitle">JojoTV 使用的数据提供商、服务致谢和 Android 播放许可。</string>
     <string name="licenses_attributions_section_app">应用许可</string>
     <string name="licenses_attributions_section_data">数据与服务</string>
     <string name="licenses_attributions_section_playback">ANDROID 播放许可</string>
-    <string name="licenses_attributions_nuvio_title">Nuvio TV</string>
+    <string name="licenses_attributions_nuvio_title">JojoTV</string>
     <string name="licenses_attributions_nuvio_body">源代码和许可条款可在项目仓库中找到。根据 GNU 通用公共许可证 v3.0 授权。</string>
     <string name="licenses_attributions_tmdb_title">The Movie Database (TMDB)</string>
-    <string name="licenses_attributions_tmdb_body">Nuvio 使用 TMDB API 获取电影和电视剧元数据、海报、预告片、演员、制作详情、合集和推荐。本产品使用 TMDB API，但未获得 TMDB 的认可或认证。</string>
+    <string name="licenses_attributions_tmdb_body">JojoTV 使用 TMDB API 获取电影和电视剧元数据、海报、预告片、演员、制作详情、合集和推荐。本产品使用 TMDB API，但未获得 TMDB 的认可或认证。</string>
     <string name="licenses_attributions_trakt_title">Trakt</string>
-    <string name="licenses_attributions_trakt_body">Nuvio 连接 Trakt 以进行账号认证、观看历史、进度同步、收藏数据、评分、列表和评论。Nuvio 与 Trakt 无隶属关系，也未获得其认可。</string>
+    <string name="licenses_attributions_trakt_body">JojoTV 连接 Trakt 以进行账号认证、观看历史、进度同步、收藏数据、评分、列表和评论。JojoTV 与 Trakt 无隶属关系，也未获得其认可。</string>
     <string name="licenses_attributions_mdblist_title">MDBList</string>
-    <string name="licenses_attributions_mdblist_body">Nuvio 使用 MDBList 获取评分和外部评分数据。Nuvio 与 MDBList 无隶属关系，也未获得其认可。</string>
+    <string name="licenses_attributions_mdblist_body">JojoTV 使用 MDBList 获取评分和外部评分数据。JojoTV 与 MDBList 无隶属关系，也未获得其认可。</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
-    <string name="licenses_attributions_introdb_body">Nuvio 使用 IntroDB API 获取社区提供的片头、回顾、片尾和预览时间戳，用于跳过控制。Nuvio 与 IntroDB 无隶属关系，也未获得其认可。</string>
+    <string name="licenses_attributions_introdb_body">JojoTV 使用 IntroDB API 获取社区提供的片头、回顾、片尾和预览时间戳，用于跳过控制。JojoTV 与 IntroDB 无隶属关系，也未获得其认可。</string>
     <string name="licenses_attributions_imdb_title">IMDb 非商业数据集</string>
-    <string name="licenses_attributions_imdb_body">Nuvio 使用 IMDb 非商业数据集（包括 title.ratings.tsv.gz）获取 IMDb 评分和投票数。信息由 IMDb 提供[](https://www.imdb.com)。经许可用于个人和非商业用途。</string>
+    <string name="licenses_attributions_imdb_body">JojoTV 使用 IMDb 非商业数据集（包括 title.ratings.tsv.gz）获取 IMDb 评分和投票数。信息由 IMDb 提供[](https://www.imdb.com)。经许可用于个人和非商业用途。</string>
     <string name="licenses_attributions_exoplayer_title">AndroidX Media3 ExoPlayer 1.8.0</string>
     <string name="licenses_attributions_exoplayer_body">用作 Android 播放引擎。根据 Apache License 2.0 许可。</string>
     <string name="licenses_attributions_libmpv_title">libmpv / libmpv-android</string>
@@ -393,7 +393,7 @@
     <string name="settings_advanced_subtitle">性能、导航、缓存和诊断</string>
     <string name="experience_mode_essential">基础模式</string>
     <string name="experience_mode_advanced">高级模式</string>
-    <string name="experience_mode_choose_title">选择您的 Nuvio 体验</string>
+    <string name="experience_mode_choose_title">选择您的 JojoTV 体验</string>
     <string name="experience_mode_choose_subtitle">从简单开始或解锁全部自定义。您随时可以切换。</string>
     <string name="experience_mode_essential_card_subtitle">专注设置、插件、基础播放、Trakt 和账号设置。</string>
     <string name="experience_mode_advanced_card_subtitle">完整设置、布局控制、目录排序、合集、插件和诊断。</string>
@@ -473,8 +473,8 @@
     <string name="advanced_section_cache">缓存</string>
     <string name="advanced_fast_horizontal_navigation">快速水平导航</string>
     <string name="advanced_fast_horizontal_navigation_subtitle">在行中提高方向键重复速度，同时保持重复节流。</string>
-    <string name="advanced_nuvio_focus_scroll">Nuvio 焦点滚动</string>
-    <string name="advanced_nuvio_focus_scroll_subtitle">使用 Nuvio 自定义全局焦点滚动动画和定位。</string>
+    <string name="advanced_nuvio_focus_scroll">JojoTV 焦点滚动</string>
+    <string name="advanced_nuvio_focus_scroll_subtitle">使用 JojoTV 自定义全局焦点滚动动画和定位。</string>
     <string name="advanced_memory_only_vertical_scroll">仅内存垂直滚动</string>
     <string name="advanced_memory_only_vertical_scroll_subtitle">垂直滚动首页行时跳过磁盘和网络图片请求。</string>
     <string name="advanced_compose_highlighter">Compose 高亮器</string>
@@ -513,12 +513,12 @@
 
     <!-- SupportersContributorsScreen -->
     <string name="supporters_contributors_title">支持者与贡献者</string>
-    <string name="supporters_contributors_subtitle">支持 Nuvio 并参与构建它的人。</string>
+    <string name="supporters_contributors_subtitle">支持 JojoTV 并参与构建它的人。</string>
     <string name="supporters_contributors_supporters_copy">支持者和捐赠者帮助项目持续发展、资助基础设施，并为雄心勃勃的功能腾出空间。</string>
-    <string name="supporters_contributors_donate_copy">Nuvio 将保持免费和开源。如果您想支持项目，可以帮助承担背后的时间和基础设施成本。</string>
-    <string name="supporters_contributors_donate_button">捐赠 Nuvio</string>
+    <string name="supporters_contributors_donate_copy">JojoTV 将保持免费和开源。如果您想支持项目，可以帮助承担背后的时间和基础设施成本。</string>
+    <string name="supporters_contributors_donate_button">捐赠 JojoTV</string>
     <string name="supporters_contributors_qr_title">扫码捐赠</string>
-    <string name="supporters_contributors_qr_subtitle">在手机上打开链接，通过 Ko-fi 支持 Nuvio。</string>
+    <string name="supporters_contributors_qr_subtitle">在手机上打开链接，通过 Ko-fi 支持 JojoTV。</string>
     <string name="supporters_contributors_qr_hint">将相机对准二维码或使用下方按钮。</string>
     <string name="supporters_contributors_back_button">返回详情</string>
     <string name="supporters_tab">支持者</string>
@@ -532,7 +532,7 @@
     <string name="sponsors_loading">加载赞助商…</string>
     <string name="sponsors_empty">暂无赞助商。</string>
     <string name="sponsors_error_title">无法加载赞助商</string>
-    <string name="sponsors_detail_copy">赞助商通过支持不同开发部分帮助 Nuvio 前进。</string>
+    <string name="sponsors_detail_copy">赞助商通过支持不同开发部分帮助 JojoTV 前进。</string>
     <string name="sponsors_channel_unavailable">赞助频道不可用。</string>
     <string name="sponsors_open_channel">打开赞助频道</string>
     <string name="contributors_loading">加载 GitHub 贡献者…</string>
@@ -603,8 +603,8 @@
     <string name="playback_player_ask_desc">每次选择播放器</string>
     <string name="playback_player_auto">自动（最优）</string>
     <string name="playback_player_auto_desc">电影 &amp; 电视剧用 ExoPlayer · 动漫用 MPV</string>
-    <string name="playback_engine_exoplayer_desc">与当前 Nuvio 功能兼容性最佳。</string>
-    <string name="playback_engine_mvplayer_desc">使用 libmpv 并带有 Nuvio OSD 控制。实验性。</string>
+    <string name="playback_engine_exoplayer_desc">与当前 JojoTV 功能兼容性最佳。</string>
+    <string name="playback_engine_mvplayer_desc">使用 libmpv 并带有 JojoTV OSD 控制。实验性。</string>
 
     <!-- PlaybackAudioSettings -->
     <string name="audio_trailer_section">预告片</string>
@@ -1032,21 +1032,21 @@
     <string name="trakt_watch_progress_title">观看进度</string>
     <string name="trakt_watch_progress_subtitle">选择继续观看和恢复播放使用哪个进度源</string>
     <string name="trakt_watch_progress_dialog_title">观看进度</string>
-    <string name="trakt_watch_progress_dialog_subtitle">选择继续观看和恢复播放应使用 Trakt 还是 Nuvio Sync（Trakt 打点仍保持开启）。</string>
+    <string name="trakt_watch_progress_dialog_subtitle">选择继续观看和恢复播放应使用 Trakt 还是 JojoTV Sync（Trakt 打点仍保持开启）。</string>
     <string name="trakt_watch_progress_source_trakt">Trakt</string>
-    <string name="trakt_watch_progress_source_nuvio">Nuvio Sync</string>
+    <string name="trakt_watch_progress_source_nuvio">JojoTV Sync</string>
     <string name="trakt_library_source_title">收藏来源</string>
     <string name="trakt_library_source_subtitle">选择保存和查看收藏的位置</string>
     <string name="trakt_library_source_dialog_title">收藏来源</string>
     <string name="trakt_library_source_dialog_subtitle">选择保存和管理收藏项目的位置</string>
     <string name="trakt_library_source_trakt">Trakt</string>
-    <string name="trakt_library_source_nuvio">Nuvio 收藏</string>
+    <string name="trakt_library_source_nuvio">JojoTV 收藏</string>
     <string name="trakt_library_source_trakt_selected">已选择 Trakt 收藏</string>
-    <string name="trakt_library_source_nuvio_selected">已选择 Nuvio 收藏</string>
+    <string name="trakt_library_source_nuvio_selected">已选择 JojoTV 收藏</string>
     <string name="trakt_setting_on">开启</string>
     <string name="trakt_setting_off">关闭</string>
     <string name="trakt_watch_progress_trakt_selected">观看进度源设置为 Trakt</string>
-    <string name="trakt_watch_progress_nuvio_selected">观看进度源设置为 Nuvio Sync</string>
+    <string name="trakt_watch_progress_nuvio_selected">观看进度源设置为 JojoTV Sync</string>
     <string name="trakt_continue_watching_window">继续观看窗口</string>
     <string name="trakt_continue_watching_subtitle">Trakt 历史记录用于继续观看</string>
     <string name="trakt_unaired_next_up">未播出的下一集</string>
@@ -1074,7 +1074,7 @@
     <string name="trakt_stat_watched_hours">观看时长</string>
     <string name="trakt_disconnect">断开连接</string>
     <string name="trakt_disconnect_title">断开 Trakt？</string>
-    <string name="trakt_disconnect_subtitle">这将断开您的 Trakt 账号与 Nuvio 的连接。</string>
+    <string name="trakt_disconnect_subtitle">这将断开您的 Trakt 账号与 JojoTV 的连接。</string>
     <string name="trakt_login">登录</string>
     <string name="trakt_retry">重试</string>
     <string name="trakt_back">返回</string>
@@ -1140,7 +1140,7 @@
     <string name="profile_addons">插件</string>
     <string name="profile_plugins">插件</string>
     <string name="profile_choose_avatar">选择头像</string>
-    <string name="profile_custom_avatar_web_panel_note">自定义头像 URL 可在 Nuvio 网页面板中配置。</string>
+    <string name="profile_custom_avatar_web_panel_note">自定义头像 URL 可在 JojoTV 网页面板中配置。</string>
     <string name="profile_avatar_none_selected">未选择头像</string>
     <string name="profile_avatar_focus_hint">聚焦头像可查看名称</string>
     <string name="profile_avatar_category_all">全部</string>
@@ -1183,7 +1183,7 @@
     <string name="profile_pin_overlay_set_support">打开此资料前需要此 PIN。</string>
     <string name="profile_pin_overlay_confirm_support">重新输入相同的 4 位数字以完成设置。</string>
     <string name="profile_pin_overlay_mismatch">PIN 不匹配。请重新输入新 PIN。</string>
-    <string name="profile_pin_overlay_forgot_hint">忘记 PIN？可在 nuvio 网站通过账号重置。</string>
+    <string name="profile_pin_overlay_forgot_hint">忘记 PIN？可在 jojotv 网站通过账号重置。</string>
     <string name="profile_pin_overlay_back_hint">按返回取消</string>
 
 
@@ -1257,7 +1257,7 @@
     <string name="stream_type_torrent">种子</string>
     <string name="stream_type_youtube">YouTube</string>
     <string name="p2p_consent_title">P2P 串流</string>
-    <string name="p2p_consent_body">此源使用点对点 (P2P) 技术。启用 P2P 即表示您同意：\n\n• 您的 IP 地址对网络中的其他节点可见\n• 您对访问的内容承担全部责任\n• 您确认在您的司法管辖区有权串流此内容\n• Nuvio 不托管、分发或控制任何 P2P 内容\n• Nuvio 对您使用 P2P 串流产生的任何法律后果不承担责任\n\n您使用此功能完全自担风险。可随时在设置中禁用 P2P。</string>
+    <string name="p2p_consent_body">此源使用点对点 (P2P) 技术。启用 P2P 即表示您同意：\n\n• 您的 IP 地址对网络中的其他节点可见\n• 您对访问的内容承担全部责任\n• 您确认在您的司法管辖区有权串流此内容\n• JojoTV 不托管、分发或控制任何 P2P 内容\n• JojoTV 对您使用 P2P 串流产生的任何法律后果不承担责任\n\n您使用此功能完全自担风险。可随时在设置中禁用 P2P。</string>
     <string name="p2p_consent_enable">启用 P2P</string>
     <string name="p2p_consent_cancel">取消</string>
     <string name="settings_p2p_title">P2P 串流</string>
@@ -1535,7 +1535,7 @@
     <string name="library_delete_subtitle">这将从 Trakt 删除列表及所有列表项目。</string>
     <string name="library_delete_confirm">删除</string>
     <string name="library_source_local">本地</string>
-    <string name="library_source_nuvio">NUVIO</string>
+    <string name="library_source_nuvio">JOJOTV</string>
     <string name="library_source_trakt">TRAKT</string>
     <string name="library_watchlist">想看列表</string>
     <string name="library_syncing_library">正在同步收藏…</string>
@@ -1663,7 +1663,7 @@
     <string name="catalog_see_all_empty_subtitle">尝试其他目录或稍后再来</string>
 
     <!-- LayoutSelectionScreen -->
-    <string name="layout_selection_welcome">欢迎使用 Nuvio</string>
+    <string name="layout_selection_welcome">欢迎使用 JojoTV</string>
     <string name="layout_selection_subtitle">选择您的首页布局</string>
     <string name="layout_selection_continue">继续</string>
 
@@ -1675,7 +1675,7 @@
     <string name="update_unknown_sources">允许未知来源安装以继续。</string>
     <!-- AccountScreen -->
     <string name="account_title">账号</string>
-    <string name="account_sign_in_description">登录以在设备间同步您的收藏、观看进度、插件和插件。未连接 Trakt 时，收藏同步使用 Nuvio Sync，观看进度可使用 Trakt 或 Nuvio Sync。</string>
+    <string name="account_sign_in_description">登录以在设备间同步您的收藏、观看进度、插件和插件。未连接 Trakt 时，收藏同步使用 JojoTV Sync，观看进度可使用 Trakt 或 JojoTV Sync。</string>
     <string name="account_sync_code_title">同步码</string>
     <string name="account_sync_code_description">无需创建账号即可跨设备同步。</string>
     <string name="account_linked_devices">已关联设备 (%1$d)</string>
@@ -1879,7 +1879,7 @@
     <string name="cd_preview">预览</string>
     <string name="cd_test">测试</string>
     <string name="cd_unlink">取消关联</string>
-    <string name="cd_nuvio_logo">NuvioTV</string>
+    <string name="cd_nuvio_logo">JojoTV</string>
     <string name="cd_trakt_logo">Trakt 标志</string>
     <string name="cd_trakt_qr">Trakt 激活二维码</string>
     <string name="cd_imdb">IMDb</string>
@@ -1890,7 +1890,7 @@
     <string name="cd_expand">展开 %1$s</string>
     <string name="cd_collapse">折叠 %1$s</string>
     <string name="cd_qr_login">QR 登录码</string>
-    <string name="cd_nuvio">Nuvio</string>
+    <string name="cd_nuvio">JojoTV</string>
 
     <!-- Debug -->
     <string name="debug_signin_success">登录成功</string>
@@ -1926,7 +1926,7 @@
     <string name="collections_paste_clipboard">从剪贴板粘贴</string>
     <string name="collections_validate">验证</string>
     <string name="collections_paste_hint">在此粘贴合集 JSON…</string>
-    <string name="collections_file_description">读取下载文件夹中的 nuvio-collections.json。</string>
+    <string name="collections_file_description">读取下载文件夹中的 jojotv-collections.json。</string>
     <string name="collections_load_file">加载文件</string>
     <string name="collections_file_loaded">文件已加载 (%1$d 字符)</string>
     <string name="collections_fetch_url">获取 URL</string>
@@ -2033,7 +2033,7 @@
     <string name="collections_editor_tmdb_list_helper">示例：https://www.themoviedb.org/list/8504994 或 8504994。</string>
     <string name="collections_editor_tmdb_person_id">人物 ID</string>
     <string name="collections_editor_tmdb_person_helper">示例：https://www.themoviedb.org/person/31-tom-hanks 或 31。</string>
-    <string name="collections_editor_tmdb_title_helper">作为行/标签名称显示。若留空，Nuvio 将根据来源自动生成。</string>
+    <string name="collections_editor_tmdb_title_helper">作为行/标签名称显示。若留空，JojoTV 将根据来源自动生成。</string>
     <string name="collections_editor_tmdb_quick_genres">快速类型</string>
     <string name="collections_editor_tmdb_quick_languages">快速语言</string>
     <string name="collections_editor_tmdb_quick_countries">快速国家</string>
@@ -2206,7 +2206,7 @@
     <string name="autoplay_regex_preset_no_remux_hdr">无 REMUX/HDR</string>
 
     <!-- Playback settings sections -->
-    <string name="playback_player_internal_desc">使用 NuvioTV 内置播放器</string>
+    <string name="playback_player_internal_desc">使用 JojoTV 内置播放器</string>
 
     <!-- Player runtime: torrent overlay + tracks -->
     <string name="player_torrent_peer_info">%1$d 种子 · %2$d 节点</string>

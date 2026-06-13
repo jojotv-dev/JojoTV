@@ -39,9 +39,9 @@ internal object PlayerPlaybackNetworking {
             .dns(IPv4FirstDns())
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
             .hostnameVerifier(playbackHostnameVerifier)
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .writeTimeout(15, TimeUnit.SECONDS)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
@@ -50,40 +50,44 @@ internal object PlayerPlaybackNetworking {
 
     @OptIn(UnstableApi::class)
     fun createHttpDataSourceFactory(defaultHeaders: Map<String, String> = emptyMap()): DataSource.Factory {
-        val client = if (defaultHeaders.any { it.key.equals("Authorization", ignoreCase = true) }) {
-            // OkHttp strips the Authorization header on cross-host redirects.
-            // WebDAV servers behind reverse proxies commonly redirect to a
-            // different host/port, causing auth to be lost. A network
-            // interceptor ensures the header is always present on every
-            // outgoing request — same behavior as mpv/curl.
-            val authValue = defaultHeaders.entries
-                .first { it.key.equals("Authorization", ignoreCase = true) }
-                .value
+        val stickyHeaders = defaultHeaders.filterKeys { key ->
+            key.equals("Authorization", ignoreCase = true) ||
+                key.equals("X-Fbx-App-Auth", ignoreCase = true) ||
+                key.equals("Cookie", ignoreCase = true)
+        }
+        val client = if (stickyHeaders.isNotEmpty()) {
+            // Some servers/redirects drop auth/session headers. Reapply the
+            // sensitive playback headers to every network request, which is
+            // closer to Kodi/mpv behavior for direct NAS/Freebox playback.
             playbackHttpClient.newBuilder()
                 .addNetworkInterceptor { chain ->
                     val request = chain.request()
-                    if (request.header("Authorization") == null) {
-                        chain.proceed(
-                            request.newBuilder()
-                                .header("Authorization", authValue)
-                                .build()
-                        )
-                    } else {
-                        chain.proceed(request)
+                    val builder = request.newBuilder()
+                    stickyHeaders.forEach { (name, value) ->
+                        if (request.header(name) == null) {
+                            builder.header(name, value)
+                        }
                     }
+                    chain.proceed(builder.build())
                 }
                 .build()
         } else {
             playbackHttpClient
         }
         return OkHttpDataSource.Factory(client).apply {
-            setDefaultRequestProperties(defaultHeaders)
+            setDefaultRequestProperties(defaultHeaders + defaultPlaybackHeaders(defaultHeaders))
             if (defaultHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {
                 setUserAgent(PlayerMediaSourceFactory.DEFAULT_USER_AGENT)
             }
         }
     }
 
+    private fun defaultPlaybackHeaders(headers: Map<String, String>): Map<String, String> {
+        val result = LinkedHashMap<String, String>()
+        if (headers.none { it.key.equals("Accept", ignoreCase = true) }) result["Accept"] = "*/*"
+        if (headers.none { it.key.equals("Connection", ignoreCase = true) }) result["Connection"] = "keep-alive"
+        return result
+    }
     @OptIn(UnstableApi::class)
     fun createDataSourceFactory(
         context: android.content.Context,

@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.collection
+﻿package com.nuvio.tv.ui.screens.collection
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box

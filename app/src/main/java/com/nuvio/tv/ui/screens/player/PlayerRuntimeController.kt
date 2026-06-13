@@ -163,6 +163,11 @@ class PlayerRuntimeController(
     internal val rememberedAudioLanguage: String? = navigationArgs.rememberedAudioLanguage
     internal val rememberedAudioName: String? = navigationArgs.rememberedAudioName
     internal val mediaSourceFactory = PlayerMediaSourceFactory(context.applicationContext)
+    internal var freeboxTokenRefresher: (suspend () -> Map<String, String>?)? = null
+    internal val isFreeboxPlayback: Boolean
+        get() = contentType.equals("freebox", ignoreCase = true) ||
+            currentHeaders.keys.any { it.equals("X-Fbx-App-Auth", ignoreCase = true) } ||
+            (currentStreamUrl.contains("/api/v", ignoreCase = true) && currentStreamUrl.contains("/dl/", ignoreCase = true))
 
     internal var currentVideoHash: String? = navigationArgs.videoHash
     internal var currentVideoSize: Long? = navigationArgs.videoSize
@@ -200,6 +205,7 @@ class PlayerRuntimeController(
     fun getCurrentHeaders(): Map<String, String> = currentHeaders
 
     fun stopAndRelease() {
+        initialPlaybackStarted = false
         releasePlayer()
     }
 

@@ -1,4 +1,4 @@
-package com.nuvio.tv
+﻿package com.nuvio.tv
 
 import android.content.Context
 import android.content.res.Configuration
@@ -28,6 +28,7 @@ import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -41,10 +42,24 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Subscriptions
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -93,7 +108,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.os.ConfigurationCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import androidx.metrics.performance.JankStats
 import androidx.metrics.performance.PerformanceMetricsState
@@ -114,13 +128,16 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import com.nuvio.tv.R
 import com.nuvio.tv.core.auth.AuthManager
-import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.sync.ProfileSettingsSyncService
 import com.nuvio.tv.core.sync.ProfileSyncService
 import com.nuvio.tv.core.sync.StartupSyncService
 import com.nuvio.tv.data.local.AppOnboardingDataStore
 import com.nuvio.tv.data.local.ExperienceModeDataStore
+import com.nuvio.tv.data.local.FreeboxConnectionSettings
+import com.nuvio.tv.data.local.FreeboxSettingsDataStore
+import com.nuvio.tv.data.local.IptvSettingsDataStore
+import com.nuvio.tv.data.local.IptvSidebarSettings
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.ThemeDataStore
 import com.nuvio.tv.data.remote.supabase.AvatarRepository
@@ -143,8 +160,11 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.util.LocalFastHorizontalNavigationEnabled
 import com.nuvio.tv.ui.util.LocalRecompositionHighlighterEnabled
 import com.nuvio.tv.ui.util.rememberDrawerItemFocusRequesters
-import com.nuvio.tv.updater.UpdateViewModel
-import com.nuvio.tv.updater.ui.UpdatePromptDialog
+import android.app.Activity
+import android.provider.DocumentsContract
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import com.nuvio.tv.ui.screens.iptv.IptvRecordingViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.haze
@@ -157,8 +177,31 @@ import kotlinx.coroutines.launch
 
 val LocalSidebarExpanded = compositionLocalOf { false }
 val LocalContentFocusRequester = compositionLocalOf { FocusRequester.Default }
+val LocalPickFolderLauncher = compositionLocalOf<(() -> Unit)> { {} }
 
 private const val SIDEBAR_AUTO_COLLAPSE_DELAY_MS = 4_000L
+private fun normalizedSidebarFolderName(folderName: String): String =
+    folderName.trim().lowercase(Locale.ROOT)
+
+private fun freeboxSidebarFolderOrder(folderName: String): Int {
+    val name = normalizedSidebarFolderName(folderName)
+    return when {
+        "vid" in name -> 0
+        "photo" in name -> 1
+        else -> 2
+    }
+}
+
+private fun freeboxSidebarFolderIcon(folderName: String): ImageVector {
+    val name = normalizedSidebarFolderName(folderName)
+    return when {
+        "photo" in name -> Icons.Default.PhotoLibrary
+        "vid" in name -> Icons.Default.VideoLibrary
+        "serie" in name || "s\u00E9rie" in name -> Icons.Default.Subscriptions
+        "enregistrement" in name -> Icons.Default.Schedule
+        else -> Icons.Default.FolderOpen
+    }
+}
 
 data class DrawerItem(
     val route: String,
@@ -193,6 +236,11 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var layoutPreferenceDataStore: LayoutPreferenceDataStore
+
+    @Inject
+    lateinit var freeboxSettingsDataStore: FreeboxSettingsDataStore
+    @Inject
+    lateinit var iptvSettingsDataStore: IptvSettingsDataStore
 
     @Inject
     lateinit var experienceModeDataStore: ExperienceModeDataStore
@@ -244,6 +292,25 @@ class MainActivity : ComponentActivity() {
     }
 
     /** True until the first onResume after onCreate completes. */
+    private val recordingViewModel: IptvRecordingViewModel by viewModels()
+
+    private val folderPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            val displayName = uri.lastPathSegment
+                ?.substringAfterLast(":")
+                ?.substringAfterLast("/")
+                ?: uri.toString()
+            recordingViewModel.updateStorageFolder(uri.toString(), displayName)
+        }
+    }
+
     private var isFirstResumeAfterCreate = false
 
     @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -257,7 +324,7 @@ class MainActivity : ComponentActivity() {
             config.setLocale(locale)
             super.attachBaseContext(newBase.createConfigurationContext(config))
         } else {
-            // Cache not ready yet (very early cold start) — use system locale
+            // Cache not ready yet (very early cold start) - use system locale
             // The IO coroutine in Application.onCreate will finish before any activity
             // is usually created, but if not, we just use system locale until next launch
             super.attachBaseContext(newBase)
@@ -430,7 +497,8 @@ class MainActivity : ComponentActivity() {
                     LocalBringIntoViewSpec provides bringIntoViewSpec,
                     LocalFastHorizontalNavigationEnabled provides mainUiPrefs.fastHorizontalNavigationEnabled,
                     LocalRecompositionHighlighterEnabled provides (BuildConfig.IS_DEBUG_BUILD && mainUiPrefs.composeHighlighterEnabled),
-                    com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool
+                    com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool,
+                    LocalPickFolderLauncher provides { folderPickerLauncher.launch(null) }
                 ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -589,13 +657,35 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    val rootRoutes = remember(discoverLocation) {
-                        buildSet {
+                    val freeboxSettings by freeboxSettingsDataStore.settings.collectAsState(initial = FreeboxConnectionSettings())
+                    val showFreeboxInSidebar = freeboxSettings.hasSavedConnection && freeboxSettings.showInSidebar
+                    val freeboxSidebarFolders = remember(freeboxSettings.sidebarServerFolders) {
+                        freeboxSettings.sidebarServerFolders.toList()
+                            .sortedWith(compareBy<String> { freeboxSidebarFolderOrder(it) }.thenBy(String.CASE_INSENSITIVE_ORDER) { it })
+                    }
+
+                    val iptvSettings by iptvSettingsDataStore.settings.collectAsState(initial = IptvSidebarSettings())
+                    val showIptvLiveTvInSidebar = iptvSettings.showLiveTvInSidebar
+                    val showIptvMoviesInSidebar = iptvSettings.showMoviesInSidebar
+                    val showIptvSeriesInSidebar = iptvSettings.showSeriesInSidebar
+                    val showIptvRecordingsInSidebar = iptvSettings.showRecordingsInSidebar
+
+                    val rootRoutes = remember(discoverLocation, showFreeboxInSidebar, freeboxSidebarFolders) {
+                        buildSet<String> {
                             add(Screen.Home.route)
-                            add(Screen.Search.route)
-                            add(Screen.Library.route)
+                            add(Screen.IptvHome.route)
+                            if (showIptvLiveTvInSidebar) add(Screen.IptvLiveProviders.route)
+                            if (showIptvMoviesInSidebar) add(Screen.IptvMovieProviders.route)
+                            if (showIptvSeriesInSidebar) add(Screen.IptvSeriesProviders.route)
+
+                            add(Screen.Explorer.route)
+                            if (showFreeboxInSidebar) {
+                                add(Screen.Freebox.route)
+                                if (freeboxSidebarFolders.isNotEmpty()) {
+                                    add(Screen.FreeboxFolder.route)
+                                }
+                            }
                             add(Screen.Settings.route)
-                            add(Screen.AddonManager.route)
                             if (discoverLocation == DiscoverLocation.IN_SIDEBAR) {
                                 add(Screen.Discover.route)
                             }
@@ -605,17 +695,37 @@ class MainActivity : ComponentActivity() {
                     val strNavHome = stringResource(R.string.nav_home)
                     val strNavDiscover = stringResource(R.string.nav_discover)
                     val strNavSearch = stringResource(R.string.nav_search)
-                    val strNavLibrary = stringResource(R.string.nav_library)
-                    val strNavAddons = stringResource(R.string.nav_addons)
+                    val strNavExplorer = stringResource(R.string.nav_explorer)
+                    val strNavFreebox = stringResource(R.string.nav_freebox)
                     val strNavSettings = stringResource(R.string.nav_settings)
+                    val strNavFavorites = "Favoris"
+                    val strNavIptv = "IPTV"
+                    val strNavIptvTivi = "Live TV"
+                    val strNavFavoritesLiveTv = "Live TV"
+                    val strNavFavoritesMovies = "Films"
+                    val strNavFavoritesSeries = "S\u00E9ries"
+
+
+
+
                     val drawerItems = remember(
                         strNavHome,
                         strNavDiscover,
                         strNavSearch,
-                        strNavLibrary,
-                        strNavAddons,
+                        strNavExplorer,
+                        strNavFreebox,
                         strNavSettings,
-                        discoverLocation
+                        strNavFavorites,
+                        
+                        strNavIptv,
+                        strNavIptvTivi,
+                        discoverLocation,
+                        showFreeboxInSidebar,
+                        freeboxSidebarFolders,
+                        showIptvLiveTvInSidebar,
+                        showIptvMoviesInSidebar,
+                        showIptvSeriesInSidebar,
+                        showIptvRecordingsInSidebar
                     ) {
                         buildList {
                             add(
@@ -643,16 +753,61 @@ class MainActivity : ComponentActivity() {
                             )
                             add(
                                 DrawerItem(
-                                    route = Screen.Library.route,
-                                    label = strNavLibrary,
-                                    iconRes = R.raw.sidebar_library
+                                    route = Screen.IptvHome.route,
+                                    label = strNavIptv,
+                                    icon = Icons.Default.Subscriptions
                                 )
                             )
+                            if (showIptvLiveTvInSidebar) {
+                                add(
+                                    DrawerItem(
+                                        route = Screen.IptvLiveProviders.route,
+                                        label = strNavFavoritesLiveTv,
+                                        icon = Icons.Default.Tv
+                                    )
+                                )
+                            }
+                            if (showIptvMoviesInSidebar) {
+                                add(
+                                    DrawerItem(
+                                        route = Screen.IptvMovieProviders.route,
+                                        label = strNavFavoritesMovies,
+                                        icon = Icons.Default.Movie
+                                    )
+                                )
+                            }
+                            if (showIptvSeriesInSidebar) {
+                                add(
+                                    DrawerItem(
+                                        route = Screen.IptvSeriesProviders.route,
+                                        label = strNavFavoritesSeries,
+                                        icon = Icons.Default.Subscriptions
+                                    )
+                                )
+                            }
+                            if (showFreeboxInSidebar) {
+                                add(
+                                    DrawerItem(
+                                        route = Screen.Freebox.route,
+                                        label = strNavFreebox,
+                                        icon = Icons.Default.Storage
+                                    )
+                                )
+                                freeboxSidebarFolders.forEach { folderName ->
+                                    add(
+                                        DrawerItem(
+                                            route = Screen.FreeboxFolder.createRoute(folderName),
+                                            label = folderName,
+                                            icon = freeboxSidebarFolderIcon(folderName)
+                                        )
+                                    )
+                                }
+                            }
                             add(
                                 DrawerItem(
-                                    route = Screen.AddonManager.route,
-                                    label = strNavAddons,
-                                    iconRes = R.raw.sidebar_plugin
+                                    route = Screen.Explorer.route,
+                                    label = strNavExplorer,
+                                    icon = Icons.Default.FolderOpen
                                 )
                             )
                             add(
@@ -664,9 +819,12 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     }
-                    val selectedDrawerRoute = drawerItems.firstOrNull { item ->
-                        currentRoute == item.route || currentRoute?.startsWith("${item.route}/") == true
-                    }?.route
+                    val selectedDrawerRoute = when (currentRoute) {
+                        Screen.FreeboxFolder.route -> Screen.Freebox.route
+                        else -> drawerItems.firstOrNull { item ->
+                            currentRoute == item.route || currentRoute?.startsWith("${item.route}/") == true
+                        }?.route
+                    }
                     val selectedDrawerItem = drawerItems.firstOrNull { it.route == selectedDrawerRoute } ?: drawerItems.first()
 
                     if (modernSidebarEnabled) {
@@ -715,18 +873,6 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    if (AppFeaturePolicy.inAppUpdatesEnabled && !BuildConfig.IS_DEBUG_BUILD) {
-                        val updateViewModel: UpdateViewModel = hiltViewModel(this@MainActivity)
-                        val updateState by updateViewModel.uiState.collectAsState()
-                        UpdatePromptDialog(
-                            state = updateState,
-                            onDismiss = { updateViewModel.dismissDialog() },
-                            onDownload = { updateViewModel.downloadUpdate() },
-                            onInstall = { updateViewModel.installUpdateOrRequestPermission() },
-                            onIgnore = { updateViewModel.ignoreThisVersion() },
-                            onOpenUnknownSources = { updateViewModel.openUnknownSourcesSettings() }
-                        )
-                    }
                 }
             }
             }
@@ -830,7 +976,7 @@ private fun LegacySidebarScaffold(
 
     val closedDrawerWidth = if (sidebarCollapsed) 0.dp else 72.dp
     val openDrawerWidth = 196.dp
-    val openDrawerItemWidth = 148.dp
+    val openDrawerItemWidth = 156.dp
 
     val focusManager = LocalFocusManager.current
     val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
@@ -844,15 +990,16 @@ private fun LegacySidebarScaffold(
     // Auto-close the legacy drawer after a short period of inactivity, mirroring
     // the modern sidebar behaviour. The timer resets every time the user
     // navigates inside the drawer (legacyDrawerInteractionVersion change).
+    val iptvTiviRoutes = setOf(Screen.IptvLiveProviders.route, Screen.IptvMovieProviders.route, Screen.IptvSeriesProviders.route)
     LaunchedEffect(drawerState.currentValue, legacyDrawerInteractionVersion, showSidebar) {
         if (!showSidebar || drawerState.currentValue != DrawerValue.Open) {
             return@LaunchedEffect
         }
+        if (currentRoute in iptvTiviRoutes) return@LaunchedEffect
         delay(SIDEBAR_AUTO_COLLAPSE_DELAY_MS)
         pendingContentFocusTransfer = false
         drawerState.setValue(DrawerValue.Closed)
     }
-
     BackHandler(enabled = currentRoute in rootRoutes && drawerState.currentValue == DrawerValue.Closed) {
         pendingSidebarFocusRequest = true
         drawerState.setValue(DrawerValue.Open)
@@ -954,7 +1101,7 @@ private fun LegacySidebarScaffold(
                                     Row(
                                         modifier = Modifier
                                             .width(itemWidth)
-                                            .height(52.dp)
+                                            .height(44.dp)
                                             .background(color = profileBgColor, shape = profileItemShape)
                                             .onFocusChanged { isProfileFocused = it.isFocused }
                                             .clickable {
@@ -992,42 +1139,43 @@ private fun LegacySidebarScaffold(
                             }
                         }
                     }
-
-                    Column(
+                    LazyColumn(
                         modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .offset(y = 28.dp)
+                            .align(Alignment.TopStart)
+                            .fillMaxHeight()
                             .fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(
+                            top = if (isExpanded) 98.dp else 12.dp,
+                            bottom = 12.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                         horizontalAlignment = Alignment.Start
                     ) {
-                        drawerItems.forEach { item ->
-                            key(item.route) {
-                                LegacySidebarButton(
-                                    label = item.label,
-                                    iconRes = item.iconRes,
-                                    icon = item.icon,
-                                    selected = selectedDrawerRoute == item.route,
-                                    expanded = isExpanded,
-                                    onClick = {
-                                        onNavigate(item.route)
-                                        navigateToDrawerRoute(
-                                            navController = navController,
-                                            currentRoute = currentRoute,
-                                            targetRoute = item.route
-                                        )
-                                        drawerState.setValue(DrawerValue.Closed)
-                                        pendingContentFocusTransfer = currentRoute == item.route
-                                    },
-                                    modifier = Modifier.focusRequester(
-                                        drawerItemFocusRequesters.getValue(item.route)
+                        items(drawerItems, key = { it.route }) { item ->
+                            LegacySidebarButton(
+                                label = item.label,
+                                iconRes = item.iconRes,
+                                icon = item.icon,
+                                selected = selectedDrawerRoute == item.route,
+                                expanded = isExpanded,
+                                onClick = {
+                                    onNavigate(item.route)
+                                    navigateToDrawerRoute(
+                                        navController = navController,
+                                        currentRoute = currentRoute,
+                                        targetRoute = item.route
                                     )
-                                        .width(itemWidth)
-                                        .offset(x = 12.dp)
+                                    if (item.route !in iptvTiviRoutes) drawerState.setValue(DrawerValue.Closed)
+                                    pendingContentFocusTransfer = currentRoute == item.route
+                                },
+                                modifier = Modifier.focusRequester(
+                                    drawerItemFocusRequesters.getValue(item.route)
                                 )
+                                    .width(itemWidth)
+                                    .offset(x = 12.dp)
+                            )
                         }
                     }
-                }
             }
         }
         }
@@ -1113,21 +1261,10 @@ private fun LegacySidebarButton(
         },
         label = "legacySidebarItemIconTint"
     )
-    val itemScale by animateFloatAsState(
-        targetValue = if (isFocused && expanded) 1.1f else 1f,
-        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-        label = "legacySidebarItemScale"
-    )
-
     Card(
         onClick = onClick,
         modifier = modifier
-            .height(52.dp)
-            .graphicsLayer {
-                scaleX = itemScale
-                scaleY = itemScale
-                transformOrigin = TransformOrigin.Center
-            }
+            .height(44.dp)
             .focusProperties { canFocus = expanded }
             .onFocusChanged { isFocused = it.hasFocus },
         colors = CardDefaults.colors(
@@ -1152,17 +1289,22 @@ private fun LegacySidebarButton(
             modifier = Modifier
                 .size(22.dp)
                 .align(Alignment.CenterStart)
-                .offset(x = 13.dp)
+                .offset(x = 12.dp)
         )
         if (expanded) {
             com.nuvio.tv.ui.components.AutoResizeText(
                 text = label,
                 color = contentColor,
+                style = androidx.tv.material3.MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
                 textAlign = TextAlign.Start,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .fillMaxWidth()
-                    .padding(start = 54.dp, end = 14.dp)
+                    .padding(start = 52.dp, end = 10.dp)
             )
         }
     }
@@ -1190,8 +1332,8 @@ private fun ModernSidebarScaffold(
     onExitApp: () -> Unit
 ) {
     val showSidebar = currentRoute in rootRoutes
-    val collapsedSidebarWidth = if (sidebarCollapsed) 0.dp else 184.dp
-    val openSidebarWidth = 262.dp
+    val collapsedSidebarWidth = if (sidebarCollapsed) 0.dp else 168.dp
+    val openSidebarWidth = 226.dp
 
     val focusManager = LocalFocusManager.current
     val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
@@ -1203,12 +1345,13 @@ private fun ModernSidebarScaffold(
     var pendingContentFocusTransfer by remember { mutableStateOf(false) }
     var pendingSidebarFocusRequest by remember { mutableStateOf(false) }
     var focusedDrawerIndex by remember { mutableStateOf(-1) }
+    var sidebarHasFocus by remember { mutableStateOf(false) }
     var isFloatingPillIconOnly by remember { mutableStateOf(false) }
     val keepFloatingPillExpanded = selectedDrawerRoute == Screen.Settings.route
     val keepSidebarFocusDuringCollapse =
         isSidebarExpanded || sidebarCollapsePending || pendingContentFocusTransfer
     val hasSidebarProfileItem = showProfileSelector && activeProfileName.isNotEmpty()
-    val sidebarTopBoundaryIndex = if (hasSidebarProfileItem) drawerItems.size else 0
+    val sidebarTopBoundaryIndex = 0
 
     LaunchedEffect(showSidebar) {
         if (!showSidebar) {
@@ -1254,8 +1397,8 @@ private fun ModernSidebarScaffold(
     // sidebar only folds back up once the user stops navigating it. We keep
     // pendingContentFocusTransfer = false so the focus stays parked on the
     // (now collapsed) sidebar pill instead of jumping back into the content.
-    LaunchedEffect(isSidebarExpanded, focusedDrawerIndex, sidebarCollapsePending, showSidebar) {
-        if (!showSidebar || !isSidebarExpanded || sidebarCollapsePending) {
+    LaunchedEffect(isSidebarExpanded, focusedDrawerIndex, sidebarCollapsePending, showSidebar, sidebarHasFocus) {
+        if (!showSidebar || !isSidebarExpanded || sidebarCollapsePending || sidebarHasFocus) {
             return@LaunchedEffect
         }
         delay(SIDEBAR_AUTO_COLLAPSE_DELAY_MS)
@@ -1339,7 +1482,7 @@ private fun ModernSidebarScaffold(
         if (expanded) 1f else 0f
     }
 
-    // derivedStateOf prevents per-frame recomposition — only triggers when the boolean crosses the threshold
+    // derivedStateOf prevents per-frame recomposition - only triggers when the boolean crosses the threshold
     val sidebarBlocksContentKeys by remember { derivedStateOf { sidebarExpandProgress > 0.2f } }
     val sidebarShowExpandedPanel by remember { derivedStateOf { sidebarExpandProgress > 0.01f } }
     val sidebarShowCollapsedPill by remember { derivedStateOf { sidebarExpandProgress < 0.98f } }
@@ -1498,6 +1641,9 @@ private fun ModernSidebarScaffold(
                         transformOrigin = TransformOrigin(0f, 0f)
                     }
                     .selectableGroup()
+                    .onFocusChanged { state ->
+                        sidebarHasFocus = state.hasFocus
+                    }
                     .onPreviewKeyEvent { keyEvent ->
                         if (!isSidebarExpanded || keyEvent.type != KeyEventType.KeyDown) {
                             return@onPreviewKeyEvent false
@@ -1508,7 +1654,7 @@ private fun ModernSidebarScaffold(
                             }
 
                             Key.DirectionDown -> {
-                                focusedDrawerIndex == drawerItems.lastIndex
+                                focusedDrawerIndex == drawerItems.lastIndex + 1
                             }
 
                             Key.DirectionRight, Key.DirectionLeft -> {
@@ -1540,7 +1686,7 @@ private fun ModernSidebarScaffold(
                         sidebarHazeState = sidebarHazeState,
                         panelShape = panelShape,
                         drawerItemFocusRequesters = drawerItemFocusRequesters,
-                        onDrawerItemFocused = { focusedDrawerIndex = it },
+                        onDrawerItemFocused = { focusedDrawerIndex = it; sidebarHasFocus = true },
                         onDrawerItemClick = { targetRoute ->
                             onNavigate(targetRoute)
                             navigateToDrawerRoute(
@@ -1771,3 +1917,5 @@ object LocaleCache {
     @Volatile
     var localeTag: String = UNSET
 }
+
+

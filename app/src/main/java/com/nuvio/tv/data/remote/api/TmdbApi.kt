@@ -214,6 +214,24 @@ interface TmdbApi {
         @Query("page") page: Int = 1
     ): Response<TmdbListDetailsResponse>
 
+
+    @GET("search/movie")
+    suspend fun searchMovies(
+        @Query("api_key") apiKey: String,
+        @Query("query") query: String,
+        @Query("language") language: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("include_adult") includeAdult: Boolean = false
+    ): Response<TmdbDiscoverResponse>
+
+    @GET("search/tv")
+    suspend fun searchTv(
+        @Query("api_key") apiKey: String,
+        @Query("query") query: String,
+        @Query("language") language: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("include_adult") includeAdult: Boolean = false
+    ): Response<TmdbDiscoverResponse>
     @GET("search/company")
     suspend fun searchCompanies(
         @Query("api_key") apiKey: String,
@@ -435,7 +453,8 @@ data class TmdbCrewMember(
 @JsonClass(generateAdapter = true)
 data class TmdbImagesResponse(
     @Json(name = "logos") val logos: List<TmdbImage>? = null,
-    @Json(name = "backdrops") val backdrops: List<TmdbImage>? = null
+    @Json(name = "backdrops") val backdrops: List<TmdbImage>? = null,
+    @Json(name = "posters") val posters: List<TmdbImage>? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -619,7 +638,7 @@ data class TmdbRecommendationResult(
     @Json(name = "vote_count") val voteCount: Int? = null
 )
 
-// ── Person / Cast Detail DTOs ──
+// â”€â”€ Person / Cast Detail DTOs â”€â”€
 
 @JsonClass(generateAdapter = true)
 data class TmdbPersonResponse(
@@ -722,3 +741,4 @@ data class TmdbNetworkDetailsResponse(
     @Json(name = "logo_path") val logoPath: String? = null,
     @Json(name = "origin_country") val originCountry: String? = null
 )
+

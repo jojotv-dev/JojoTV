@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.navigation
+﻿package com.nuvio.tv.ui.navigation
 
 import java.net.URLEncoder
 
@@ -130,7 +130,82 @@ sealed class Screen(val route: String) {
     data object Search : Screen("search")
     data object Discover : Screen("discover")
     data object Library : Screen("library")
+    data object Explorer : Screen("explorer")
+    data object Freebox : Screen("freebox")
+    data object FreeboxFolder : Screen("freebox_folder/{folderName}") {
+        private fun encode(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        fun createRoute(folderName: String): String {
+            return "freebox_folder/${encode(folderName)}"
+        }
+    }
+    data object FreeboxPhoto : Screen("freebox_photo/{photoUrl}/{title}?headers={headers}") {
+        private fun encode(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        fun createRoute(
+            photoUrl: String,
+            title: String,
+            headers: Map<String, String>
+        ): String {
+            val encodedUrl = encode(photoUrl)
+            val encodedTitle = encode(title)
+            val encodedHeaders = encode(org.json.JSONObject(headers).toString())
+            return "freebox_photo/$encodedUrl/$encodedTitle?headers=$encodedHeaders"
+        }
+    }
     data object Settings : Screen("settings")
+    data object IptvHome : Screen("iptv_home")
+    data object IptvProviderHome : Screen("iptv_provider_home/{providerId}/{providerName}") {
+        private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        fun createRoute(providerId: Long, providerName: String): String = "iptv_provider_home/$providerId/${encode(providerName)}"
+    }
+    data object IptvLiveTvGroup : Screen("iptv_live_group/{providerId}/{providerName}") {
+        private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        fun createRoute(providerId: Long, providerName: String): String = "iptv_live_group/$providerId/${encode(providerName)}"
+    }
+    data object IptvChannelList : Screen("iptv_channel_list/{providerId}?categoryId={categoryId}&categoryName={categoryName}") {
+        private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        fun createRoute(providerId: Long, categoryId: Long? = null, categoryName: String = "Toutes les cha\u00eenes"): String =
+            "iptv_channel_list/$providerId?categoryId=${categoryId ?: ""}&categoryName=${encode(categoryName)}"
+    }
+    data object IptvMovieCategory : Screen("iptv_movie_category/{providerId}/{providerName}") {
+        private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        fun createRoute(providerId: Long, providerName: String): String = "iptv_movie_category/$providerId/${encode(providerName)}"
+    }
+    data object IptvMovieList : Screen("iptv_movie_list/{providerId}?categoryId={categoryId}&categoryName={categoryName}") {
+        private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        fun createRoute(providerId: Long, categoryId: Long? = null, categoryName: String = "Tous les films"): String =
+            "iptv_movie_list/$providerId?categoryId=${categoryId ?: ""}&categoryName=${encode(categoryName)}"
+    }
+    data object IptvSeriesCategory : Screen("iptv_series_category/{providerId}/{providerName}") {
+        private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        fun createRoute(providerId: Long, providerName: String): String = "iptv_series_category/$providerId/${encode(providerName)}"
+    }
+    data object IptvSeriesList : Screen("iptv_series_list/{providerId}?categoryId={categoryId}&categoryName={categoryName}") {
+        private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        fun createRoute(providerId: Long, categoryId: Long? = null, categoryName: String = "Toutes les s\u00e9ries"): String =
+            "iptv_series_list/$providerId?categoryId=${categoryId ?: ""}&categoryName=${encode(categoryName)}"
+    }
+    data object IptvSeriesDetail : Screen("iptv_series_detail/{seriesId}/{providerId}") {
+        fun createRoute(seriesId: Long, providerId: Long): String = "iptv_series_detail/$seriesId/$providerId"
+    }
+    data object IptvHub : Screen("iptv_home")
+    data object IptvTivi : Screen("iptv_tivi")
+    data object IptvLiveProviders  : Screen("iptv_live_providers")
+    data object IptvMovieProviders : Screen("iptv_movie_providers")
+    data object IptvSeriesProviders: Screen("iptv_series_providers")
+    data object IptvProviderList : Screen("iptv_provider_list")
+    data object IptvEpg : Screen("iptv_epg")
+    data object IptvDns : Screen("iptv_dns")
+        data object IptvRecordingSchedule : Screen("iptv_recording_schedule")
+    data object IptvRecordingList : Screen("iptv_recording_list")
+    data object IptvProviderTypeSelect : Screen("iptv_provider_type_select")
+    data object IptvProviderSetup : Screen("iptv_provider_setup?type={type}&providerId={providerId}") {
+        fun createRoute(type: String = "xtream", providerId: Long? = null): String =
+            "iptv_provider_setup?type=$type&providerId=${providerId ?: ""}"
+    }
     data object Trakt : Screen("trakt")
     data object TmdbSettings : Screen("tmdb_settings")
     data object ThemeSettings : Screen("theme_settings")
@@ -207,3 +282,4 @@ sealed class Screen(val route: String) {
         }
     }
 }
+

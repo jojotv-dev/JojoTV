@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalTvMaterial3Api::class)
+﻿@file:OptIn(ExperimentalTvMaterial3Api::class)
 
 package com.nuvio.tv.ui.screens
 
@@ -33,7 +33,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nuvio.tv.ui.util.dpadRepeatThrottle
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp

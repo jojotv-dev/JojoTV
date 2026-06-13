@@ -1,4 +1,4 @@
-@file:OptIn(
+﻿@file:OptIn(
     androidx.compose.foundation.ExperimentalFoundationApi::class,
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     kotlinx.coroutines.FlowPreview::class
@@ -109,6 +109,10 @@ fun ModernHomeContent(
     onCatalogItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> },
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onItemFocus: (MetaPreview) -> Unit = {},
+    continueWatchingPortraitMode: Boolean = false,
+    continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
+    onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
+    onNavigateToFreebox: (String) -> Unit = {},
     onPreloadAdjacentItem: (MetaPreview) -> Unit = {},
     onSaveFocusState: (Int, Int, String?, Map<String, String>, Map<String, Int>, Int, Int) -> Unit,
     scrollToTopTrigger: Int = 0,
@@ -550,9 +554,8 @@ fun ModernHomeContent(
     val portraitCatalogCardHeight = portraitBaseHeight * 0.84f * portraitModernPosterScale
     val landscapeCatalogCardWidth = portraitBaseWidth * 1.24f * landscapeModernPosterScale
     val landscapeCatalogCardHeight = landscapeCatalogCardWidth / 1.77f
-    val continueWatchingScale = 1.34f
-    val continueWatchingCardWidth = portraitBaseWidth * 1.24f * continueWatchingScale
-    val continueWatchingCardHeight = continueWatchingCardWidth / 1.77f
+    val continueWatchingCardWidth = if (continueWatchingPortraitMode) continueWatchingThumbnailSize.cardWidth * 0.69f else continueWatchingThumbnailSize.cardWidth
+    val continueWatchingCardHeight = if (continueWatchingPortraitMode) continueWatchingCardWidth * (3f / 2f) else continueWatchingThumbnailSize.imageHeight
 
     val localConfiguration = LocalConfiguration.current
     val screenWidth = localConfiguration.screenWidthDp.dp
@@ -1066,6 +1069,8 @@ fun ModernHomeContent(
                 onFocusedHeroMediaNonceChange = onFocusedHeroMediaNonceChangeLambda,
                 onExpansionInteractionNonceChange = onExpansionInteractionNonceChangeLambda,
                 isVerticalRowsScrollingState = isVerticalRowsScrollingState,
+                freeboxVideoEntries = uiState.freeboxVideoEntries,
+                onNavigateToFreebox = onNavigateToFreebox,
                 modifier = Modifier.align(Alignment.BottomStart)
             )
     }
@@ -1101,7 +1106,19 @@ fun ModernHomeContent(
             onPlayManually = {
                 onContinueWatchingPlayManually(selectedOptionsItem)
                 optionsItem.value = null
-            }
+            },
+            onDeleteFromFreebox = if (selectedOptionsItem is ContinueWatchingItem.InProgress && selectedOptionsItem.progress.contentId.startsWith("freebox:")) {
+                {
+                    onDeleteFreeboxProgress?.invoke(selectedOptionsItem)
+                    onRemoveContinueWatching(
+                        selectedOptionsItem.contentId(),
+                        selectedOptionsItem.season(),
+                        selectedOptionsItem.episode(),
+                        false
+                    )
+                    optionsItem.value = null
+                }
+            } else null
         )
     }
 }

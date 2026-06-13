@@ -1,5 +1,5 @@
 [versions]
-agp = "8.13.2"
+agp = "9.2.1"
 cryptoJs = "4.2.0"
 kotlin = "2.3.0"
 coreKtx = "1.15.0"
@@ -14,6 +14,7 @@ activityCompose = "1.11.0"
 # New dependencies
 hilt = "2.58"
 hiltNavigationCompose = "1.2.0"
+hiltWork = "1.2.0"
 retrofit = "2.9.0"
 okhttp = "4.12.0"
 moshi = "1.15.1"
@@ -22,7 +23,7 @@ coil = "3.3.0"
 navigationCompose = "2.8.8"
 datastore = "1.1.1"
 lifecycleViewModelCompose = "2.8.7"
-ksp = "2.3.0"
+ksp = "2.3.4"
 media3 = "1.8.0"
 quickjsKt = "1.0.5"
 jsoup = "1.17.2"
@@ -42,6 +43,27 @@ androidxTestRunner = "1.6.2"
 uiautomator = "2.3.0"
 profileinstaller = "1.4.1"
 baselineProfilePlugin = "1.4.1"
+
+# Room
+room = "2.7.1"
+
+# WorkManager
+work = "2.9.1"
+
+# Security
+securityCrypto = "1.1.0-alpha06"
+
+# DocumentFile
+documentfile = "1.0.1"
+
+# Test
+junit = "4.13.2"
+truth = "1.4.2"
+kxml2 = "2.3.0"
+mockitoKotlin = "5.3.1"
+
+# Kover
+kover = "0.9.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -64,10 +86,13 @@ crypto-js = { module = "org.webjars.npm:crypto-js", version.ref = "cryptoJs" }
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
+hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref = "hiltWork" }
+hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.ref = "hiltWork" }
 
 # Networking
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
 retrofit-moshi = { group = "com.squareup.retrofit2", name = "converter-moshi", version.ref = "retrofit" }
+retrofit-gson = { group = "com.squareup.retrofit2", name = "converter-gson", version.ref = "retrofit" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 moshi = { group = "com.squareup.moshi", name = "moshi-kotlin", version.ref = "moshi" }
@@ -76,6 +101,7 @@ moshi-codegen = { group = "com.squareup.moshi", name = "moshi-kotlin-codegen", v
 # Coroutines
 coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 
 # Image Loading
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
@@ -134,13 +160,43 @@ androidx-test-runner = { group = "androidx.test", name = "runner", version.ref =
 androidx-test-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
 androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
 
+# Room
+room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+
+# WorkManager
+work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+
+# Security
+security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+
+# DocumentFile
+documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
+
+# Core KTX alias for iptv modules
+core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+
+# Play Services Auth
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version = "21.2.0" }
+
+# Tests
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }
+kxml2 = { group = "net.sf.kxml", name = "kxml2", version.ref = "kxml2" }
+mockito-kotlin = { group = "org.mockito.kotlin", name = "mockito-kotlin", version.ref = "mockitoKotlin" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 android-test = { id = "com.android.test", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
-kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+room = { id = "androidx.room", version.ref = "room" }
 androidx-baselineprofile = { id = "androidx.baselineprofile", version.ref = "baselineProfilePlugin" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }

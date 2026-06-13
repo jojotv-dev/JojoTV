@@ -6,6 +6,7 @@ import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.TrailerSettingsDataStore
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+import com.nuvio.tv.domain.model.ThumbnailSize
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
@@ -58,7 +59,9 @@ data class LayoutSettingsUiState(
     val showFullReleaseDate: Boolean = true,
     val nextUpFromFurthestEpisode: Boolean = true,
     val showUnairedNextUp: Boolean = true,
-    val continueWatchingSortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT
+    val continueWatchingSortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
+    val continueWatchingPortraitMode: Boolean = false,
+    val continueWatchingThumbnailSize: ThumbnailSize = ThumbnailSize.DEFAULT
 )
 
 data class CatalogInfo(
@@ -102,6 +105,8 @@ sealed class LayoutSettingsEvent {
     data class SetNextUpFromFurthestEpisode(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetShowUnairedNextUp(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetContinueWatchingSortMode(val mode: ContinueWatchingSortMode) : LayoutSettingsEvent()
+    data class SetContinueWatchingPortraitMode(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetContinueWatchingThumbnailSize(val size: ThumbnailSize) : LayoutSettingsEvent()
     data object ResetPosterCardStyle : LayoutSettingsEvent()
 }
 
@@ -304,6 +309,16 @@ class LayoutSettingsViewModel @Inject constructor(
                     updateUiStateIfChanged { it.copy(continueWatchingSortMode = mode) }
                 }
         }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.continueWatchingPortraitMode.distinctUntilChanged().collectLatest { enabled ->
+                updateUiStateIfChanged { it.copy(continueWatchingPortraitMode = enabled) }
+            }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.continueWatchingThumbnailSize.distinctUntilChanged().collectLatest { size ->
+                updateUiStateIfChanged { it.copy(continueWatchingThumbnailSize = size) }
+            }
+        }
         loadAvailableCatalogs()
     }
 
@@ -342,6 +357,8 @@ class LayoutSettingsViewModel @Inject constructor(
             is LayoutSettingsEvent.SetNextUpFromFurthestEpisode -> setNextUpFromFurthestEpisode(event.enabled)
             is LayoutSettingsEvent.SetShowUnairedNextUp -> setShowUnairedNextUp(event.enabled)
             is LayoutSettingsEvent.SetContinueWatchingSortMode -> setContinueWatchingSortMode(event.mode)
+            is LayoutSettingsEvent.SetContinueWatchingPortraitMode -> setContinueWatchingPortraitMode(event.enabled)
+            is LayoutSettingsEvent.SetContinueWatchingThumbnailSize -> setContinueWatchingThumbnailSize(event.size)
             LayoutSettingsEvent.ResetPosterCardStyle -> resetPosterCardStyle()
         }
     }
@@ -570,7 +587,21 @@ class LayoutSettingsViewModel @Inject constructor(
         }
     }
 
-    private fun setContinueWatchingSortMode(mode: ContinueWatchingSortMode) {
+    private fun setContinueWatchingPortraitMode(enabled: Boolean) {
+        if (_uiState.value.continueWatchingPortraitMode == enabled) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setContinueWatchingPortraitMode(enabled)
+        }
+    }
+
+    private fun setContinueWatchingThumbnailSize(size: ThumbnailSize) {
+        if (_uiState.value.continueWatchingThumbnailSize == size) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setContinueWatchingThumbnailSize(size)
+        }
+    }
+
+        private fun setContinueWatchingSortMode(mode: ContinueWatchingSortMode) {
         if (_uiState.value.continueWatchingSortMode == mode) return
         viewModelScope.launch {
             layoutPreferenceDataStore.setContinueWatchingSortMode(mode)

@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.home
+﻿package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -32,6 +32,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.nuvio.tv.ui.screens.settings.FreeboxBrowserViewModel
+import com.nuvio.tv.ui.screens.settings.LayoutSettingsViewModel
+import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
+import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
@@ -65,6 +69,8 @@ private const val HOME_STABLE_GATE_TIMEOUT_MS = 5_000L
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
+    freeboxViewModel: FreeboxBrowserViewModel = hiltViewModel(),
+    layoutSettingsViewModel: LayoutSettingsViewModel = hiltViewModel(),
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit = { item ->
         onNavigateToDetail(
@@ -82,9 +88,11 @@ fun HomeScreen(
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit = onContinueWatchingClick,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit = onContinueWatchingClick,
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit = { _, _, _ -> },
-    onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> }
+    onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
+    onNavigateToFreebox: (String) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val layoutUiState by layoutSettingsViewModel.uiState.collectAsStateWithLifecycle()
     val initialCwResolved by viewModel.initialCwResolved.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
     val effectiveAutoplayEnabled by viewModel.effectiveAutoplayEnabled.collectAsStateWithLifecycle(
@@ -101,7 +109,7 @@ fun HomeScreen(
     var hasShownInitialHomeContent by rememberSaveable { mutableStateOf(false) }
     // Once we've shown stable home content, never go back to loading gate.
     var homeStableGateReleased by rememberSaveable { mutableStateOf(false) }
-    // Track that catalog loading has started at least once (isLoading went true→false).
+    // Track that catalog loading has started at least once (isLoading went true â€” false)
     var catalogLoadingStarted by rememberSaveable { mutableStateOf(false) }
     var posterOptionsTarget by remember { mutableStateOf<HomePosterOptionsTarget?>(null) }
 
@@ -168,7 +176,7 @@ fun HomeScreen(
     }
 
     LaunchedEffect(Unit) {
-        // Safety timeout — if catalogs and CW haven't loaded within this
+        // Safety timeout â€”
         // window, show whatever is available.  Covers edge cases like
         // clean cache (addons loading from remote sync) and users with
         // no addons at all.
@@ -269,7 +277,7 @@ fun HomeScreen(
             }
 
             !uiState.isLoading && !hasAnyContent -> {
-                // Don't show "no catalogs" until the stable gate has released —
+                // Don't show "no catalogs" until the stable gate has released â€”
                 // addons may still be loading from remote after a cache clear.
                 if (!homeStableGateReleased) {
                     Box(
@@ -347,7 +355,9 @@ fun HomeScreen(
                         when (uiState.homeLayout) {
                             HomeLayout.CLASSIC -> ClassicHomeRoute(
                                 viewModel = viewModel,
+                                freeboxViewModel = freeboxViewModel,
                                 uiState = uiState,
+                                continueWatchingPortraitMode = layoutUiState.continueWatchingPortraitMode,
                                 posterCardStyle = posterCardStyle,
                                 onNavigateToDetail = onNavigateToDetailStable,
                                 onContinueWatchingClick = onContinueWatchingClickStable,
@@ -357,7 +367,22 @@ fun HomeScreen(
                                 onNavigateToCatalogSeeAll = onNavigateToCatalogSeeAllStable,
                                 onNavigateToFolderDetail = onNavigateToFolderDetailStable,
                                 isCatalogItemWatched = isCatalogItemWatched,
-                                onCatalogItemLongPress = onCatalogItemLongPress
+                                onCatalogItemLongPress = onCatalogItemLongPress,
+                                onDeleteFreeboxProgress = { item ->
+                                    if (item is ContinueWatchingItem.InProgress) {
+                                        val freeboxPath = item.progress.contentId.removePrefix("freebox:")
+                                        val entry = FreeboxFileEntry(
+                                            name = item.progress.name,
+                                            path = freeboxPath,
+                                            encodedPath = null,
+                                            isDirectory = false,
+                                            size = null,
+                                            durationMs = item.progress.duration
+                                        )
+                                        freeboxViewModel.deleteFromFreebox(entry)
+                                    }
+                                },
+                                onNavigateToFreebox = onNavigateToFreebox,
                             )
 
                             HomeLayout.GRID -> GridHomeRoute(
@@ -372,21 +397,39 @@ fun HomeScreen(
                                 onNavigateToCatalogSeeAll = onNavigateToCatalogSeeAllStable,
                                 onNavigateToFolderDetail = onNavigateToFolderDetailStable,
                                 isCatalogItemWatched = isCatalogItemWatched,
-                                onCatalogItemLongPress = onCatalogItemLongPress
+                                onCatalogItemLongPress = onCatalogItemLongPress,
+                                onDeleteFreeboxProgress = { item ->
+                                    if (item is ContinueWatchingItem.InProgress) {
+                                        val freeboxPath = item.progress.contentId.removePrefix("freebox:")
+                                        val entry = FreeboxFileEntry(
+                                            name = item.progress.name,
+                                            path = freeboxPath,
+                                            isDirectory = false,
+                                            durationMs = item.progress.duration
+                                        )
+                                        freeboxViewModel.deleteFromFreebox(entry)
+                                    }
+                                },
+                                continueWatchingPortraitMode = layoutUiState.continueWatchingPortraitMode
+                            ,
+                                continueWatchingThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.fromName(uiState.continueWatchingThumbnailSize.name),
+                                onNavigateToFreebox = onNavigateToFreebox,
                             )
-
-                            HomeLayout.MODERN -> ModernHomeRoute(
-                                viewModel = viewModel,
-                                uiState = uiState,
-                                onNavigateToDetail = onNavigateToDetailStable,
-                                onContinueWatchingClick = onContinueWatchingClickStable,
-                                onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginningStable,
-                                onContinueWatchingPlayManually = onContinueWatchingPlayManuallyStable,
-                                showContinueWatchingManualPlayOption = effectiveAutoplayEnabled,
-                                onNavigateToFolderDetail = onNavigateToFolderDetailStable,
-                                isCatalogItemWatched = isCatalogItemWatched,
-                                onCatalogItemLongPress = onCatalogItemLongPress
-                            )
+                              HomeLayout.MODERN -> ModernHomeRoute(
+                                  viewModel = viewModel,
+                                  uiState = uiState,
+                                  onNavigateToDetail = onNavigateToDetailStable,
+                                  onContinueWatchingClick = onContinueWatchingClickStable,
+                                  onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginningStable,
+                                  onContinueWatchingPlayManually = onContinueWatchingPlayManuallyStable,
+                                  showContinueWatchingManualPlayOption = effectiveAutoplayEnabled,
+                                  onNavigateToFolderDetail = onNavigateToFolderDetailStable,
+                                  isCatalogItemWatched = isCatalogItemWatched,
+                                  onCatalogItemLongPress = onCatalogItemLongPress,
+                                  continueWatchingPortraitMode = layoutUiState.continueWatchingPortraitMode,
+                                  continueWatchingThumbnailSize = uiState.continueWatchingThumbnailSize,
+                                  onNavigateToFreebox = onNavigateToFreebox,
+                              )
                         }
                     }
                 }
@@ -475,6 +518,7 @@ fun HomeScreen(
 @Composable
 private fun ClassicHomeRoute(
     viewModel: HomeViewModel,
+    freeboxViewModel: FreeboxBrowserViewModel,
     uiState: HomeUiState,
     posterCardStyle: PosterCardStyle,
     onNavigateToDetail: (String, String, String) -> Unit,
@@ -485,7 +529,11 @@ private fun ClassicHomeRoute(
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
-    onCatalogItemLongPress: (MetaPreview, String) -> Unit
+    onCatalogItemLongPress: (MetaPreview, String) -> Unit,
+    onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
+    onNavigateToFreebox: (String) -> Unit = {},
+    continueWatchingPortraitMode: Boolean = false,
+    continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT
 ) {
     val focusState by viewModel.focusState.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
@@ -519,7 +567,10 @@ private fun ClassicHomeRoute(
         },
         onRequestLazyCatalogLoad = remember(viewModel) {
             { catalogKey: String -> viewModel.requestLazyCatalogLoad(catalogKey) }
-        }
+        },
+        continueWatchingPortraitMode = continueWatchingPortraitMode,
+        continueWatchingThumbnailSize = continueWatchingThumbnailSize,
+        onNavigateToFreebox = onNavigateToFreebox,
     )
 }
 
@@ -536,7 +587,11 @@ private fun GridHomeRoute(
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
-    onCatalogItemLongPress: (MetaPreview, String) -> Unit
+    onCatalogItemLongPress: (MetaPreview, String) -> Unit,
+    onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
+    onNavigateToFreebox: (String) -> Unit = {},
+    continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
+    continueWatchingPortraitMode: Boolean = false
 ) {
     val gridFocusState by viewModel.gridFocusState.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
@@ -559,7 +614,10 @@ private fun GridHomeRoute(
         },
         isCatalogItemWatched = isCatalogItemWatched,
         onCatalogItemLongPress = onCatalogItemLongPress,
-        onItemFocus = remember(viewModel) {
+            onDeleteFromFreebox = onDeleteFreeboxProgress,
+            continueWatchingThumbnailSize = continueWatchingThumbnailSize,
+            continueWatchingPortraitMode = continueWatchingPortraitMode,
+            onItemFocus = remember(viewModel) {
             { item ->
                 viewModel.onItemFocus(item)
             }
@@ -568,7 +626,8 @@ private fun GridHomeRoute(
             { vi, vo, key ->
                 viewModel.saveGridFocusState(vi, vo, focusedItemKey = key)
             }
-        }
+        },
+        onNavigateToFreebox = onNavigateToFreebox,
     )
 }
 
@@ -583,7 +642,11 @@ private fun ModernHomeRoute(
     showContinueWatchingManualPlayOption: Boolean,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
-    onCatalogItemLongPress: (MetaPreview, String) -> Unit
+    onCatalogItemLongPress: (MetaPreview, String) -> Unit,
+    onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
+    onNavigateToFreebox: (String) -> Unit = {},
+    continueWatchingPortraitMode: Boolean = false,
+    continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT
 ) {
     val focusState by viewModel.focusState.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
@@ -642,6 +705,10 @@ private fun ModernHomeRoute(
         },
         onPreloadAdjacentItem = preloadAdjacentItem,
         onSaveFocusState = saveModernFocusState,
+        continueWatchingPortraitMode = continueWatchingPortraitMode,
+        continueWatchingThumbnailSize = continueWatchingThumbnailSize,
+        onDeleteFreeboxProgress = onDeleteFreeboxProgress,
+        onNavigateToFreebox = onNavigateToFreebox,
         onRequestLazyCatalogLoad = remember(viewModel) {
             { catalogKey: String -> viewModel.requestLazyCatalogLoad(catalogKey) }
         }

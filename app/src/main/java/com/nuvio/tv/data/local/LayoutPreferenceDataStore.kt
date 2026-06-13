@@ -1,3 +1,5 @@
+﻿@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package com.nuvio.tv.data.local
 
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -16,6 +18,7 @@ import com.nuvio.tv.core.sync.homeCollectionKey
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+import com.nuvio.tv.domain.model.ThumbnailSize
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
@@ -77,6 +80,8 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val nextUpFromFurthestEpisodeKey = booleanPreferencesKey("next_up_from_furthest_episode")
     private val blurContinueWatchingNextUpKey = booleanPreferencesKey("blur_continue_watching_next_up")
     private val continueWatchingSortModeKey = stringPreferencesKey("continue_watching_sort_mode")
+    private val continueWatchingPortraitModeKey = booleanPreferencesKey("continue_watching_portrait_mode")
+    private val continueWatchingThumbnailSizeKey = stringPreferencesKey("continue_watching_thumbnail_size")
     private val detailPageTrailerButtonEnabledKey = booleanPreferencesKey("detail_page_trailer_button_enabled")
     private val preferExternalMetaAddonDetailKey = booleanPreferencesKey("prefer_external_meta_addon_detail")
     private val modernHeroFullScreenBackdropKey = booleanPreferencesKey("modern_hero_full_screen_backdrop")
@@ -270,7 +275,15 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[blurContinueWatchingNextUpKey] ?: false
     }
 
-    val continueWatchingSortMode: Flow<ContinueWatchingSortMode> = profileFlow { prefs ->
+    val continueWatchingPortraitMode: Flow<Boolean> = profileFlow { prefs ->
+        prefs[continueWatchingPortraitModeKey] ?: false
+    }
+
+    val continueWatchingThumbnailSize: Flow<ThumbnailSize> = profileFlow { prefs ->
+        ThumbnailSize.fromName(prefs[continueWatchingThumbnailSizeKey] ?: ThumbnailSize.DEFAULT.name)
+    }
+
+        val continueWatchingSortMode: Flow<ContinueWatchingSortMode> = profileFlow { prefs ->
         val stored = prefs[continueWatchingSortModeKey] ?: ContinueWatchingSortMode.DEFAULT.name
         runCatching { ContinueWatchingSortMode.valueOf(stored) }
             .getOrDefault(ContinueWatchingSortMode.DEFAULT)
@@ -561,7 +574,19 @@ class LayoutPreferenceDataStore @Inject constructor(
         }
     }
 
-    suspend fun setContinueWatchingSortMode(mode: ContinueWatchingSortMode) {
+    suspend fun setContinueWatchingPortraitMode(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[continueWatchingPortraitModeKey] = enabled
+        }
+    }
+
+    suspend fun setContinueWatchingThumbnailSize(size: ThumbnailSize) {
+        store().edit { prefs ->
+            prefs[continueWatchingThumbnailSizeKey] = size.name
+        }
+    }
+
+        suspend fun setContinueWatchingSortMode(mode: ContinueWatchingSortMode) {
         store().edit { prefs ->
             prefs[continueWatchingSortModeKey] = mode.name
         }

@@ -202,6 +202,29 @@ private fun Throwable.findMostRelevantCauseMessage(): String? {
  * Returns `true` if a retry was scheduled, `false` if the error should be shown to the user.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
+internal fun PlayerRuntimeController.attemptFreeboxTokenRefresh(
+    error: PlaybackException
+): Boolean {
+    if (!isFreeboxPlayback) return false
+    val refresher = freeboxTokenRefresher ?: return false
+    val responseCode = error.findInvalidResponseCodeException()?.responseCode ?: return false
+    if (responseCode != 403) return false
+    if (errorRetryCount >= MAX_AUTO_RETRIES) return false
+    errorRetryCount++
+    val paused = userPausedManually
+    errorRetryJob?.cancel()
+    errorRetryJob = scope.launch {
+        showRecoveryOverlay()
+        val newHeaders = refresher()
+        if (newHeaders != null) {
+            currentHeaders = newHeaders
+        }
+        releasePlayer(flushPlaybackState = false)
+        initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
+    }
+    return true
+}
+
 internal fun PlayerRuntimeController.attemptAutoRetry(
     error: PlaybackException,
     detailedError: String

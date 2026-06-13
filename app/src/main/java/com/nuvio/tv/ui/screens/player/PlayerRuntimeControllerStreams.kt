@@ -79,6 +79,9 @@ internal fun PlayerRuntimeController.buildSourceRequestKey(type: String, videoId
 
 internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
     val type: String
+    // Flux IPTV integre : lecture directe sans addons
+    if (contentType?.lowercase() == "iptv") return
+
     val vid: String
     val seasonArg: Int?
     val episodeArg: Int?
@@ -99,11 +102,11 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
     val state = _uiState.value
     val hasCachedPayload = state.sourceAllStreams.isNotEmpty() || state.sourceStreamsError != null
 
-    // Fully completed cache hit — nothing to do
+    // Fully completed cache hit â€” nothing to do
     if (!forceRefresh && requestKey == sourceStreamsCacheRequestKey && hasCachedPayload && sourceStreamsFetchCompleted) {
         return
     }
-    // Already loading the same request — don't restart
+    // Already loading the same request â€” don't restart
     if (!forceRefresh && state.isLoadingSourceStreams && requestKey == sourceStreamsCacheRequestKey) {
         return
     }
@@ -135,7 +138,7 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
         val installedAddonNames = installedAddonOrder.toSet()
         var debridPreparationLaunched = false
 
-        // On resume, skip chip reset — keep existing chip statuses
+        // On resume, skip chip reset â€” keep existing chip statuses
         if (!isResume) {
             updateSourceChipsForFetchStart(type, vid, installedAddons)
         }
@@ -431,7 +434,7 @@ private fun PlayerRuntimeController.applySelectedStreamState(
 /**
  * Apply stream metadata that is common to both HTTP and torrent paths.
  * Ensures binge-group, addon info, and video hints are always set regardless
- * of stream type — critical for next-episode binge matching.
+ * of stream type â€” critical for next-episode binge matching.
  */
 private fun PlayerRuntimeController.applyStreamMetadata(stream: Stream) {
     currentStreamBingeGroup = stream.behaviorHints?.bingeGroup

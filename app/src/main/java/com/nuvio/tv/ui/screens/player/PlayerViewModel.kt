@@ -10,6 +10,9 @@ import com.nuvio.tv.core.debrid.DirectDebridStreamPreparer
 import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.torrent.TorrentService
 import com.nuvio.tv.core.torrent.TorrentSettings
+import com.nuvio.tv.data.freebox.FreeboxOsClient
+import com.nuvio.tv.data.local.FreeboxSettingsDataStore
+import kotlinx.coroutines.flow.first
 import com.nuvio.tv.data.local.AudioDelayRouteDataStore
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
 import com.nuvio.tv.data.local.DeviceLocalPlayerPreferences
@@ -60,6 +63,8 @@ class PlayerViewModel @Inject constructor(
     private val directDebridResolver: DirectDebridResolver,
     private val directDebridStreamPreparer: DirectDebridStreamPreparer,
     private val externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker,
+    private val freeboxOsClient: FreeboxOsClient,
+    private val freeboxSettingsDataStore: FreeboxSettingsDataStore,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -68,7 +73,6 @@ class PlayerViewModel @Inject constructor(
         // claim hardware decoders without contention (prevents black screen).
         trailerPlayerPool.yield()
     }
-
     private val controller = PlayerRuntimeController(
         context = context,
         watchProgressRepository = watchProgressRepository,
@@ -99,6 +103,14 @@ class PlayerViewModel @Inject constructor(
         savedStateHandle = savedStateHandle,
         scope = viewModelScope
     )
+    init {
+        controller.freeboxTokenRefresher = {
+            val settings = freeboxSettingsDataStore.settings.first()
+            freeboxOsClient.openSession(settings).getOrNull()?.sessionToken?.let { token ->
+                freeboxOsClient.sessionHeaders(token)
+            }
+        }
+    }
 
     val uiState: StateFlow<PlayerUiState>
         get() = controller.uiState

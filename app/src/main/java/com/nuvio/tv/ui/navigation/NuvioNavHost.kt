@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.navigation
+﻿package com.nuvio.tv.ui.navigation
 
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.EnterTransition
@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -38,8 +39,30 @@ import com.nuvio.tv.ui.screens.settings.SupportersContributorsScreen
 import com.nuvio.tv.ui.screens.settings.ThemeSettingsScreen
 import com.nuvio.tv.ui.screens.settings.TraktScreen
 import com.nuvio.tv.ui.screens.settings.TmdbSettingsScreen
-import com.nuvio.tv.ui.screens.stream.StreamScreen
+import com.nuvio.tv.ui.screens.freebox.FreeboxBrowserScreen
+import com.nuvio.tv.ui.screens.freebox.FreeboxPhotoViewerScreen
+import com.nuvio.tv.ui.screens.settings.FreeboxBrowserViewModel
+import com.nuvio.tv.ui.screens.settings.FreeboxPlaybackRequest
+import com.nuvio.tv.ui.screens.explorer.ExplorerScreen
+import com.nuvio.tv.ui.screens.iptv.IptvHomeScreen
+import com.nuvio.tv.ui.screens.iptv.IptvProviderListScreen
+import com.nuvio.tv.ui.screens.iptv.IptvProviderTypeSelectScreen
+import com.nuvio.tv.ui.screens.iptv.IptvProviderSetupScreen
+import com.nuvio.tv.ui.screens.iptv.IptvChannelListScreen
+import com.nuvio.tv.ui.screens.iptv.IptvProviderHomeScreen
+import com.nuvio.tv.ui.screens.iptv.IptvLiveTvGroupScreen
+import com.nuvio.tv.ui.screens.iptv.IptvMovieCategoryScreen
+import com.nuvio.tv.ui.screens.iptv.IptvMovieListScreen
+import com.nuvio.tv.ui.screens.iptv.IptvSeriesCategoryScreen
+import com.nuvio.tv.ui.screens.iptv.IptvSeriesListScreen
+import com.nuvio.tv.ui.screens.iptv.IptvSeriesDetailScreen
+import com.nuvio.tv.ui.screens.iptv.IptvRecordingScheduleScreen
+import com.nuvio.tv.ui.screens.iptv.IptvRecordingListScreen
+import com.nuvio.tv.ui.screens.iptv.IptvEpgScreen
+import com.nuvio.tv.ui.screens.iptv.tivi.IptvTiviScreen
+import com.nuvio.tv.ui.screens.iptv.tivi.TiviTab
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
+import com.nuvio.tv.ui.screens.stream.StreamScreen
 import com.nuvio.tv.ui.screens.account.AuthSignInScreen
 import com.nuvio.tv.ui.screens.account.AuthQrSignInScreen
 import com.nuvio.tv.ui.screens.cast.CastDetailScreen
@@ -47,6 +70,8 @@ import com.nuvio.tv.ui.screens.profile.ProfileSelectionMode
 import com.nuvio.tv.ui.screens.profile.ProfileSelectionScreen
 import com.nuvio.tv.ui.screens.tmdb.TmdbEntityBrowseScreen
 import com.nuvio.tv.ui.screens.home.HeroBackdropState
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 @Composable
 fun NuvioNavHost(
@@ -191,6 +216,52 @@ fun NuvioNavHost(
                 }
             }
 
+            val freeboxBrowserViewModel: FreeboxBrowserViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+            val coroutineScope = rememberCoroutineScope()
+
+            fun navigateToFreeboxPlayer(request: FreeboxPlaybackRequest, startFromBeginning: Boolean = false) {
+                navController.navigate(
+                    Screen.Player.createRoute(
+                        streamUrl = request.streamUrl,
+                        title = request.title,
+                        streamName = request.title,
+                        headers = request.headers,
+                        contentId = request.videoId,
+                        contentType = "freebox",
+                        contentName = request.title,
+                        videoId = request.videoId,
+                        filename = request.title,
+                        videoSize = request.videoSize,
+                        poster = request.artworkUrl,
+                        backdrop = request.artworkUrl,
+                        startFromBeginning = startFromBeginning,
+                        streamDescription = request.title,
+                        returnToHomeOnBack = true
+                    )
+                )
+            }
+
+            fun navigateFreeboxContinueWatching(item: ContinueWatchingItem, startFromBeginning: Boolean = false): Boolean {
+                val progress = (item as? ContinueWatchingItem.InProgress)?.progress ?: return false
+                val freeboxId = when {
+                    progress.contentId.startsWith("freebox:", ignoreCase = true) -> progress.contentId
+                    progress.videoId.startsWith("freebox:", ignoreCase = true) -> progress.videoId
+                    progress.contentType.equals("freebox", ignoreCase = true) -> progress.contentId
+                    else -> return false
+                }
+                coroutineScope.launch {
+                    freeboxBrowserViewModel.playbackRequestForContent(
+                        contentIdOrVideoId = freeboxId,
+                        title = progress.name,
+                        durationMs = progress.duration,
+                        artworkUrl = progress.poster ?: progress.backdrop
+                    )?.let { request ->
+                        navigateToFreeboxPlayer(request, startFromBeginning)
+                    }
+                }
+                return true
+            }
+
             HomeScreen(
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
                     val heroBackdrop = HeroBackdropState.consumeAndClear()
@@ -204,23 +275,39 @@ fun NuvioNavHost(
                     )
                 },
                 onContinueWatchingClick = { item ->
-                    navController.navigate(createContinueWatchingRoute(item))
+                    if (!navigateFreeboxContinueWatching(item)) {
+                        navController.navigate(createContinueWatchingRoute(item))
+                    }
                 },
                 onContinueWatchingStartFromBeginning = { item ->
-                    navController.navigate(
-                        createContinueWatchingRoute(item, startFromBeginning = true)
-                    )
+                    if (!navigateFreeboxContinueWatching(item, startFromBeginning = true)) {
+                        navController.navigate(
+                            createContinueWatchingRoute(item, startFromBeginning = true)
+                        )
+                    }
                 },
                 onContinueWatchingPlayManually = { item ->
-                    navController.navigate(
-                        createContinueWatchingRoute(item, manualSelection = true)
-                    )
+                    if (!navigateFreeboxContinueWatching(item)) {
+                        navController.navigate(
+                            createContinueWatchingRoute(item, manualSelection = true)
+                        )
+                    }
                 },
                 onNavigateToCatalogSeeAll = { catalogId, addonId, type ->
                     navController.navigate(Screen.CatalogSeeAll.createRoute(catalogId, addonId, type))
                 },
                 onNavigateToFolderDetail = { collectionId, folderId ->
                     navController.navigate(Screen.FolderDetail.createRoute(collectionId, folderId))
+                },
+                onNavigateToFreebox = { path ->
+                    coroutineScope.launch {
+                        freeboxBrowserViewModel.playbackRequestForContent(
+                            contentIdOrVideoId = path,
+                            title = path.substringAfterLast('/')
+                        )?.let { request ->
+                            navigateToFreeboxPlayer(request)
+                        }
+                    }
                 }
             )
         }
@@ -486,7 +573,7 @@ fun NuvioNavHost(
                     val streamUrl = playbackInfo.url
                         ?: if (playbackInfo.isTorrent) "torrent://${playbackInfo.infoHash}" else null
                     // When both url and infoHash are present (debrid cached torrent),
-                    // prefer the HTTP url and don't pass infoHash — avoids starting
+                    // prefer the HTTP url and don't pass infoHash - avoids starting
                     // TorrServer for a stream that's already available via HTTP.
                     val effectiveInfoHash = if (playbackInfo.url != null) null else playbackInfo.infoHash
                     val effectiveFileIdx = if (playbackInfo.url != null) null else playbackInfo.fileIdx
@@ -524,7 +611,9 @@ fun NuvioNavHost(
                                 sources = playbackInfo.sources,
                                 contentLanguage = playbackInfo.contentLanguage
                             )
-                        )
+                        ) {
+                            popUpTo(Screen.Player.route) { inclusive = true }
+                        }
                     }
                 },
                 onAutoPlayResolved = { playbackInfo ->
@@ -753,7 +842,7 @@ fun NuvioNavHost(
 
                     when {
                         episodeChangedInPlace && autoPlayEnabled -> {
-                            // autoplay moved to next episode — skip Stream, go to detail
+                            // autoplay moved to next episode - skip Stream, go to detail
                             if (returnToDetailOnBack && contentType.equals("series", ignoreCase = true) && contentId.isNotBlank()) {
                                 returnToDetail()
                             } else {
@@ -761,7 +850,7 @@ fun NuvioNavHost(
                             }
                         }
                         episodeChangedInPlace && !autoPlayEnabled -> {
-                            // manual stream switch to next episode — go to Stream of current episode
+                            // manual stream switch to next episode - go to Stream of current episode
                             val videoId = currentVideoId ?: args?.getString("videoId").orEmpty()
                             if (videoId.isNotBlank() && contentType.isNotBlank()) {
                                 navController.navigate(
@@ -790,7 +879,7 @@ fun NuvioNavHost(
                             }
                         }
                         else -> {
-                            // normal back — skip Stream screen if episode/movie was completed
+                            // normal back - skip Stream screen if episode/movie was completed
                             val skipStreamScreen = playbackCompleted && contentId.isNotBlank()
                             if (skipStreamScreen) {
                                 returnToDetail()
@@ -1007,6 +1096,107 @@ fun NuvioNavHost(
                         )
                     )
                 }
+            )
+        }
+
+        composable(Screen.Explorer.route) {
+            ExplorerScreen(
+                showBuiltInHeader = !hideBuiltInHeaders
+            )
+        }
+
+        composable(Screen.Freebox.route) {
+            FreeboxBrowserScreen(
+                showBuiltInHeader = !hideBuiltInHeaders,
+                onPlayFile = { request ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = request.streamUrl,
+                            title = request.title,
+                            streamName = request.title,
+                            headers = request.headers,
+                            contentId = request.videoId,
+                            contentType = "freebox",
+                            contentName = request.title,
+                            videoId = request.videoId,
+                            filename = request.title,
+                            videoSize = request.videoSize,
+                            poster = request.artworkUrl,
+                            backdrop = request.artworkUrl,
+                            addonName = "Freebox",
+                            streamDescription = request.title
+                        )
+                    )
+                },
+                onOpenPhoto = { request ->
+                    navController.navigate(
+                        Screen.FreeboxPhoto.createRoute(
+                            photoUrl = request.photoUrl,
+                            title = request.title,
+                            headers = request.headers
+                        )
+                    )
+                }
+            )
+        }
+
+        composable(
+            route = Screen.FreeboxFolder.route,
+            arguments = listOf(navArgument("folderName") { type = NavType.StringType })
+        ) { backStackEntry ->
+            FreeboxBrowserScreen(
+                showBuiltInHeader = !hideBuiltInHeaders,
+                initialFolderName = backStackEntry.arguments?.getString("folderName"),
+                onPlayFile = { request ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = request.streamUrl,
+                            title = request.title,
+                            streamName = request.title,
+                            headers = request.headers,
+                            contentId = request.videoId,
+                            contentType = "freebox",
+                            contentName = request.title,
+                            videoId = request.videoId,
+                            filename = request.title,
+                            videoSize = request.videoSize,
+                            poster = request.artworkUrl,
+                            backdrop = request.artworkUrl,
+                            addonName = "Freebox",
+                            streamDescription = request.title
+                        )
+                    )
+                },
+                onOpenPhoto = { request ->
+                    navController.navigate(
+                        Screen.FreeboxPhoto.createRoute(
+                            photoUrl = request.photoUrl,
+                            title = request.title,
+                            headers = request.headers
+                        )
+                    )
+                }
+            )
+        }
+
+
+        composable(
+            route = Screen.FreeboxPhoto.route,
+            arguments = listOf(
+                navArgument("photoUrl") { type = NavType.StringType },
+                navArgument("title") { type = NavType.StringType },
+                navArgument("headers") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            FreeboxPhotoViewerScreen(
+                photoUrl = backStackEntry.arguments?.getString("photoUrl").orEmpty(),
+                title = backStackEntry.arguments?.getString("title").orEmpty(),
+                headers = parseRouteHeaders(backStackEntry.arguments?.getString("headers")),
+                onBackPress = { navController.popBackStack() }
             )
         }
 
@@ -1248,5 +1438,256 @@ fun NuvioNavHost(
                 }
             )
         }
+
+        // —
+        composable(Screen.IptvHome.route) {
+            IptvHomeScreen(
+                onNavigateToProviderList = { navController.navigate(Screen.IptvProviderList.route) },
+                onNavigateToSchedule = { navController.navigate(Screen.IptvRecordingSchedule.route) },
+                onNavigateToRecordings = { navController.navigate(Screen.IptvRecordingList.route) },
+                onNavigateToEpg = { navController.navigate(Screen.IptvEpg.route) },
+                onNavigateToDns = { /* bientot disponible */ }
+            )
+        }
+        composable(Screen.IptvProviderList.route) {
+            IptvProviderListScreen(
+                onNavigateToSetup = { navController.navigate(Screen.IptvProviderTypeSelect.route) },
+                onNavigateToEdit = { providerId, type ->
+                    navController.navigate(Screen.IptvProviderSetup.createRoute(type, providerId))
+                },
+                onNavigateToProvider = { providerId, providerName ->
+                    navController.navigate(Screen.IptvProviderHome.createRoute(providerId, providerName))
+                }
+            )
+        }
+        composable(Screen.IptvEpg.route) {
+            IptvEpgScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Screen.IptvTivi.route) {
+            IptvTiviScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Screen.IptvLiveProviders.route) {
+            IptvTiviScreen(initialTab = TiviTab.LIVE, onBack = { navController.popBackStack() })
+        }
+        composable(Screen.IptvMovieProviders.route) {
+            IptvTiviScreen(initialTab = TiviTab.MOVIES, onBack = { navController.popBackStack() })
+        }
+        composable(Screen.IptvSeriesProviders.route) {
+            IptvTiviScreen(initialTab = TiviTab.SERIES, onBack = { navController.popBackStack() })
+        }
+        composable(Screen.IptvRecordingSchedule.route) {
+            IptvRecordingScheduleScreen(
+                onBackPress = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.IptvRecordingList.route) {
+            IptvRecordingListScreen(
+                onPlayRecording = { streamUrl, title ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl   = streamUrl,
+                            title       = title,
+                            contentType = "iptv_recording"
+                        )
+                    )
+                },
+                onBackPress = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.IptvProviderTypeSelect.route) {
+            IptvProviderTypeSelectScreen(
+                onSelectXtream = { navController.navigate(Screen.IptvProviderSetup.createRoute("xtream")) },
+                onSelectM3u    = { navController.navigate(Screen.IptvProviderSetup.createRoute("m3u")) },
+                onSelectStalker = { navController.navigate(Screen.IptvProviderSetup.createRoute("stalker")) },
+                onBackPress = { navController.popBackStack() }
+            )
+        }
+        composable(
+            route = Screen.IptvProviderSetup.route,
+            arguments = listOf(
+                navArgument("type") { type = NavType.StringType; defaultValue = "xtream" },
+                navArgument("providerId") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
+            val type = backStackEntry.arguments?.getString("type") ?: "xtream"
+            val providerIdStr = backStackEntry.arguments?.getString("providerId")
+            val providerId = providerIdStr?.toLongOrNull()
+            IptvProviderSetupScreen(
+                type = type,
+                providerId = providerId,
+                onBackPress = { navController.popBackStack() },
+                onProviderAdded = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Screen.IptvProviderHome.route,
+            arguments = listOf(
+                navArgument("providerId") { type = NavType.StringType },
+                navArgument("providerName") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val providerId = backStackEntry.arguments?.getString("providerId")?.toLongOrNull() ?: -1L
+            val providerName = backStackEntry.arguments?.getString("providerName") ?: ""
+            IptvProviderHomeScreen(
+                providerName = providerName,
+                onNavigateToLiveTv = {
+                    navController.navigate(Screen.IptvLiveTvGroup.createRoute(providerId, providerName))
+                },
+                onNavigateToMovies = {
+                    navController.navigate(Screen.IptvMovieCategory.createRoute(providerId, providerName))
+                },
+                onNavigateToSeries = {
+                }
+            )
+        }
+
+        composable(
+            route = Screen.IptvLiveTvGroup.route,
+            arguments = listOf(
+                navArgument("providerId") { type = NavType.StringType },
+                navArgument("providerName") { type = NavType.StringType }
+            )
+        ) {
+            IptvLiveTvGroupScreen(
+                onNavigateToChannels = { providerId, categoryId, categoryName ->
+                    navController.navigate(Screen.IptvChannelList.createRoute(providerId, categoryId, categoryName))
+                },
+                onNavigateToAllChannels = { providerId ->
+                    navController.navigate(Screen.IptvChannelList.createRoute(providerId, null, "Toutes les cha\u00eenes"))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.IptvChannelList.route,
+            arguments = listOf(
+                navArgument("providerId") { type = NavType.StringType },
+                navArgument("categoryId") { type = NavType.StringType; defaultValue = "" },
+                navArgument("categoryName") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) {
+            IptvChannelListScreen(
+                onPlayChannel = { streamUrl, title, headers, logoUrl ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = streamUrl,
+                            title = title,
+                            headers = headers,
+                            contentType = "iptv",
+                            logo = logoUrl
+                        )
+                    ) { popUpTo(Screen.Player.route) { inclusive = true } }
+                }
+            )
+        }
+
+        composable(
+            route = Screen.IptvMovieCategory.route,
+            arguments = listOf(
+                navArgument("providerId") { type = NavType.StringType },
+                navArgument("providerName") { type = NavType.StringType }
+            )
+        ) {
+            IptvMovieCategoryScreen(
+                onNavigateToMovies = { providerId, categoryId, categoryName ->
+                    navController.navigate(Screen.IptvMovieList.createRoute(providerId, categoryId, categoryName))
+                },
+                onNavigateToAllMovies = { providerId ->
+                    navController.navigate(Screen.IptvMovieList.createRoute(providerId, null, "Tous les films"))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.IptvMovieList.route,
+            arguments = listOf(
+                navArgument("providerId") { type = NavType.StringType },
+                navArgument("categoryId") { type = NavType.StringType; defaultValue = "" },
+                navArgument("categoryName") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) {
+            IptvMovieListScreen(
+                onPlayMovie = { streamUrl, title, headers, posterUrl ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = streamUrl,
+                            title = title,
+                            headers = headers,
+                            contentType = "iptv",
+                            poster = posterUrl
+                        )
+                    ) { popUpTo(Screen.Player.route) { inclusive = true } }
+                }
+            )
+        }
+
+        composable(
+            route = Screen.IptvSeriesCategory.route,
+            arguments = listOf(
+                navArgument("providerId") { type = NavType.StringType },
+                navArgument("providerName") { type = NavType.StringType }
+            )
+        ) {
+            IptvSeriesCategoryScreen(
+                onNavigateToSeries = { providerId, categoryId, categoryName ->
+                    navController.navigate(Screen.IptvSeriesList.createRoute(providerId, categoryId, categoryName))
+                },
+                onNavigateToAllSeries = { providerId ->
+                    navController.navigate(Screen.IptvSeriesList.createRoute(providerId, null, "Toutes les s\u00e9ries"))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.IptvSeriesList.route,
+            arguments = listOf(
+                navArgument("providerId") { type = NavType.StringType },
+                navArgument("categoryId") { type = NavType.StringType; defaultValue = "" },
+                navArgument("categoryName") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { backStackEntry ->
+            val providerId = backStackEntry.arguments?.getString("providerId")?.toLongOrNull() ?: -1L
+            IptvSeriesListScreen(
+                onOpenSeries = { seriesId ->
+                    navController.navigate(Screen.IptvSeriesDetail.createRoute(seriesId, providerId))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.IptvSeriesDetail.route,
+            arguments = listOf(
+                navArgument("seriesId") { type = NavType.StringType },
+                navArgument("providerId") { type = NavType.StringType }
+            )
+        ) {
+            IptvSeriesDetailScreen(
+                onPlayEpisode = { streamUrl, title, headers, posterUrl ->
+                    navController.navigate(
+                        Screen.Player.createRoute(
+                            streamUrl = streamUrl,
+                            title = title,
+                            headers = headers,
+                            contentType = "iptv",
+                            poster = posterUrl
+                        )
+                    ) { popUpTo(Screen.Player.route) { inclusive = true } }
+                }
+            )
+        }
     }
 }
+
+private fun parseRouteHeaders(headersJson: String?): Map<String, String> {
+    if (headersJson.isNullOrBlank()) return emptyMap()
+    return runCatching {
+        val json = JSONObject(headersJson)
+        json.keys().asSequence().associateWith { key -> json.optString(key) }
+    }.getOrDefault(emptyMap())
+}
+
+
+

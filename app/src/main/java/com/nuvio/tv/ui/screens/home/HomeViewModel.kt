@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.home
+﻿package com.nuvio.tv.ui.screens.home
 
 import android.content.Context
 import android.os.SystemClock
@@ -20,12 +20,18 @@ import com.nuvio.tv.data.local.TmdbSettingsDataStore
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache
+import com.nuvio.tv.data.freebox.FreeboxFileEntry
+import com.nuvio.tv.data.freebox.FreeboxOsClient
+import com.nuvio.tv.data.freebox.freeboxFileNameOnly
+import com.nuvio.tv.data.freebox.freeboxContentIdForPath
+import com.nuvio.tv.data.local.FreeboxSettingsDataStore
 import com.nuvio.tv.data.trailer.TrailerService
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+import com.nuvio.tv.domain.model.ThumbnailSize
 import com.nuvio.tv.domain.model.LibraryEntryInput
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.MetaPreview
@@ -76,6 +82,8 @@ class HomeViewModel @Inject constructor(
     internal val mdbListRepository: MDBListRepository,
     internal val trailerService: TrailerService,
     internal val watchedItemsPreferences: WatchedItemsPreferences,
+    internal val freeboxOsClient: FreeboxOsClient,
+    internal val freeboxSettingsDataStore: FreeboxSettingsDataStore,
     internal val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
     internal val cwEnrichmentCache: ContinueWatchingEnrichmentCache,
     internal val profileManager: com.nuvio.tv.core.profile.ProfileManager,
@@ -101,7 +109,7 @@ class HomeViewModel @Inject constructor(
     internal val _movieWatchedStatus = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val movieWatchedStatus: StateFlow<Map<String, Boolean>> = _movieWatchedStatus.asStateFlow()
 
-    // Pending batch of watched status updates — debounced before emission.
+    // Pending batch of watched status updates â€” debounced before emission.
     internal val _pendingWatchedBatch = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     /** True once the CW pipeline has completed its first emission (items or empty). */
     internal val _initialCwResolved = MutableStateFlow(false)
@@ -198,7 +206,7 @@ class HomeViewModel @Inject constructor(
     internal val prefetchedTmdbIds = Collections.synchronizedSet(mutableSetOf<String>())
     internal val cwMetaCache = Collections.synchronizedMap(mutableMapOf<String, CwMetaSummary?>())
     internal val cwMetaNegativeCacheTimestamps = Collections.synchronizedMap(mutableMapOf<String, Long>())
-    /** Ultra-light cache for badge evaluation: contentId → set of aired (season, episode) pairs. */
+    /** Ultra-light cache for badge evaluation: contentId â†’ set of aired (season, episode) pairs. */
     internal val cwBadgeEpisodeCache = Collections.synchronizedMap(mutableMapOf<String, Set<Pair<Int, Int>>?>())
     /** Per-series earliest upcoming season release date (epochMs) for smart TTL scheduling. */
     internal val cwBadgeNextSeasonMs = Collections.synchronizedMap(mutableMapOf<String, Long>())
@@ -220,7 +228,7 @@ class HomeViewModel @Inject constructor(
     internal val fullyWatchedSeriesIds get() = watchedSeriesStateHolder
     internal var tmdbEnrichFocusJob: Job? = null
     internal var pendingTmdbEnrichItemId: String? = null
-    /** Item that was focused during startup grace period — will be enriched once grace ends. */
+    /** Item that was focused during startup grace period â€” will be enriched once grace ends. */
     internal var deferredEnrichItem: MetaPreview? = null
     internal var adjacentItemPrefetchJob: Job? = null
     internal var pendingAdjacentPrefetchItemId: String? = null
@@ -285,6 +293,7 @@ class HomeViewModel @Inject constructor(
             observeLayoutPreferences()
             observeModernHomePresentation()
             loadContinueWatching()
+            loadFreeboxVideos()
             watchedSeriesStateHolder.loadFromDisk()
             observeExternalMetaPrefetchPreference()
             observeContinueWatchingSortMode()
@@ -314,7 +323,7 @@ class HomeViewModel @Inject constructor(
             profileManager.activeProfileId.collect { newId ->
                 if (newId != previousProfileId) {
                     previousProfileId = newId
-                    // Cancel old pipeline — prevents racing writes from stale coroutines.
+                    // Cancel old pipeline â€” prevents racing writes from stale coroutines.
                     cwPipelineJob?.cancel()
                     cwPipelineJob = null
                     // Clear all in-memory CW caches so data from the previous
@@ -438,6 +447,13 @@ class HomeViewModel @Inject constructor(
                     _uiState.update { it.copy(useEpisodeThumbnailsInCw = enabled) }
                 }
         }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.continueWatchingThumbnailSize
+                .distinctUntilChanged()
+                .collect { size ->
+                    _uiState.update { it.copy(continueWatchingThumbnailSize = size) }
+                }
+        }
         // When "next up from furthest episode" changes, clear CW caches and retrigger pipeline
         viewModelScope.launch {
             var initial = true
@@ -503,7 +519,7 @@ class HomeViewModel @Inject constructor(
                 .distinctUntilChanged()
                 .collect { source ->
                     if (previousSource != null && previousSource != source) {
-                        // Source changed — clear CW caches to prevent mixing.
+                        // Source changed â€” clear CW caches to prevent mixing.
                         cwMetaCache.clear()
                         cwEnrichedNextUpOverlay.clear()
                         cwEnrichedInProgressOverlay.clear()
@@ -570,10 +586,10 @@ class HomeViewModel @Inject constructor(
             val cachedNextUp = runCatching { cwEnrichmentCache.getNextUpSnapshot() }.getOrDefault(emptyList())
             if (cachedInProgress.isEmpty() && cachedNextUp.isEmpty()) return@launch
             val dismissedNextUp = traktSettingsDataStore.dismissedNextUpKeys.first()
-            // Render cached items immediately — don't wait for Trakt/allProgress.
+            // Render cached items immediately â€” don't wait for Trakt/allProgress.
             // The pipeline will replace these with live data once it completes.
             val inProgressItems = cachedInProgress
-                .filter { !watchProgressRepository.isDroppedShow(it.contentId) }
+                .filter { !it.contentId.isNullOrBlank() && !watchProgressRepository.isDroppedShow(it.contentId) }
                 .map { cached ->
                     ContinueWatchingItem.InProgress(
                         progress = com.nuvio.tv.domain.model.WatchProgress(
@@ -681,7 +697,7 @@ class HomeViewModel @Inject constructor(
                     hasRenderedFirstCatalog = true
                     150L
                 }
-                // During bulk loading, batch aggressively — placeholders are
+                // During bulk loading, batch aggressively â€” placeholders are
                 // already visible so the user won't notice the delay.
                 pendingCatalogLoads > 8 -> 300L
                 pendingCatalogLoads > 3 -> 250L
@@ -836,6 +852,24 @@ class HomeViewModel @Inject constructor(
             focusedItemKey = focusedItemKey,
             hasSavedFocus = true
         )
+    }
+
+    private fun loadFreeboxVideos() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val settings = freeboxSettingsDataStore.settings.first()
+                if (!settings.hasSavedConnection) return@launch
+                val token = freeboxOsClient.openSession(settings).getOrNull()?.sessionToken ?: return@launch
+                val settingsWithToken = settings.copy(sessionToken = token)
+                freeboxOsClient.listDirectory(settingsWithToken, "/Freebox/Vid\u00e9os")
+                    .onSuccess { entries ->
+                        val videos = entries.filter { !it.isDirectory }
+                        _uiState.update { it.copy(freeboxVideoEntries = videos) }
+                    }
+            } catch (e: Exception) {
+                // Freebox non connectee ou dossier absent, on ignore silencieusement
+            }
+        }
     }
 
     override fun onCleared() {

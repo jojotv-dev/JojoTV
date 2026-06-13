@@ -8,20 +8,21 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,10 +43,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.Icon
-import androidx.tv.material3.Text
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import com.nuvio.tv.ui.components.AutoResizeText
@@ -55,8 +56,8 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeChild
 
 private val SidebarLeadingVisualSize = 34.dp
-private val SidebarContentGap = 14.dp
-private val SidebarProfileContentGap = 18.dp
+private val SidebarContentGap = 12.dp
+private val SidebarProfileContentGap = 12.dp
 
 @Composable
 internal fun ModernSidebarBlurPanel(
@@ -130,81 +131,70 @@ internal fun ModernSidebarBlurPanel(
             .clip(panelShape)
             .background(brush = panelBackgroundBrush, shape = panelShape)
             .border(width = 1.dp, color = panelBorderColor, shape = panelShape)
-            .padding(horizontal = 12.dp, vertical = 14.dp)
+            .padding(horizontal = 8.dp, vertical = 12.dp)
     ) {
-        if (showProfileSelector && activeProfileName.isNotEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .offset(y = 12.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                SidebarProfileItem(
-                    profileName = activeProfileName,
-                    profileColorHex = activeProfileColorHex,
-                    profileAvatarImageUrl = activeProfileAvatarImageUrl,
-                    focusEnabled = keepSidebarFocusDuringCollapse,
-                    labelAlpha = sidebarLabelAlpha,
-                    onFocusChanged = { focused ->
-                        if (focused) onDrawerItemFocused(drawerItems.size)
-                    },
-                    onClick = onSwitchProfile,
-                    modifier = Modifier.fillMaxWidth(0.92f)
-                )
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .offset(y = 12.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.app_logo_wordmark),
-                    contentDescription = stringResource(R.string.app_name),
-                    modifier = Modifier
-                        .fillMaxWidth(0.72f)
-                        .height(36.dp),
-                    alpha = sidebarLabelAlpha
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
-            verticalArrangement = Arrangement.Center,
+            contentPadding = PaddingValues(top = 2.dp, bottom = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier.offset(y = (-12).dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                drawerItems.forEachIndexed { index, item ->
-                    key(item.route) {
-                        SidebarNavigationItem(
-                            label = item.label,
-                            iconRes = item.iconRes,
-                            icon = item.icon,
-                            selected = selectedDrawerRoute == item.route,
-                            focusEnabled = keepSidebarFocusDuringCollapse,
-                            labelAlpha = sidebarLabelAlpha,
-                            iconScale = sidebarIconScale,
-                            onFocusChanged = {
-                                if (it) {
-                                    onDrawerItemFocused(index)
-                                }
-                            },
-                            onClick = { onDrawerItemClick(item.route) },
+            item(key = "profile_header") {
+                if (showProfileSelector && activeProfileName.isNotEmpty()) {
+                    SidebarProfileItem(
+                        profileName = activeProfileName,
+                        profileColorHex = activeProfileColorHex,
+                        profileAvatarImageUrl = activeProfileAvatarImageUrl,
+                        focusEnabled = keepSidebarFocusDuringCollapse,
+                        labelAlpha = sidebarLabelAlpha,
+                        onFocusChanged = { focused ->
+                            if (focused) onDrawerItemFocused(0)
+                        },
+                        onClick = onSwitchProfile,
+                        modifier = Modifier.fillMaxWidth(0.96f)
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(42.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.app_logo_wordmark),
+                            contentDescription = stringResource(R.string.app_name),
                             modifier = Modifier
-                                .fillMaxWidth(0.92f)
-                                .focusRequester(drawerItemFocusRequesters.getValue(item.route))
+                                .fillMaxWidth(0.76f)
+                                .height(34.dp),
+                            alpha = sidebarLabelAlpha
                         )
                     }
                 }
+            }
+            itemsIndexed(
+                items = drawerItems,
+                key = { _, item -> item.route }
+            ) { index, item ->
+                SidebarNavigationItem(
+                    label = item.label,
+                    iconRes = item.iconRes,
+                    icon = item.icon,
+                    selected = selectedDrawerRoute == item.route,
+                    focusEnabled = keepSidebarFocusDuringCollapse,
+                    labelAlpha = sidebarLabelAlpha,
+                    iconScale = sidebarIconScale,
+                    onFocusChanged = {
+                        if (it) {
+                            onDrawerItemFocused(index + 1)
+                        }
+                    },
+                    onClick = { onDrawerItemClick(item.route) },
+                    modifier = Modifier
+                        .fillMaxWidth(0.96f)
+                        .focusRequester(drawerItemFocusRequesters.getValue(item.route))
+                )
             }
         }
     }
@@ -266,7 +256,7 @@ private fun SidebarNavigationItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
         Box(
@@ -286,14 +276,14 @@ private fun SidebarNavigationItem(
                     imageVector = icon,
                     contentDescription = null,
                     tint = contentColor,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(24.dp)
                 )
 
                 iconRes != null -> Icon(
                     painter = rememberRawSvgPainter(iconRes),
                     contentDescription = null,
                     tint = contentColor,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
         }
@@ -305,7 +295,11 @@ private fun SidebarNavigationItem(
             modifier = Modifier
                 .weight(1f)
                 .graphicsLayer { alpha = labelAlpha },
-            style = androidx.tv.material3.MaterialTheme.typography.titleLarge
+            style = androidx.tv.material3.MaterialTheme.typography.titleLarge.copy(
+                fontSize = 15.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.SemiBold
+            )
         )
     }
     }
@@ -358,7 +352,7 @@ private fun SidebarProfileItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
         Box(
@@ -380,6 +374,8 @@ private fun SidebarProfileItem(
                 .weight(1f)
                 .graphicsLayer { alpha = labelAlpha },
             style = androidx.tv.material3.MaterialTheme.typography.titleLarge.copy(
+                fontSize = 15.sp,
+                lineHeight = 18.sp,
                 fontWeight = FontWeight.SemiBold
             )
         )
@@ -398,3 +394,5 @@ private fun rememberRawSvgPainter(rawIconRes: Int): Painter {
             .build()
     )
 }
+
+

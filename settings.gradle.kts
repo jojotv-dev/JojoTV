@@ -1,4 +1,4 @@
-pluginManagement {
+﻿pluginManagement {
     repositories {
         google {
             content {
@@ -26,4 +26,6 @@ dependencyResolutionManagement {
 rootProject.name = "My Application"
 include(":app")
 include(":baselineprofile")
-include(":ffmpeg-decoder-downmix")
+// include(":ffmpeg-decoder-downmix")
+include(":streamvault-domain")
+include(":streamvault-data")

@@ -207,6 +207,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             }
 
             val afrJob = async {
+                if (isFreeboxPlayback) return@async
                 runAfrPreflightIfEnabled(
                     url = url,
                     headers = headers,
@@ -854,11 +855,6 @@ internal fun PlayerRuntimeController.initializePlayer(
                             } else if (!userPausedManually && hasRenderedFirstFrame) {
                                 play()
                             }
-                            tryApplyPendingResumeProgress(this@apply)
-                            _uiState.value.pendingSeekPosition?.let { position ->
-                                seekTo(position)
-                                _uiState.update { it.copy(pendingSeekPosition = null) }
-                            }
                             tryAutoSelectPreferredSubtitleFromAvailableTracks()
                             trackSelectionParameters = trackSelectionParameters.buildUpon().build()
                             maybeScheduleFirstFrameWatchdog()
@@ -926,10 +922,15 @@ internal fun PlayerRuntimeController.initializePlayer(
                         updateAudioControlAvailability()
                         // Start playback now that the first video frame is
                         // visible: audio and video begin in sync.
-                        if (!startPaused && !userPausedManually) {
-                            playWhenReady = true
-                            play()
-                        }
+                          tryApplyPendingResumeProgress(this@apply)
+                          _uiState.value.pendingSeekPosition?.let { position ->
+                              seekTo(position)
+                              _uiState.update { it.copy(pendingSeekPosition = null) }
+                          }
+                          if (!startPaused && !userPausedManually) {
+                              playWhenReady = true
+                              play()
+                          }
                         refreshStableProgressResetGate()
                         // Restore speed after PCM fallback: audio sink is already
                         // configured in PCM mode and won't revert to passthrough.
@@ -1134,7 +1135,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                         if (maybeAutoSwitchInternalPlayerOnStartupError(detailedError = detailedError, allowEngineFailover = allowEngineFailover)) {
                             return
                         }
-                        if (attemptAutoRetry(error, detailedError)) {
+                        if (attemptFreeboxTokenRefresh(error)) {
+                        return
+                    }
+                    if (attemptAutoRetry(error, detailedError)) {
                             return
                         }
 

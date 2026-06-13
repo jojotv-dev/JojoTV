@@ -64,6 +64,8 @@ fun AuthQrSignInScreen(
         uiState.qrLoginStatus?.contains("approved", ignoreCase = true) == true
     }
     var onboardingTransitionHandled by remember(isOnboardingMode) { mutableStateOf(false) }
+    var hasAutoStartedQrLogin by remember { mutableStateOf(false) }
+    var lastExchangeAttemptCode by remember { mutableStateOf<String?>(null) }
 
     BackHandler {
         viewModel.clearQrLoginSession()
@@ -76,13 +78,13 @@ fun AuthQrSignInScreen(
         }
     }
 
-    LaunchedEffect(uiState.authState, isSignedIn, uiState.qrLoginCode, uiState.isLoading) {
+    LaunchedEffect(uiState.authState, isSignedIn) {
         if (
+            !hasAutoStartedQrLogin &&
             uiState.authState !is AuthState.Loading &&
-            !isSignedIn &&
-            uiState.qrLoginCode.isNullOrBlank() &&
-            !uiState.isLoading
+            !isSignedIn
         ) {
+            hasAutoStartedQrLogin = true
             viewModel.startQrLogin()
         }
     }
@@ -93,8 +95,10 @@ fun AuthQrSignInScreen(
         }
     }
 
-    LaunchedEffect(isApproved, uiState.isLoading) {
-        if (isApproved && !uiState.isLoading) {
+    LaunchedEffect(isApproved, uiState.isLoading, uiState.qrLoginCode) {
+        val code = uiState.qrLoginCode
+        if (isApproved && !uiState.isLoading && !code.isNullOrBlank() && lastExchangeAttemptCode != code) {
+            lastExchangeAttemptCode = code
             viewModel.exchangeQrLogin()
         }
     }
@@ -133,14 +137,20 @@ fun AuthQrSignInScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Image(
-                    painter = painterResource(id = R.drawable.app_logo_wordmark),
-                    contentDescription = stringResource(R.string.cd_nuvio),
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .height(60.dp),
-                    contentScale = ContentScale.Fit
-                )
+                        .fillMaxWidth(0.78f)
+                        .background(Color.Transparent)
+                        .padding(horizontal = 22.dp, vertical = 18.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.app_logo_mark),
+                        contentDescription = stringResource(R.string.cd_nuvio),
+                        modifier = Modifier.size(192.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                }
                 Spacer(modifier = Modifier.height(22.dp))
                 Text(
                     text = stringResource(R.string.auth_qr_title),
@@ -446,3 +456,4 @@ private fun formatDuration(millis: Long): String {
     val seconds = totalSeconds % 60
     return "%02d:%02d".format(minutes, seconds)
 }
+

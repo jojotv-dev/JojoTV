@@ -21,13 +21,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -68,8 +69,11 @@ internal enum class SettingsCategory {
     EXPERIENCE,
     ACCOUNT,
     PROFILES,
+    FREEBOX,
+    IPTV,
     APPEARANCE,
     LAYOUT,
+    ADDONS,
     PLUGINS,
     INTEGRATION,
     PLAYBACK,
@@ -134,6 +138,20 @@ private fun rememberSettingsSectionSpecs() = listOf(
         destination = SettingsSectionDestination.Inline
     ),
     SettingsSectionSpec(
+        category = SettingsCategory.FREEBOX,
+        title = stringResource(R.string.freebox_settings_title),
+        icon = Icons.Default.Dns,
+        subtitle = stringResource(R.string.freebox_settings_subtitle),
+        destination = SettingsSectionDestination.Inline
+    ),
+    SettingsSectionSpec(
+        category = SettingsCategory.IPTV,
+        title = stringResource(R.string.iptv_settings_title),
+        icon = Icons.Default.LiveTv,
+        subtitle = stringResource(R.string.iptv_settings_subtitle),
+        destination = SettingsSectionDestination.Inline
+    ),
+    SettingsSectionSpec(
         category = SettingsCategory.APPEARANCE,
         title = stringResource(R.string.appearance_title),
         icon = Icons.Default.Palette,
@@ -148,6 +166,12 @@ private fun rememberSettingsSectionSpecs() = listOf(
         destination = SettingsSectionDestination.Inline
     ),
     SettingsSectionSpec(
+        category = SettingsCategory.ADDONS,
+        title = stringResource(R.string.nav_addons),
+        rawIconRes = R.raw.sidebar_plugin,
+        subtitle = "Gerer les addons installes.",
+        destination = SettingsSectionDestination.External
+    ),    SettingsSectionSpec(
         category = SettingsCategory.PLUGINS,
         title = stringResource(R.string.settings_plugins),
         icon = Icons.Default.Build,
@@ -205,6 +229,7 @@ fun SettingsScreen(
     onNavigateToAddons: () -> Unit = {},
     onNavigateToAuthQrSignIn: () -> Unit = {},
     onNavigateToManageProfiles: () -> Unit = {},
+    onNavigateToIptvHome: () -> Unit = {},
     onNavigateToSupportersContributors: () -> Unit = {},
     onNavigateToLicensesAttributions: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
@@ -238,7 +263,10 @@ fun SettingsScreen(
                 SettingsCategory.DEBUG -> BuildConfig.IS_DEBUG_BUILD && !isEssentialMode
                 SettingsCategory.PROFILES -> isPrimaryProfileActive
                 SettingsCategory.ACCOUNT -> isPrimaryProfileActive
+                SettingsCategory.FREEBOX -> true
+                SettingsCategory.IPTV -> true
                 SettingsCategory.LAYOUT -> true
+                SettingsCategory.ADDONS -> !isEssentialMode
                 SettingsCategory.PLUGINS -> AppFeaturePolicy.pluginsEnabled && !isEssentialMode
                 SettingsCategory.INTEGRATION -> true
                 SettingsCategory.ADVANCED -> true
@@ -260,6 +288,8 @@ fun SettingsScreen(
             mapOf(
                 SettingsCategory.APPEARANCE to FocusRequester(),
                 SettingsCategory.EXPERIENCE to FocusRequester(),
+                SettingsCategory.FREEBOX to FocusRequester(),
+                SettingsCategory.IPTV to FocusRequester(),
                 SettingsCategory.LAYOUT to FocusRequester(),
                 SettingsCategory.INTEGRATION to FocusRequester(),
                 SettingsCategory.PLAYBACK to FocusRequester(),
@@ -377,6 +407,7 @@ fun SettingsScreen(
                                         when (section.category) {
                                             SettingsCategory.ACCOUNT -> onNavigateToAuthQrSignIn()
                                             SettingsCategory.TRAKT -> onNavigateToTrakt()
+                                            SettingsCategory.ADDONS -> onNavigateToAddons()
                                             else -> Unit
                                         }
                                     } else {
@@ -437,6 +468,14 @@ fun SettingsScreen(
                         SettingsCategory.PROFILES -> ProfileSettingsContent(
                             onManageProfiles = onNavigateToManageProfiles
                         )
+                        SettingsCategory.FREEBOX -> FreeboxSettingsContent(
+                            initialFocusRequester = if (allowDetailAutofocus) {
+                                contentFocusRequesters[SettingsCategory.FREEBOX]
+                            } else {
+                                null
+                            }
+                        )
+                        SettingsCategory.IPTV -> IptvSettingsScreen()
                         SettingsCategory.APPEARANCE -> ThemeSettingsContent(
                             initialFocusRequester = if (allowDetailAutofocus) {
                                 contentFocusRequesters[SettingsCategory.APPEARANCE]
@@ -512,6 +551,7 @@ fun SettingsScreen(
                                 null
                             }
                         )
+                        SettingsCategory.ADDONS -> Unit
                         SettingsCategory.PLUGINS -> if (AppFeaturePolicy.pluginsEnabled) PluginsSettingsContent()
                         SettingsCategory.ACCOUNT -> AccountSettingsInline(
                             onNavigateToAuthQrSignIn = onNavigateToAuthQrSignIn

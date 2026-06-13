@@ -129,7 +129,7 @@ interface WatchProgressRepository {
     /**
      * Returns true if the show is dropped/hidden from progress on the active source.
      */
-    fun isDroppedShow(contentId: String): Boolean
+    fun isDroppedShow(contentId: String?): Boolean
 
     /**
      * Returns true if Trakt is both configured AND authenticated as the active progress source.

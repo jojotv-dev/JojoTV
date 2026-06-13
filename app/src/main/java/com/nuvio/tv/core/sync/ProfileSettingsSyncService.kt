@@ -17,6 +17,9 @@ import com.nuvio.tv.data.local.ExperienceModeDataStore
 import com.nuvio.tv.data.local.ProfileDataStoreFactory
 import com.nuvio.tv.data.remote.supabase.SupabaseProfileSettingsBlob
 import com.nuvio.tv.domain.model.DiscoverLocation
+import com.streamvault.data.local.dao.ProviderDao
+import com.streamvault.data.local.entity.ProviderEntity
+import com.streamvault.domain.model.ProviderType
 import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +43,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.floatOrNull
@@ -49,7 +53,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
 import javax.inject.Inject
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import javax.inject.Singleton
 
 private const val TAG = "ProfileSettingsSyncService"
@@ -57,13 +67,17 @@ private const val SETTINGS_PUSH_DEBOUNCE_MS = 1500L
 private const val FOREGROUND_PULL_DELAY_MS = 2500L
 private const val FOREGROUND_PULL_MIN_INTERVAL_MS = 60_000L
 private const val SETTINGS_SYNC_PLATFORM = "tv"
+private const val IPTV_PROVIDERS_FEATURE = "iptv_providers"
+private const val IPTV_SYNC_SECRET_PREFIX = "syncenc:v1:"
+private const val IPTV_SYNC_KEY_CONTEXT = "nuvio:iptv-provider-sync:"
 
 @Singleton
 class ProfileSettingsSyncService @Inject constructor(
     private val authManager: AuthManager,
     private val postgrest: Postgrest,
     private val profileManager: ProfileManager,
-    private val profileDataStoreFactory: ProfileDataStoreFactory
+    private val profileDataStoreFactory: ProfileDataStoreFactory,
+    private val providerDao: ProviderDao,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncMutex = Mutex()
@@ -87,6 +101,8 @@ class ProfileSettingsSyncService @Inject constructor(
         "trakt_settings",
         "debrid_settings",
         "animeskip_settings",
+        "freebox_settings",
+        "iptv_settings",
         "track_preference"
     )
 
@@ -154,8 +170,17 @@ class ProfileSettingsSyncService @Inject constructor(
                 val rows = response.decodeList<SupabaseProfileSettingsBlob>()
                 val blob = rows.firstOrNull()?.settingsJson
                 if (blob == null) {
-                    Log.d(TAG, "No remote profile settings blob for profile $profileId; keeping local settings")
-                    return@withLock Result.success(false)
+                    val settingsJson = exportSettingsBlob(profileId)
+                    val seedParams = buildJsonObject {
+                        put("p_profile_id", profileId)
+                        put("p_settings_json", settingsJson)
+                        put("p_platform", SETTINGS_SYNC_PLATFORM)
+                    }
+                    withJwtRefreshRetry {
+                        postgrest.rpc("sync_push_profile_settings_blob", seedParams)
+                    }
+                    Log.d(TAG, "No remote profile settings blob for profile $profileId; seeded it from local settings")
+                    return@withLock Result.success(true)
                 }
 
                 val featuresJson = blob["features"]?.jsonObject ?: return@withLock Result.success(false)
@@ -210,6 +235,7 @@ class ProfileSettingsSyncService @Inject constructor(
                 }
                 put(feature, serialized)
             }
+            put(IPTV_PROVIDERS_FEATURE, exportIptvProvidersJson())
         }
 
         return buildJsonObject {
@@ -311,6 +337,7 @@ class ProfileSettingsSyncService @Inject constructor(
                     }
                 }
             }
+            importIptvProvidersJson(featuresJson[IPTV_PROVIDERS_FEATURE]?.jsonObject)
         } finally {
             applyingRemoteBlob = false
         }
@@ -326,6 +353,7 @@ class ProfileSettingsSyncService @Inject constructor(
                                 "$feature={${buildFeatureSignature(prefs, feature)}}"
                             }
                     }
+
                     combine(featureFlows) { signatures ->
                         signatures.joinToString(separator = "||")
                     }
@@ -337,7 +365,7 @@ class ProfileSettingsSyncService @Inject constructor(
                     if (!authManager.isAuthenticated) return@collect
                     if (applyingRemoteBlob) return@collect
                     if (profileDataStoreFactory.corruptedFileNames.isNotEmpty()) {
-                        Log.w(TAG, "DataStore corruption detected (${profileDataStoreFactory.corruptedFileNames}) — pulling from remote instead of pushing")
+                        Log.w(TAG, "DataStore corruption detected (${profileDataStoreFactory.corruptedFileNames}) Ã¢â‚¬â€ pulling from remote instead of pushing")
                         profileDataStoreFactory.corruptedFileNames.clear()
                         pullCurrentProfileFromRemote()
                         return@collect
@@ -357,6 +385,7 @@ class ProfileSettingsSyncService @Inject constructor(
             val prefs = profileDataStoreFactory.get(profileId, feature).data.first()
             signatures += "$feature={${buildFeatureSignature(prefs, feature)}}"
         }
+                    //         signatures += "$IPTV_PROVIDERS_FEATURE={${buildIptvProvidersSignature(providerDao.getAllSync())}}"
         return signatures.joinToString(separator = "||")
     }
 
@@ -412,7 +441,7 @@ class ProfileSettingsSyncService @Inject constructor(
                 featureJson
             }
             "$feature={${buildFeatureSignature(normalized)}}"
-        }
+        } + "||$IPTV_PROVIDERS_FEATURE={${buildFeatureSignature(featuresJson[IPTV_PROVIDERS_FEATURE]?.jsonObject ?: JsonObject(emptyMap()))}}"
     }
 
     private fun buildFeatureSignature(prefs: Preferences, feature: String = ""): String {
@@ -434,6 +463,116 @@ class ProfileSettingsSyncService @Inject constructor(
             .sortedBy { it.key }
             .joinToString(separator = "|") { (key, value) -> "$key=$value" }
     }
+    private suspend fun exportIptvProvidersJson(): JsonObject {
+        val providers = providerDao.getAllSync()
+        return buildJsonObject {
+            put("providers", kotlinx.serialization.json.JsonArray(providers.map { p ->
+                buildJsonObject {
+                    put("name", p.name)
+                    put("type", p.type.name)
+                    put("server_url", p.serverUrl)
+                    put("username", p.username)
+                    put("password", p.password)
+                    put("m3u_url", p.m3uUrl)
+                    put("epg_url", p.epgUrl)
+                    put("http_user_agent", p.httpUserAgent)
+                    put("stalker_mac_address", p.stalkerMacAddress)
+                    put("is_active", p.isActive)
+                }
+            }))
+        }
+    }
+
+    private suspend fun importIptvProvidersJson(featureJson: JsonObject?) {
+        if (featureJson == null) return
+        val providersArray = featureJson["providers"]?.jsonArray ?: return
+        val existing = providerDao.getAllSync()
+        providersArray.forEach { element ->
+            val obj = element.jsonObject
+            val name = obj.stringValue("name")
+            val typeStr = obj.stringValue("type")
+            val serverUrl = obj.stringValue("server_url")
+            val username = obj.stringValue("username")
+            if (name.isBlank()) return@forEach
+            val alreadyExists = existing.any { it.name == name && it.serverUrl == serverUrl && it.username == username }
+            if (alreadyExists) return@forEach
+            val type = runCatching { ProviderType.valueOf(typeStr) }.getOrNull() ?: return@forEach
+            val entity = ProviderEntity(
+                id = 0L,
+                name = name,
+                type = type,
+                serverUrl = serverUrl,
+                username = username,
+                password = obj.stringValue("password"),
+                m3uUrl = obj.stringValue("m3u_url"),
+                epgUrl = obj.stringValue("epg_url"),
+                httpUserAgent = obj.stringValue("http_user_agent"),
+                httpHeaders = "",
+                stalkerMacAddress = obj.stringValue("stalker_mac_address"),
+                stalkerDeviceProfile = "",
+                stalkerDeviceTimezone = "",
+                stalkerDeviceLocale = "",
+                stalkerSerialNumber = "",
+                stalkerDeviceId = "",
+                stalkerDeviceId2 = "",
+                stalkerSignature = "",
+                stalkerAuthMode = com.streamvault.domain.model.StalkerAuthMode.AUTO,
+                stalkerPortalProfile = com.streamvault.domain.model.StalkerPortalProfile.entries.first(),
+                stalkerPortalFingerprint = com.streamvault.domain.model.StalkerPortalFingerprint.entries.first(),
+                stalkerMagPreset = com.streamvault.domain.model.StalkerMagPreset.entries.first(),
+                stalkerLastBootstrapRecipe = com.streamvault.domain.model.StalkerBootstrapRecipe.entries.first(),
+                stalkerEndpointPreference = com.streamvault.domain.model.StalkerEndpointPreference.AUTO,
+                stalkerCookieMode = com.streamvault.domain.model.StalkerCookieMode.NONE,
+                stalkerPlaybackBackendHint = com.streamvault.domain.model.StalkerPlaybackBackendHint.AUTO,
+                stalkerLastPlaybackMode = null,
+                stalkerCredentialsRequired = false,
+                stalkerMacRequired = false,
+                stalkerUsesTemporaryLinks = false,
+                stalkerModuleRestricted = false,
+                stalkerStrictFingerprintRequired = false,
+                stalkerRecipeFallbackUsed = false,
+                stalkerRecipeRediscoveryAttempts = 0,
+                isActive = obj.booleanValue("is_active", false),
+                maxConnections = 1,
+                expirationDate = null,
+                apiVersion = null,
+                allowedOutputFormatsJson = "",
+                epgSyncMode = com.streamvault.domain.model.ProviderEpgSyncMode.entries.first(),
+                xtreamFastSyncEnabled = false,
+                xtreamLiveSyncMode = com.streamvault.domain.model.ProviderXtreamLiveSyncMode.AUTO,
+                m3uVodClassificationEnabled = false,
+                status = com.streamvault.domain.model.ProviderStatus.entries.first(),
+                lastSyncedAt = 0L,
+                createdAt = System.currentTimeMillis()
+            )
+            runCatching { providerDao.insert(entity) }
+        }
+    }
+
+    private fun buildIptvProvidersSignature(providers: List<*>): String = ""
+    private fun decryptProviderPassword(password: String): String = password
+    private suspend fun encryptSyncedProviderPassword(password: String): String = password
+    private fun decryptSyncedProviderPassword(password: String): String = password
+
+    private fun JsonObject.stringValue(key: String): String =
+        this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+
+    private fun JsonObject.booleanValue(key: String, default: Boolean): Boolean =
+        this[key]?.jsonPrimitive?.booleanOrNull ?: default
+
+    private fun JsonObject.intValue(key: String, default: Int): Int =
+        this[key]?.jsonPrimitive?.intOrNull ?: default
+
+    private fun JsonObject.longValue(key: String, default: Long): Long =
+        this[key]?.jsonPrimitive?.longOrNull ?: default
+
+    private fun JsonObject.longValueOrNull(key: String): Long? =
+        this[key]?.jsonPrimitive?.longOrNull
+
+    private inline fun <reified T : Enum<T>> JsonObject.enumValue(key: String, default: T): T =
+        stringValue(key).takeIf { it.isNotBlank() }?.let { raw ->
+            runCatching { enumValueOf<T>(raw) }.getOrNull()
+        } ?: default
 
     private fun encodePreferenceValue(rawValue: Any?): JsonObject? {
         return when (rawValue) {
@@ -515,3 +654,5 @@ class ProfileSettingsSyncService @Inject constructor(
         }
     }
 }
+
+

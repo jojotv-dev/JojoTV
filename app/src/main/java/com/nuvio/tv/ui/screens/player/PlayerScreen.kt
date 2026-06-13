@@ -8,6 +8,7 @@ package com.nuvio.tv.ui.screens.player
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.widget.Toast
 import androidx.annotation.RawRes
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -260,6 +262,12 @@ fun PlayerScreen(
         handleBackPress()
     }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.stopAndRelease()
+        }
+    }
+
     LaunchedEffect(uiState.playbackEnded, uiState.error, uiState.pendingExitReason, shouldConfirmNextEpisodeOnEnd) {
         val explicitReason = uiState.pendingExitReason
         val shouldDispatchNatural = uiState.playbackEnded &&
@@ -343,7 +351,7 @@ fun PlayerScreen(
 
     // Frame rate matching lifecycle.
     val activity = LocalContext.current as? android.app.Activity
-    LaunchedEffect(activity) {
+    LaunchedEffect(Unit) {
         viewModel.attachHostActivity(activity)
         viewModel.startInitialPlaybackIfNeeded()
     }
@@ -915,6 +923,9 @@ fun PlayerScreen(
                 onSeekTo = { viewModel.onEvent(PlayerEvent.OnSeekTo(it)) },
                 onShowEpisodesPanel = { viewModel.onEvent(PlayerEvent.OnShowEpisodesPanel) },
                 onShowSourcesPanel = { viewModel.onEvent(PlayerEvent.OnShowSourcesPanel) },
+                onRecord = {
+                    Toast.makeText(context, "Enregistrement disponible depuis IPTV", Toast.LENGTH_SHORT).show()
+                },
                 onShowAudioDialog = { viewModel.onEvent(PlayerEvent.OnShowAudioOverlay) },
                 onShowSubtitleDialog = { viewModel.onEvent(PlayerEvent.OnShowSubtitleOverlay) },
                 onShowSpeedDialog = { viewModel.onEvent(PlayerEvent.OnShowSpeedDialog) },
@@ -1552,6 +1563,7 @@ private fun PlayerControlsOverlay(
     onSeekTo: (Long) -> Unit,
     onShowEpisodesPanel: () -> Unit,
     onShowSourcesPanel: () -> Unit,
+    onRecord: () -> Unit,
     onShowAudioDialog: () -> Unit,
     onShowSubtitleDialog: () -> Unit,
     onShowSpeedDialog: () -> Unit,
@@ -1728,6 +1740,15 @@ private fun PlayerControlsOverlay(
                         contentDescription = if (uiState.isPlaying) stringResource(R.string.cd_pause) else stringResource(R.string.cd_play),
                         onClick = onPlayPause,
                         focusRequester = playPauseFocusRequester,
+                        upFocusRequester = progressBarFocusRequester,
+                        onDownKey = onHideControls,
+                        onFocused = onResetHideTimer
+                    )
+
+                    ControlButton(
+                        icon = Icons.Default.FiberManualRecord,
+                        contentDescription = "Enregistrer",
+                        onClick = onRecord,
                         upFocusRequester = progressBarFocusRequester,
                         onDownKey = onHideControls,
                         onFocused = onResetHideTimer

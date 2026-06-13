@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateIntOffsetAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,10 +31,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import com.nuvio.tv.R
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Card
@@ -43,7 +40,12 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.R
 import com.nuvio.tv.ui.theme.NuvioColors
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 
 private val NavItemShape = RoundedCornerShape(14.dp)
 private val NavItemIconShape = RoundedCornerShape(10.dp)
@@ -65,13 +67,16 @@ fun SidebarNavigation(
     onFocusChange: (Boolean) -> Unit,
     onNavigate: (String) -> Unit
 ) {
-    val density = LocalDensity.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
     val sidebarWidthPx = remember(density) { with(density) { 260.dp.roundToPx() } }
     val collapsedOffset = remember(sidebarWidthPx) { IntOffset(-sidebarWidthPx, 0) }
     val offsetX by animateIntOffsetAsState(
         targetValue = if (isExpanded) IntOffset.Zero else collapsedOffset,
         label = "sidebarOffset"
     )
+
+    val itemFocusRequesters = remember(items.size) { List(items.size) { FocusRequester() } }
+    var focusedIndex by remember { mutableStateOf(0) }
 
     Column(
         modifier = Modifier
@@ -83,6 +88,23 @@ fun SidebarNavigation(
             .onFocusChanged { state ->
                 onFocusChange(state.hasFocus)
                 onExpandedChange(state.hasFocus)
+            }
+            .onKeyEvent { event ->
+                if (event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
+                    when (event.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                            val prev = (focusedIndex - 1 + items.size) % items.size
+                            itemFocusRequesters.getOrNull(prev)?.requestFocus()
+                            true
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            val next = (focusedIndex + 1) % items.size
+                            itemFocusRequesters.getOrNull(next)?.requestFocus()
+                            true
+                        }
+                        else -> false
+                    }
+                } else false
             },
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -94,11 +116,12 @@ fun SidebarNavigation(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        items.forEach { item ->
+        items.forEachIndexed { index, item ->
             SidebarNavItem(
                 item = item,
                 isSelected = item.route == selectedRoute,
-                focusRequester = if (item.route == selectedRoute) focusRequester else null,
+                focusRequester = if (item.route == selectedRoute) focusRequester else itemFocusRequesters[index],
+                onFocused = { focusedIndex = index },
                 onNavigate = onNavigate
             )
         }
@@ -111,6 +134,7 @@ private fun SidebarNavItem(
     item: SidebarItem,
     isSelected: Boolean,
     focusRequester: FocusRequester?,
+    onFocused: () -> Unit = {},
     onNavigate: (String) -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
@@ -128,20 +152,19 @@ private fun SidebarNavItem(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
+            .border(2.dp, borderColor, NavItemShape)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { state ->
                 isFocused = state.hasFocus
+                if (state.hasFocus) onFocused()
             },
         colors = CardDefaults.colors(
             containerColor = backgroundColor,
-            focusedContainerColor = backgroundColor,
+            focusedContainerColor = backgroundColor
         ),
         border = CardDefaults.border(
             border = androidx.tv.material3.Border.None,
-            focusedBorder = androidx.tv.material3.Border(
-                border = androidx.compose.foundation.BorderStroke(2.dp, borderColor),
-                shape = NavItemShape
-            )
+            focusedBorder = androidx.tv.material3.Border.None
         ),
         shape = CardDefaults.shape(shape = NavItemShape)
     ) {
@@ -153,26 +176,25 @@ private fun SidebarNavItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(NavItemIconShape)
-                .background(NuvioColors.SurfaceVariant),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = item.icon,
-                contentDescription = item.label,
-                tint = NuvioColors.TextPrimary,
-                modifier = Modifier.size(18.dp)
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(NavItemIconShape)
+                    .background(NuvioColors.SurfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = item.icon,
+                    contentDescription = item.label,
+                    tint = NuvioColors.TextPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Text(
+                text = item.label,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (isFocused || isSelected) NuvioColors.TextPrimary else NuvioColors.TextSecondary
             )
         }
-
-        Text(
-            text = item.label,
-            style = MaterialTheme.typography.titleMedium,
-            color = if (isFocused || isSelected) NuvioColors.TextPrimary else NuvioColors.TextSecondary
-        )
-    }
     }
 }

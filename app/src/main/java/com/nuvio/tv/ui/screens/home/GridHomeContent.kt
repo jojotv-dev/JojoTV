@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.home
+﻿package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.runtime.State
 import androidx.compose.foundation.lazy.grid.items
@@ -71,6 +71,7 @@ import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.ui.components.GridContentCard
 import com.nuvio.tv.ui.components.GridContinueWatchingSection
+import com.nuvio.tv.ui.components.FreeboxVideosSection
 import com.nuvio.tv.ui.components.HeroCarousel
 import com.nuvio.tv.ui.components.PosterCardDefaults
 import com.nuvio.tv.ui.components.PosterCardStyle
@@ -91,6 +92,10 @@ fun GridHomeContent(
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onRemoveContinueWatching: (String, Int?, Int?, Boolean) -> Unit,
+    onDeleteFromFreebox: ((ContinueWatchingItem) -> Unit)? = null,
+    onNavigateToFreebox: (String) -> Unit = {},
+    continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
+    continueWatchingPortraitMode: Boolean = false,
     isCatalogItemWatched: (MetaPreview) -> Boolean = { false },
     onCatalogItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> },
     posterCardStyle: PosterCardStyle = PosterCardDefaults.Style,
@@ -243,7 +248,7 @@ fun GridHomeContent(
     val preItems = remember(gridItemsWithKeys, firstSectionIndex) {
         if (firstSectionIndex > 0) gridItemsWithKeys.subList(0, firstSectionIndex)
         else if (firstSectionIndex == 0) emptyList()
-        else gridItemsWithKeys // no section divider found — all items are "pre"
+        else gridItemsWithKeys // no section divider found â€” all items are "pre"
     }
     val postItems = remember(gridItemsWithKeys, firstSectionIndex) {
         if (firstSectionIndex >= 0) gridItemsWithKeys.subList(firstSectionIndex, gridItemsWithKeys.size)
@@ -332,6 +337,9 @@ fun GridHomeContent(
                         items = continueWatchingItems,
                         focusedItemIndex = if (shouldRequestInitialFocus && !hasHero) 0 else -1,
                         onItemClick = onContinueWatchingClick,
+                        onDeleteFromFreebox = onDeleteFromFreebox,
+                        thumbnailSize = continueWatchingThumbnailSize,
+                        continueWatchingPortraitMode = continueWatchingPortraitMode,
                         onStartFromBeginning = onContinueWatchingStartFromBeginning,
                         showManualPlayOption = showContinueWatchingManualPlayOption,
                         onPlayManually = onContinueWatchingPlayManually,
@@ -366,6 +374,19 @@ fun GridHomeContent(
                         },
                         blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
                         useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw
+                    )
+                }
+            }
+
+            if (uiState.freeboxVideoEntries.isNotEmpty()) {
+                item(
+                    key = "freebox_videos",
+                    span = { GridItemSpan(maxLineSpan) },
+                    contentType = "freebox_videos"
+                ) {
+                    FreeboxVideosSection(
+                        entries = uiState.freeboxVideoEntries,
+                        onItemClick = { entry -> onNavigateToFreebox(entry.path) }
                     )
                 }
             }

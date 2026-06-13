@@ -58,6 +58,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+import com.nuvio.tv.domain.model.ThumbnailSize
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
@@ -575,6 +576,27 @@ fun LayoutSettingsContent(
                             viewModel.onEvent(
                                 LayoutSettingsEvent.SetShowUnairedNextUp(!uiState.showUnairedNextUp)
                             )
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.CONTINUE_WATCHING }
+                    )
+
+                    CompactToggleRow(
+                        title = stringResource(R.string.layout_cw_portrait_mode),
+                        subtitle = stringResource(R.string.layout_cw_portrait_mode_sub),
+                        checked = uiState.continueWatchingPortraitMode,
+                        onToggle = {
+                            viewModel.onEvent(
+                                LayoutSettingsEvent.SetContinueWatchingPortraitMode(!uiState.continueWatchingPortraitMode)
+                            )
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.CONTINUE_WATCHING }
+                    )
+
+                    // Taille des vignettes "Continuer à regarder"
+                    ThumbnailSizeSettingRow(
+                        currentSize = uiState.continueWatchingThumbnailSize,
+                        onSizeSelected = { size ->
+                            viewModel.onEvent(LayoutSettingsEvent.SetContinueWatchingThumbnailSize(size))
                         },
                         onFocused = { focusedSection = LayoutSettingsSection.CONTINUE_WATCHING }
                     )
@@ -1224,3 +1246,42 @@ private data class PresetOption(
     val label: String,
     val value: Int
 )
+
+
+@Composable
+private fun ThumbnailSizeSettingRow(
+    currentSize: ThumbnailSize,
+    onSizeSelected: (ThumbnailSize) -> Unit,
+    onFocused: () -> Unit
+) {
+    androidx.compose.foundation.layout.Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = "Taille des vignettes",
+            style = MaterialTheme.typography.labelLarge,
+            color = NuvioColors.TextSecondary
+        )
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding = PaddingValues(end = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                items = ThumbnailSize.entries,
+                key = { it.name }
+            ) { size ->
+                val label = when (size) {
+                    ThumbnailSize.SMALL -> "Petite"
+                    ThumbnailSize.MEDIUM -> "Moyenne"
+                    ThumbnailSize.LARGE -> "Grande"
+                }
+                SettingsChoiceChip(
+                    label = label,
+                    selected = size == currentSize,
+                    onClick = { onSizeSelected(size) },
+                    onFocused = onFocused
+                )
+            }
+        }
+    }
+}

@@ -14,6 +14,7 @@ import com.nuvio.tv.ui.util.localizeEpisodeTitle
 import com.nuvio.tv.ui.util.computeAirDateBadgeText
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.R
+import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.ui.components.formatContinueWatchingProgressLabel
 import com.nuvio.tv.ui.util.StableList
 import com.nuvio.tv.ui.util.StableMap
@@ -277,13 +278,17 @@ internal fun buildContinueWatchingItem(
     val secondaryHighlightText = when (item) {
         is ContinueWatchingItem.InProgress -> {
             val progress = item.progress
-            formatContinueWatchingProgressLabel(
-                progress = progress,
-                resumeLabel = context.getString(R.string.cw_resume),
-                percentWatchedLabel = context.getString(R.string.cw_percent_watched),
-                hoursMinLeftLabel = context.getString(R.string.cw_hours_min_left),
-                minLeftLabel = context.getString(R.string.cw_min_left)
-            )
+            if (progress.isFreeboxProgressForHome()) {
+                ""
+            } else {
+                formatContinueWatchingProgressLabel(
+                    progress = progress,
+                    resumeLabel = context.getString(R.string.cw_resume),
+                    percentWatchedLabel = context.getString(R.string.cw_percent_watched),
+                    hoursMinLeftLabel = context.getString(R.string.cw_hours_min_left),
+                    minLeftLabel = context.getString(R.string.cw_min_left)
+                )
+            }
         }
         is ContinueWatchingItem.NextUp -> {
             if (item.info.isReleaseAlert) {
@@ -319,13 +324,13 @@ internal fun buildContinueWatchingItem(
                 else -> item.progress.contentType.replaceFirstChar { ch -> ch.uppercase() }
             }
             HeroPreview(
-                title = item.progress.name,
+                title = item.progress.displayNameForContinueWatching(),
                 logo = item.progress.logo,
                 description = item.episodeDescription ?: item.progress.episodeTitle?.localizeEpisodeTitle(context),
                 contentTypeText = episodeLabel,
                 isSeries = isSeries,
                 yearText = extractYearOrRange(item.releaseInfo),
-                secondaryHighlightText = secondaryHighlightText,
+                secondaryHighlightText = secondaryHighlightText.takeIf { it.isNotBlank() },
                 imdbText = item.episodeImdbRating?.let { String.format("%.1f", it) },
                 genres = item.genres.asStable(),
                 poster = item.progress.poster,
@@ -396,32 +401,25 @@ internal fun buildContinueWatchingItem(
     return ModernCarouselItem(
         key = continueWatchingItemKey(item),
         title = when (item) {
-            is ContinueWatchingItem.InProgress -> item.progress.name
+            is ContinueWatchingItem.InProgress -> item.progress.displayNameForContinueWatching()
             is ContinueWatchingItem.NextUp -> item.info.name
         },
-        subtitle = when (item) {
-            is ContinueWatchingItem.InProgress -> {
-                val ps = item.progress.season
-                val pe = item.progress.episode
-                if (ps != null && pe != null) {
-                    context.getString(R.string.season_episode_format, ps, pe)
-                } else {
-                    item.progress.episodeTitle
-                }
-            }
-            is ContinueWatchingItem.NextUp -> {
-                val code = context.getString(
-                    R.string.season_episode_format,
-                    item.info.season,
-                    item.info.episode
-                )
-                if (item.info.hasAired) {
-                    code
-                } else {
-                    item.info.airDateLabel?.let { "$code • ${airsDateTemplate.format(it)}" } ?: "$code • $upcomingLabel"
-                }
-            }
-        },
+          subtitle = when (item) {
+              is ContinueWatchingItem.InProgress -> {
+                  if (item.progress.isFreeboxProgressForHome()) null
+                  else {
+                      val ps = item.progress.season
+                      val pe = item.progress.episode
+                      if (ps != null && pe != null) context.getString(R.string.season_episode_format, ps, pe)
+                      else item.progress.episodeTitle
+                  }
+              }
+              is ContinueWatchingItem.NextUp -> {
+                  val code = context.getString(R.string.season_episode_format, item.info.season, item.info.episode)
+                  if (item.info.hasAired) "$code ${item.info.episodeTitle?.localizeEpisodeTitle(context).orEmpty()}".trim()
+                  else code
+              }
+          },
         imageUrl = imageUrl,
         heroPreview = heroPreview.copy(imageUrl = imageUrl ?: heroPreview.imageUrl),
         payload = ModernPayload.ContinueWatching(item)
@@ -460,6 +458,7 @@ internal fun buildCatalogItem(
         contentTypeText = when (item.apiType.lowercase()) {
             "movie" -> strTypeMovie.ifBlank { item.apiType.replaceFirstChar { ch -> ch.uppercase() } }
             "series" -> strTypeSeries.ifBlank { item.apiType.replaceFirstChar { ch -> ch.uppercase() } }
+            "freebox" -> null
             else -> item.apiType.replaceFirstChar { ch -> ch.uppercase() }
         },
         isSeries = isSeriesType(item.apiType),
@@ -681,3 +680,12 @@ internal fun ContinueWatchingItem.episode(): Int? {
         is ContinueWatchingItem.NextUp -> info.seedEpisode
     }
 }
+
+private fun com.nuvio.tv.domain.model.WatchProgress.displayNameForContinueWatching(): String =
+    if (contentId.startsWith("freebox:") || videoId.startsWith("freebox:") || contentType.equals("freebox", ignoreCase = true)) {
+        freeboxVideoDisplayTitle(name.ifBlank { videoId }, duration)
+    } else {
+        name
+    }
+private fun com.nuvio.tv.domain.model.WatchProgress.isFreeboxProgressForHome(): Boolean =
+    contentId.startsWith("freebox:") || videoId.startsWith("freebox:") || contentType.equals("freebox", ignoreCase = true)

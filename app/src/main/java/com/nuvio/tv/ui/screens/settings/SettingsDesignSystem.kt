@@ -43,7 +43,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.painter.Painter
@@ -470,22 +473,44 @@ internal fun SettingsActionRow(
     subtitle: String?,
     value: String? = null,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit = {},
     enabled: Boolean = true,
     trailingIcon: ImageVector = Icons.Default.ChevronRight,
     titleTrailingIcon: ImageVector? = null,
     titleTrailingIconTint: Color = NuvioColors.TextPrimary,
-    leadingIcon: ImageVector? = null
+    leadingIcon: ImageVector? = null,
+    leadingImageUrl: String? = null
 ) {
     val contentAlpha = if (enabled) 1f else 0.4f
     var isFocused by remember { mutableStateOf(false) }
+    var longPressTriggered by remember { mutableStateOf(false) }
+    val longPressKeyTracker = rememberLongPressKeyTracker()
 
     Card(
-        onClick = { if (enabled) onClick() },
+        onClick = { if (enabled && !longPressTriggered) onClick() },
         modifier = modifier
             .padding(top = 2.dp, bottom = 2.dp)
             .fillMaxWidth()
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                if (onLongClick != null) {
+                    if (longPressKeyTracker.handle(native, { kc -> kc == AndroidKeyEvent.KEYCODE_DPAD_CENTER || kc == AndroidKeyEvent.KEYCODE_ENTER }) {
+                            longPressTriggered = true
+                            onLongClick()
+                        }
+                    ) {
+                        if (native.action == AndroidKeyEvent.ACTION_UP) longPressTriggered = false
+                        return@onPreviewKeyEvent true
+                    }
+                    if (native.action == AndroidKeyEvent.ACTION_UP && longPressTriggered) {
+                        longPressTriggered = false
+                        return@onPreviewKeyEvent true
+                    }
+                }
+                false
+            }
             .onFocusChanged { state ->
                 val nowFocused = state.isFocused
                 if (isFocused != nowFocused) {
@@ -513,7 +538,17 @@ internal fun SettingsActionRow(
                 .padding(horizontal = 18.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (leadingIcon != null) {
+            if (!leadingImageUrl.isNullOrBlank()) {
+                Image(
+                    painter = rememberAsyncImagePainter(leadingImageUrl),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(width = 128.dp, height = 192.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+                Spacer(modifier = Modifier.width(14.dp))
+            } else if (leadingIcon != null) {
                 Icon(
                     imageVector = leadingIcon,
                     contentDescription = null,

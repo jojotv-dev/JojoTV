@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.components
+﻿package com.nuvio.tv.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +42,9 @@ fun GridContinueWatchingSection(
     onItemClick: (ContinueWatchingItem) -> Unit,
     onDetailsClick: (ContinueWatchingItem) -> Unit = onItemClick,
     onRemoveItem: (ContinueWatchingItem) -> Unit,
+    onDeleteFromFreebox: ((ContinueWatchingItem) -> Unit)? = null,
+    thumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
+    continueWatchingPortraitMode: Boolean = false,
     onStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
     showManualPlayOption: Boolean = false,
     onPlayManually: (ContinueWatchingItem) -> Unit = {},
@@ -135,8 +138,8 @@ fun GridContinueWatchingSection(
                                 lastFocusedIndex.intValue = index
                             }
                         },
-                    cardWidth = 220.dp,
-                    imageHeight = 124.dp
+                    cardWidth = if (continueWatchingPortraitMode) (thumbnailSize.cardWidth * 0.69f) else thumbnailSize.cardWidth,
+                    imageHeight = if (continueWatchingPortraitMode) (thumbnailSize.cardWidth * 0.69f * (3f / 2f)) else thumbnailSize.imageHeight
                 )
             }
         }
@@ -147,6 +150,7 @@ fun GridContinueWatchingSection(
         ContinueWatchingOptionsDialog(
             item = menuItem,
             onDismiss = { optionsItem = null },
+            onDeleteFromFreebox = onDeleteFromFreebox?.let { cb -> { cb(menuItem) } },
             onRemove = {
                 val targetIndex = if (items.size <= 1) null else minOf(lastFocusedIndex.intValue, items.size - 2)
                 pendingFocusIndex = targetIndex

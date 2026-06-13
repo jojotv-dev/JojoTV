@@ -39,7 +39,10 @@ internal fun formatContinueWatchingProgressLabel(
     val minutes = totalMinutes % 60
 
     return when {
-        hours > 0 -> hoursMinLeftLabel.format(hours, minutes)
+        hours > 0 -> hoursMinLeftLabel.format(hours, minutes).compactHoursMinutes()
         else -> minLeftLabel.format(totalMinutes.coerceAtLeast(1))
     }
 }
+
+private fun String.compactHoursMinutes(): String =
+    replace(Regex("(\\d+)h\\s+(\\d+)m"), "$1h$2m")

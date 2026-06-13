@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.home
+﻿package com.nuvio.tv.ui.screens.home
 
 import com.nuvio.tv.LocalContentFocusRequester
 import androidx.compose.animation.core.AnimationSpec
@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import com.nuvio.tv.ui.components.CatalogRowSection
 import com.nuvio.tv.ui.components.CollectionRowSection
 import com.nuvio.tv.ui.components.ContinueWatchingSection
+import com.nuvio.tv.ui.components.FreeboxVideosSection
 import com.nuvio.tv.ui.components.HeroCarousel
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.PosterCardStyle
@@ -77,6 +78,8 @@ fun ClassicHomeContent(
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onRemoveContinueWatching: (String, Int?, Int?, Boolean) -> Unit,
+    onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
+    onNavigateToFreebox: (String) -> Unit = {},
     isCatalogItemWatched: (MetaPreview) -> Boolean = { false },
     onCatalogItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> },
     onRequestTrailerPreview: (MetaPreview) -> Unit,
@@ -84,7 +87,9 @@ fun ClassicHomeContent(
     catalogSeeAllLabel: String? = null,
     onSaveFocusState: (Int, Int, String?, Map<String, String>, Map<String, Int>, Int, Int) -> Unit,
     scrollToTopTrigger: Int = 0,
-    onRequestLazyCatalogLoad: (String) -> Unit = {}
+    onRequestLazyCatalogLoad: (String) -> Unit = {},
+    continueWatchingPortraitMode: Boolean = false,
+    continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT
 ) {
     val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
     val density = LocalDensity.current
@@ -114,11 +119,13 @@ fun ClassicHomeContent(
             height = posterCardStyle.height * CLASSIC_SECONDARY_ROW_POSTER_SCALE
         )
     }
-    val classicContinueWatchingCardWidth = remember(classicSecondaryPosterCardStyle) {
-        classicSecondaryPosterCardStyle.width * (16f / 9f)
+    val classicContinueWatchingCardWidth = remember(classicSecondaryPosterCardStyle, continueWatchingPortraitMode) {
+        if (continueWatchingPortraitMode) classicSecondaryPosterCardStyle.width
+        else classicSecondaryPosterCardStyle.width * (16f / 9f)
     }
-    val classicContinueWatchingImageHeight = remember(classicSecondaryPosterCardStyle) {
-        classicSecondaryPosterCardStyle.width
+    val classicContinueWatchingImageHeight = remember(classicSecondaryPosterCardStyle, continueWatchingPortraitMode) {
+        if (continueWatchingPortraitMode) classicSecondaryPosterCardStyle.width * (3f / 2f)
+        else classicSecondaryPosterCardStyle.width
     }
 
     // Nested prefetch: when LazyColumn prefetches a row ahead of scrolling,
@@ -292,7 +299,7 @@ fun ClassicHomeContent(
     }
 
     if (deferContentFocus) {
-        // Show spinner while waiting for hero data to arrive — prevents
+        // Show spinner while waiting for hero data to arrive â€” prevents
         // content rows from claiming focus before the hero is ready.
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -474,6 +481,7 @@ fun ClassicHomeContent(
                         val isNextUp = item is ContinueWatchingItem.NextUp
                         onRemoveContinueWatching(contentId, season, episode, isNextUp)
                     },
+                    onDeleteFromFreebox = onDeleteFreeboxProgress,
                     focusedItemIndex = when {
                         focusState.hasSavedFocus && focusState.focusedRowIndex == -1 -> focusState.focusedItemIndex
                         shouldRequestInitialFocus && !heroVisible -> 0
@@ -490,8 +498,19 @@ fun ClassicHomeContent(
                     blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
                     useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
                     downFocusRequester = cwDownRequester,
-                    cardWidth = classicContinueWatchingCardWidth,
-                    imageHeight = classicContinueWatchingImageHeight
+                    cardWidth = continueWatchingThumbnailSize.cardWidth,
+                    imageHeight = continueWatchingThumbnailSize.imageHeight
+                )
+            }
+        }
+
+        if (uiState.freeboxVideoEntries.isNotEmpty()) {
+            item(key = "freebox_videos", contentType = "freebox_videos") {
+                FreeboxVideosSection(
+                    entries = uiState.freeboxVideoEntries,
+                    onItemClick = { entry ->
+                        onNavigateToFreebox(entry.path)
+                    }
                 )
             }
         }

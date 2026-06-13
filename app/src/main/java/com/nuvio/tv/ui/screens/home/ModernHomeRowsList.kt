@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.home
+﻿package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -41,6 +41,8 @@ import coil3.imageLoader
 import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
+import com.nuvio.tv.ui.components.FreeboxVideosSection
+import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.ui.util.StableList
 import com.nuvio.tv.ui.util.StableMap
@@ -127,6 +129,8 @@ internal fun ModernHomeRowsList(
     focusedHeroMediaNonce: State<Int>,
     onFocusedHeroMediaNonceChange: (Int) -> Unit,
     onExpansionInteractionNonceChange: (Int) -> Unit,
+    freeboxVideoEntries: List<com.nuvio.tv.data.freebox.FreeboxFileEntry> = emptyList(),
+    onNavigateToFreebox: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Unwrap StableRef wrappers for internal use (not passed to child composables)
@@ -411,6 +415,15 @@ internal fun ModernHomeRowsList(
                         StableRef(mutableMapOf())
                     }
                 )
+            }
+
+            if (freeboxVideoEntries.isNotEmpty()) {
+                item(key = "freebox_videos", contentType = "freebox_videos") {
+                    FreeboxVideosSection(
+                        entries = freeboxVideoEntries,
+                        onItemClick = { entry -> onNavigateToFreebox(entry.path) }
+                    )
+                }
             }
         }
     }

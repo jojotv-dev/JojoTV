@@ -25,6 +25,7 @@ internal data class SubtitleFetchRequest(
 )
 
 internal fun PlayerRuntimeController.buildSubtitleFetchRequest(): SubtitleFetchRequest? {
+    if (isFreeboxPlayback) return null
     val id = contentId ?: return null
     val type = contentType ?: return null
     return SubtitleFetchRequest(
@@ -45,7 +46,7 @@ internal suspend fun PlayerRuntimeController.fetchAddonSubtitlesNow(
     _uiState.update { it.copy(installedSubtitleAddonOrder = installedAddonOrder) }
 
     // Compute hash lazily for providers that support OpenSubtitles-style matching.
-    if (currentVideoHash == null && currentStreamUrl.isNotBlank()) {
+    if (!isFreeboxPlayback && currentVideoHash == null && currentStreamUrl.isNotBlank()) {
         val result = OpenSubtitlesHasher.compute(currentStreamUrl, currentHeaders)
         if (result != null) {
             currentVideoHash = result.hash

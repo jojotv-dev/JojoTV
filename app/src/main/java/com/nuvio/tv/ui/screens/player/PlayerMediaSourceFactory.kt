@@ -116,6 +116,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         )
         val isHls = resolvedMimeType == MimeTypes.APPLICATION_M3U8
         val isDash = resolvedMimeType == MimeTypes.APPLICATION_MPD
+        val isFreeboxDirectStream = isFreeboxDirectStream(url, sanitizedHeaders)
 
         val mediaItemBuilder = MediaItem.Builder().setUri(url)
         resolvedMimeType?.let(mediaItemBuilder::setMimeType)
@@ -130,8 +131,9 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
 
         // 1. Parallel connections (opt-in). ParallelRangeDataSource needs a concrete
         // OkHttpDataSource.Factory, so build one only on this path.
-        parallelStartupPrefetchUnlocked.set(!(useParallelConnections && !isHls && !isDash))
-        val progressiveUpstreamFactory: DataSource.Factory = if (useParallelConnections && !isHls && !isDash) {
+        val allowParallelConnections = useParallelConnections && !isFreeboxDirectStream
+        parallelStartupPrefetchUnlocked.set(!(allowParallelConnections && !isHls && !isDash))
+        val progressiveUpstreamFactory: DataSource.Factory = if (allowParallelConnections && !isHls && !isDash) {
             val okHttpFactory = OkHttpDataSource.Factory(playbackHttpClient).apply {
                 setDefaultRequestProperties(sanitizedHeaders)
                 setUserAgent(DEFAULT_USER_AGENT)
@@ -148,7 +150,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         }
 
         // 2. VOD disk cache (opt-in).
-        val useVodCache = ENABLE_VOD_CACHE && vodCacheEnabled && !isHls && !isDash && shouldUseVodCache(url)
+        val useVodCache = ENABLE_VOD_CACHE && vodCacheEnabled && !isFreeboxDirectStream && !isHls && !isDash && shouldUseVodCache(url)
         val previousVodCacheActive = currentVodCacheActive
         currentVodCacheUrl = url
         currentVodCacheResolvedUrl = null
@@ -218,6 +220,12 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
     private fun shouldUseVodCache(url: String): Boolean {
         val scheme = Uri.parse(url).scheme?.lowercase()
         return scheme == "https" || scheme == "http"
+    }
+
+    private fun isFreeboxDirectStream(url: String, headers: Map<String, String>): Boolean {
+        val lowerUrl = url.lowercase(Locale.US)
+        return headers.keys.any { it.equals("X-Fbx-App-Auth", ignoreCase = true) } ||
+            (lowerUrl.contains("/api/v") && lowerUrl.contains("/dl/"))
     }
 
     private fun resolveVodCacheMaxBytes(): Long {
@@ -654,7 +662,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
          * to a Basic Auth header. Returns the cleaned URL (without userinfo) and
          * merged headers. If the URL has no userinfo, returns the original URL and headers unchanged.
          *
-         * Example: `https://user:pass@host/path` → URL `https://host/path` + header `Authorization: Basic dXNlcjpwYXNz`
+         * Example: `https://user:pass@host/path` â†’ URL `https://host/path` + header `Authorization: Basic dXNlcjpwYXNz`
          */
         fun extractUserInfoAuth(
             url: String,
@@ -664,7 +672,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             val uri = try { java.net.URI(url) } catch (_: Exception) { return url to headers }
             val userInfo = uri.userInfo ?: return url to headers
             if (userInfo.isBlank()) return url to headers
-            // Already has an Authorization header — don't override
+            // Already has an Authorization header â€” don't override
             if (headers.any { it.key.equals("Authorization", ignoreCase = true) }) {
                 return url to headers
             }

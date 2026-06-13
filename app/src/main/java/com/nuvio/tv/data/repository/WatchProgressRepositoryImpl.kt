@@ -10,6 +10,9 @@ import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressSource
 import com.nuvio.tv.data.local.WatchProgressPreferences
 import com.nuvio.tv.data.local.WatchedItemsPreferences
+import com.nuvio.tv.data.freebox.freeboxFileNameOnly
+import com.nuvio.tv.data.freebox.freeboxTmdbSearchQuery
+import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.model.WatchedItem
 import com.nuvio.tv.core.tmdb.TmdbService
@@ -275,7 +278,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             source == WatchProgressSource.TRAKT && isEffectivelyAuthenticated
         }.debounce { useTrakt ->
             // Debounce only the false -> transition to avoid reacting to transient
-            // auth unavailability during profile switches.  true→ is immediate.
+            // auth unavailability during profile switches.  trueâ†’ is immediate.
             if (useTrakt) 0L else 300L
         }.distinctUntilChanged()
     }
@@ -943,7 +946,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         }
 
         if (useTraktProgress && hasEffectiveTraktConnection) {
-            // Trakt is primary — optimistic update + batch Trakt call + local save
+            // Trakt is primary â€” optimistic update + batch Trakt call + local save
             completedList.forEach {
                 optimisticContinueWatchingUpdates.tryEmit(it)
                 traktProgressService.applyOptimisticProgress(it)
@@ -966,7 +969,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
             return
         }
 
-        // Nuvio sync is primary — batch local save first
+        // Nuvio sync is primary â€” batch local save first
         watchProgressPreferences.markAsCompletedBatch(progressList)
         val watchedItems = progressList.map { progress -> progress.toWatchedItem(watchedAt = now) }
         watchedItemsPreferences.markAsWatchedBatch(watchedItems)
@@ -1013,7 +1016,8 @@ class WatchProgressRepositoryImpl @Inject constructor(
         watchProgressPreferences.clearAll()
     }
 
-    override fun isDroppedShow(contentId: String): Boolean {
+    override fun isDroppedShow(contentId: String?): Boolean {
+        if (contentId.isNullOrBlank()) return false
         return traktProgressService.isShowHiddenFromProgress(contentId)
     }
 
@@ -1023,6 +1027,27 @@ class WatchProgressRepositoryImpl @Inject constructor(
         items.take(10).forEach { progress ->
             hydratedProgressIds.add(progress.contentId)
             runCatching {
+                if (progress.isFreeboxProgress()) {
+                    val fileName = freeboxFileNameOnly(progress.name.ifBlank { progress.videoId })
+                    val tmdbImages = tmdbService.fetchImagesForTitleQuery(
+                        query = freeboxTmdbSearchQuery(fileName),
+                        mediaTypeHint = "movie"
+                    )
+                    // Always overwrite poster/backdrop for Freebox items so that
+                    // improved TMDB search results replace previously cached wrong images
+                    val newPoster = tmdbImages?.posterUrl ?: progress.poster
+                    val newBackdrop = tmdbImages?.backdropUrl ?: progress.backdrop
+                    val updated = progress.copy(
+                        name = fileName,
+                        poster = newPoster,
+                        backdrop = newBackdrop
+                    )
+                    if (updated != progress) {
+                        watchProgressPreferences.saveProgress(updated)
+                    }
+                    return@runCatching
+                }
+
                 val metadata = fetchContentMetadata(
                     contentId = progress.contentId,
                     contentType = progress.contentType
@@ -1061,6 +1086,9 @@ class WatchProgressRepositoryImpl @Inject constructor(
         }
     }
 
+    private fun WatchProgress.isFreeboxProgress(): Boolean =
+        contentId.startsWith("freebox:") || videoId.startsWith("freebox:") || contentType.equals("freebox", ignoreCase = true)
+
     private fun parseRuntimeToMs(raw: String?): Long {
         val minutes = raw?.trim()?.toLongOrNull() ?: return 0L
         return minutes * 60_000L
@@ -1098,3 +1126,6 @@ class WatchProgressRepositoryImpl @Inject constructor(
     }
 
 }
+
+
+

@@ -1,4 +1,6 @@
-package com.nuvio.tv.ui.screens.home
+﻿package com.nuvio.tv.ui.screens.home
+
+import com.nuvio.tv.domain.model.ThumbnailSize
 
 import androidx.compose.runtime.Immutable
 import com.nuvio.tv.data.local.StartupAuthNotice
@@ -10,11 +12,13 @@ import com.nuvio.tv.domain.model.LibraryListTab
 import com.nuvio.tv.domain.model.LibrarySourceMode
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.WatchProgress
+import com.nuvio.tv.data.freebox.FreeboxFileEntry
 
 @Immutable
 data class HomeUiState(
     val catalogRows: List<CatalogRow> = emptyList(),
     val continueWatchingItems: List<ContinueWatchingItem> = emptyList(),
+    val freeboxVideoEntries: List<FreeboxFileEntry> = emptyList(),
     val isLoading: Boolean = true,
     val layoutPreferencesReady: Boolean = false,
     val error: String? = null,
@@ -56,6 +60,7 @@ data class HomeUiState(
     val showFullReleaseDate: Boolean = true,
     val blurUnwatchedEpisodes: Boolean = false,
     val useEpisodeThumbnailsInCw: Boolean = true,
+    val continueWatchingThumbnailSize: ThumbnailSize = ThumbnailSize.DEFAULT,
     val heroEnrichmentEnabled: Boolean = false,
     val startupAuthNotice: StartupAuthNotice? = null,
     val homeRows: List<HomeRow> = emptyList()
