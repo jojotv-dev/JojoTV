@@ -8,7 +8,7 @@ Application Android TV native pour la consommation de médias personnels.
 - Navigation EPG (Guide des programmes)
 - Parcours Freebox OS (vidéos locales)
 - Métadonnées TMDB (affiches, synopsis en français)
-- Continuer Ã  regarder
+- Continuer à regarder
 - Planification d'enregistrements
 
 ## Stack technique
