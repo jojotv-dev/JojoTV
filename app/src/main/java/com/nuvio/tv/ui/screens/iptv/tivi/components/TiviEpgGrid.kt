@@ -19,6 +19,7 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.streamvault.domain.model.Program
 import com.nuvio.tv.ui.screens.iptv.tivi.TiviEpgRow
+import com.nuvio.tv.ui.theme.NuvioColors
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -52,14 +53,14 @@ fun TiviEpgGrid(
         }
     }
 
-    Column(modifier = modifier.background(Color(0xFF0A0A1C))) {
+    Column(modifier = modifier.background(NuvioColors.Background)) {
 
         // ── Time ruler ───────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(28.dp)
-                .background(Color(0xFF15153A))
+                .background(NuvioColors.BackgroundElevated)
                 .horizontalScroll(sharedScroll),
         ) {
             Spacer(Modifier.width(LOGO_WIDTH))
@@ -71,7 +72,7 @@ fun TiviEpgGrid(
                         .padding(horizontal = 8.dp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
-                    Text(slot, fontSize = 10.sp, color = Color(0xFF7777AA), fontWeight = FontWeight.Medium)
+                    Text(slot, fontSize = 10.sp, color = NuvioColors.TextTertiary, fontWeight = FontWeight.Medium)
                 }
             }
         }
@@ -104,7 +105,7 @@ private fun TiviEpgChannelRow(
             .fillMaxWidth()
             .height(ROW_HEIGHT)
             .background(
-                if (isFocused) Color(0xFF181840) else Color.Transparent
+                if (isFocused) NuvioColors.FocusBackground else Color.Transparent
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -113,7 +114,7 @@ private fun TiviEpgChannelRow(
             modifier = Modifier
                 .width(LOGO_WIDTH)
                 .fillMaxHeight()
-                .background(Color(0xFF0E0E28)),
+                .background(NuvioColors.BackgroundElevated),
             contentAlignment = Alignment.Center,
         ) {
             if (!row.channel.logoUrl.isNullOrBlank()) {
@@ -126,7 +127,7 @@ private fun TiviEpgChannelRow(
                 Text(
                     text = row.channel.name.take(4),
                     fontSize = 9.sp,
-                    color = Color(0xFF6666AA),
+                    color = NuvioColors.TextTertiary,
                 )
             }
         }
@@ -144,13 +145,13 @@ private fun TiviEpgChannelRow(
                         .width(SLOT_WIDTH_DP * 2)
                         .fillMaxHeight()
                         .padding(2.dp)
-                        .background(Color(0xFF141430), RoundedCornerShape(3.dp)),
+                        .background(NuvioColors.BackgroundCard, RoundedCornerShape(3.dp)),
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Text(
                         "No information",
                         fontSize = 10.sp,
-                        color = Color(0xFF444455),
+                        color = NuvioColors.TextDisabled,
                         modifier = Modifier.padding(horizontal = 8.dp),
                     )
                 }
@@ -187,10 +188,10 @@ private fun TiviProgramBlock(
             .padding(horizontal = 1.dp, vertical = 3.dp)
             .background(
                 when {
-                    isNow && isFocusedRow -> Color(0xFF1B3A6A)
-                    isNow -> Color(0xFF152D55)
-                    isFocusedRow -> Color(0xFF1A1A40)
-                    else -> Color(0xFF111128)
+                    isNow && isFocusedRow -> NuvioColors.FocusBackground
+                    isNow -> NuvioColors.BackgroundCard
+                    isFocusedRow -> NuvioColors.BackgroundElevated
+                    else -> NuvioColors.Background
                 },
                 RoundedCornerShape(3.dp)
             )
@@ -200,7 +201,7 @@ private fun TiviProgramBlock(
         Text(
             text = program.title,
             fontSize = 11.sp,
-            color = if (isNow) Color.White else Color(0xFF9999BB),
+            color = if (isNow) NuvioColors.TextPrimary else NuvioColors.TextSecondary,
             fontWeight = if (isNow) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

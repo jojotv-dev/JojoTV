@@ -486,7 +486,7 @@ private fun ScheduleButton(onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().height(56.dp).onFocusChanged { focused = it.hasFocus },
         shape = CardDefaults.shape(RoundedCornerShape(14.dp)),
         colors = CardDefaults.colors(
-            containerColor = if (focused) NuvioColors.Primary else Color(0xFF1E6B3C),
+            containerColor = if (focused) NuvioColors.Secondary else NuvioColors.BackgroundCard,
             focusedContainerColor = NuvioColors.Primary
         ),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.98f)

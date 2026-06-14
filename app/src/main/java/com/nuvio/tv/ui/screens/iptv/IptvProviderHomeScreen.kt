@@ -72,7 +72,7 @@ fun IptvProviderHomeScreen(
                     icon = Icons.Default.LiveTv,
                     label = "Live TV",
                     subtitle = "Chaînes en direct",
-                    accentColor = Color(0xFF2196F3),
+                    accentColor = NuvioColors.Secondary,
                     onClick = onNavigateToLiveTv,
                     modifier = Modifier.weight(1f)
                 )
@@ -80,7 +80,7 @@ fun IptvProviderHomeScreen(
                     icon = Icons.Default.Movie,
                     label = "Films",
                     subtitle = "Vidéo à la demande",
-                    accentColor = Color(0xFFE91E63),
+                    accentColor = NuvioColors.Secondary,
                     onClick = onNavigateToMovies,
                     modifier = Modifier.weight(1f)
                 )
@@ -88,7 +88,7 @@ fun IptvProviderHomeScreen(
                     icon = Icons.Default.Tv,
                     label = "Séries",
                     subtitle = "Épisodes & saisons",
-                    accentColor = Color(0xFF9C27B0),
+                    accentColor = NuvioColors.Secondary,
                     onClick = onNavigateToSeries,
                     modifier = Modifier.weight(1f)
                 )
