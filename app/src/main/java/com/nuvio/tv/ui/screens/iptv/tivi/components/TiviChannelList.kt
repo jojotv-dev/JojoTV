@@ -9,7 +9,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -31,20 +30,21 @@ fun TiviChannelList(
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.onFocusChanged { onFocusChanged(it.hasFocus) }) {
-    LazyColumn(
-        modifier = modifier
-            .width(280.dp)
-            .fillMaxHeight()
-            .background(NuvioColors.Background),
-        contentPadding = PaddingValues(vertical = 4.dp),
-    ) {
-        items(channels, key = { it.id }) { channel ->
-            TiviChannelRow(
-                channel = channel,
-                isActive = channel.id == focusedChannelId,
-                onFocused = { onChannelFocused(channel) },
-                onClick = { onChannelClick(channel) },
-            )
+        LazyColumn(
+            modifier = Modifier
+                .width(280.dp)
+                .fillMaxHeight()
+                .background(NuvioColors.Background),
+            contentPadding = PaddingValues(vertical = 4.dp),
+        ) {
+            items(channels, key = { it.id }) { channel ->
+                TiviChannelRow(
+                    channel = channel,
+                    isActive = channel.id == focusedChannelId,
+                    onFocused = { onChannelFocused(channel) },
+                    onClick = { onChannelClick(channel) },
+                )
+            }
         }
     }
 }
@@ -72,7 +72,7 @@ private fun TiviChannelRow(
             focusedContainerColor = NuvioColors.BackgroundCard,
             pressedContainerColor = NuvioColors.FocusBackground,
         ),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
     ) {
         Row(
             modifier = Modifier
@@ -80,7 +80,6 @@ private fun TiviChannelRow(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Logo
             Box(
                 modifier = Modifier
                     .size(width = 50.dp, height = 28.dp)
@@ -98,7 +97,6 @@ private fun TiviChannelRow(
 
             Spacer(Modifier.width(10.dp))
 
-            // Nom
             Text(
                 text = channel.name,
                 fontSize = 12.sp,
@@ -112,7 +110,6 @@ private fun TiviChannelRow(
                 modifier = Modifier.weight(1f),
             )
 
-            // Indicateur programme en cours
             if (channel.currentProgram != null) {
                 Box(
                     modifier = Modifier
@@ -121,6 +118,5 @@ private fun TiviChannelRow(
                 )
             }
         }
-    }
     }
 }

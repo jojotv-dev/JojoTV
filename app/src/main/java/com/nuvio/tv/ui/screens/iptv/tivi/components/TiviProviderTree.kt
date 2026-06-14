@@ -92,7 +92,7 @@ private fun TiviProviderHeader(
             focusedContainerColor = NuvioColors.FocusBackground,
             pressedContainerColor = NuvioColors.FocusBackground,
         ),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
     ) {
         Row(
             modifier = Modifier
@@ -143,7 +143,7 @@ private fun TiviGroupItem(
             focusedContainerColor = NuvioColors.BackgroundCard,
             pressedContainerColor = NuvioColors.FocusBackground,
         ),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
     ) {
         Row(
             modifier = Modifier
