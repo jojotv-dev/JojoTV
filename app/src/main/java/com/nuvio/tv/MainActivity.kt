@@ -673,10 +673,10 @@ class MainActivity : ComponentActivity() {
                     val rootRoutes = remember(discoverLocation, showFreeboxInSidebar, freeboxSidebarFolders) {
                         buildSet<String> {
                             add(Screen.Home.route)
-                            add(Screen.IptvHome.route)
                             if (showIptvLiveTvInSidebar) add(Screen.IptvLiveProviders.route)
                             if (showIptvMoviesInSidebar) add(Screen.IptvMovieProviders.route)
                             if (showIptvSeriesInSidebar) add(Screen.IptvSeriesProviders.route)
+                            if (showIptvRecordingsInSidebar) add(Screen.IptvRecordingList.route)
 
                             add(Screen.Explorer.route)
                             if (showFreeboxInSidebar) {
@@ -751,13 +751,6 @@ class MainActivity : ComponentActivity() {
                                     iconRes = R.raw.sidebar_search
                                 )
                             )
-                            add(
-                                DrawerItem(
-                                    route = Screen.IptvHome.route,
-                                    label = strNavIptv,
-                                    icon = Icons.Default.Subscriptions
-                                )
-                            )
                             if (showIptvLiveTvInSidebar) {
                                 add(
                                     DrawerItem(
@@ -782,6 +775,15 @@ class MainActivity : ComponentActivity() {
                                         route = Screen.IptvSeriesProviders.route,
                                         label = strNavFavoritesSeries,
                                         icon = Icons.Default.Subscriptions
+                                    )
+                                )
+                            }
+                            if (showIptvRecordingsInSidebar) {
+                                add(
+                                    DrawerItem(
+                                        route = Screen.IptvRecordingList.route,
+                                        label = "Enregistrements",
+                                        icon = Icons.Default.FiberManualRecord
                                     )
                                 )
                             }
@@ -821,6 +823,20 @@ class MainActivity : ComponentActivity() {
                     }
                     val selectedDrawerRoute = when (currentRoute) {
                         Screen.FreeboxFolder.route -> Screen.Freebox.route
+                        Screen.IptvProviderList.route,
+                        Screen.IptvProviderTypeSelect.route,
+                        Screen.IptvProviderSetup.route,
+                        Screen.IptvProviderHome.route,
+                        Screen.IptvRecordingSchedule.route,
+                        Screen.IptvRecordingList.route,
+                        Screen.IptvEpg.route,
+                        Screen.IptvLiveTvGroup.route,
+                        Screen.IptvChannelList.route,
+                        Screen.IptvMovieCategory.route,
+                        Screen.IptvMovieList.route,
+                        Screen.IptvSeriesCategory.route,
+                        Screen.IptvSeriesList.route,
+                        Screen.IptvSeriesDetail.route -> Screen.IptvLiveProviders.route
                         else -> drawerItems.firstOrNull { item ->
                             currentRoute == item.route || currentRoute?.startsWith("${item.route}/") == true
                         }?.route
@@ -990,25 +1006,35 @@ private fun LegacySidebarScaffold(
     // Auto-close the legacy drawer after a short period of inactivity, mirroring
     // the modern sidebar behaviour. The timer resets every time the user
     // navigates inside the drawer (legacyDrawerInteractionVersion change).
-    val iptvTiviRoutes = setOf(Screen.IptvLiveProviders.route, Screen.IptvMovieProviders.route, Screen.IptvSeriesProviders.route)
-    LaunchedEffect(drawerState.currentValue, legacyDrawerInteractionVersion, showSidebar) {
-        if (!showSidebar || drawerState.currentValue != DrawerValue.Open) {
-            return@LaunchedEffect
-        }
-        if (currentRoute in iptvTiviRoutes) return@LaunchedEffect
-        delay(SIDEBAR_AUTO_COLLAPSE_DELAY_MS)
-        pendingContentFocusTransfer = false
-        drawerState.setValue(DrawerValue.Closed)
-    }
+    val iptvTiviRoutes = setOf(Screen.IptvLiveProviders.route, Screen.IptvMovieProviders.route, Screen.IptvSeriesProviders.route, Screen.IptvRecordingList.route)
+    // Legacy drawer auto-collapse timer removed.
     BackHandler(enabled = currentRoute in rootRoutes && drawerState.currentValue == DrawerValue.Closed) {
         pendingSidebarFocusRequest = true
         drawerState.setValue(DrawerValue.Open)
     }
 
+    // Restaurer le focus sidebar quand on revient sur Settings depuis une route IPTV
+    val iptvSubRoutes = remember { setOf(
+        Screen.IptvProviderList.route, Screen.IptvProviderTypeSelect.route,
+        Screen.IptvProviderSetup.route, Screen.IptvProviderHome.route,
+        Screen.IptvRecordingSchedule.route, Screen.IptvRecordingList.route,
+        Screen.IptvEpg.route, Screen.IptvLiveTvGroup.route,
+        Screen.IptvChannelList.route, Screen.IptvMovieCategory.route,
+        Screen.IptvMovieList.route, Screen.IptvSeriesCategory.route,
+        Screen.IptvSeriesList.route, Screen.IptvSeriesDetail.route
+    ) }
+    var previousRoute by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentRoute) {
+        if (previousRoute in iptvSubRoutes && currentRoute !in iptvSubRoutes) {
+            drawerState.setValue(DrawerValue.Open)
+            pendingSidebarFocusRequest = true
+        }
+        previousRoute = currentRoute
+    }
+
     BackHandler(enabled = currentRoute in rootRoutes && drawerState.currentValue == DrawerValue.Open) {
         onExitApp()
     }
-
     LaunchedEffect(drawerState.currentValue, pendingContentFocusTransfer) {
         if (!pendingContentFocusTransfer || drawerState.currentValue != DrawerValue.Closed) {
             return@LaunchedEffect
@@ -1397,26 +1423,13 @@ private fun ModernSidebarScaffold(
     // sidebar only folds back up once the user stops navigating it. We keep
     // pendingContentFocusTransfer = false so the focus stays parked on the
     // (now collapsed) sidebar pill instead of jumping back into the content.
-    LaunchedEffect(isSidebarExpanded, focusedDrawerIndex, sidebarCollapsePending, showSidebar, sidebarHasFocus) {
-        if (!showSidebar || !isSidebarExpanded || sidebarCollapsePending || sidebarHasFocus) {
-            return@LaunchedEffect
-        }
-        delay(SIDEBAR_AUTO_COLLAPSE_DELAY_MS)
-        pendingContentFocusTransfer = false
-        sidebarCollapsePending = true
-    }
+    // Auto-collapse timer removed: sidebar stays open until explicit user action.
 
     // Auto-collapse the floating pill back to icon-only when the user reveals
     // its label (DPAD UP from content) and then leaves it idle. The DPAD DOWN
     // path already collapses it instantly, this just covers the case where the
     // user releases UP and walks away.
-    LaunchedEffect(isFloatingPillIconOnly, keepFloatingPillExpanded, showSidebar, isSidebarExpanded) {
-        if (!showSidebar || isFloatingPillIconOnly || keepFloatingPillExpanded || isSidebarExpanded) {
-            return@LaunchedEffect
-        }
-        delay(SIDEBAR_AUTO_COLLAPSE_DELAY_MS)
-        isFloatingPillIconOnly = true
-    }
+    // Auto-collapse floating pill timer removed.
 
     val sidebarVisible = showSidebar && (isSidebarExpanded || !sidebarCollapsed)
     val sidebarHazeState = remember { HazeState() }
@@ -1644,17 +1657,28 @@ private fun ModernSidebarScaffold(
                     .onFocusChanged { state ->
                         sidebarHasFocus = state.hasFocus
                     }
-                    .onPreviewKeyEvent { keyEvent ->
+                    .onKeyEvent { keyEvent ->
                         if (!isSidebarExpanded || keyEvent.type != KeyEventType.KeyDown) {
-                            return@onPreviewKeyEvent false
+                            return@onKeyEvent false
                         }
                         when (keyEvent.key) {
                             Key.DirectionUp -> {
-                                focusedDrawerIndex == sidebarTopBoundaryIndex
+                                val firstNavIndex = if (hasSidebarProfileItem) 1 else 0
+                                if (focusedDrawerIndex == firstNavIndex) {
+                                    drawerItemFocusRequesters.values.lastOrNull()?.requestFocus()
+                                    true
+                                } else {
+                                    false
+                                }
                             }
 
                             Key.DirectionDown -> {
-                                focusedDrawerIndex == drawerItems.lastIndex + 1
+                                if (focusedDrawerIndex == drawerItems.lastIndex + 1) {
+                                    drawerItemFocusRequesters.values.firstOrNull()?.requestFocus()
+                                    true
+                                } else {
+                                    false
+                                }
                             }
 
                             Key.DirectionRight, Key.DirectionLeft -> {
@@ -1686,6 +1710,7 @@ private fun ModernSidebarScaffold(
                         sidebarHazeState = sidebarHazeState,
                         panelShape = panelShape,
                         drawerItemFocusRequesters = drawerItemFocusRequesters,
+                        focusedItemIndex = focusedDrawerIndex,
                         onDrawerItemFocused = { focusedDrawerIndex = it; sidebarHasFocus = true },
                         onDrawerItemClick = { targetRoute ->
                             onNavigate(targetRoute)
@@ -1911,11 +1936,11 @@ private fun rememberRawSvgPainter(rawIconRes: Int): Painter {
     )
 }
 
-object LocaleCache {
-    const val UNSET = "__UNSET__"
 
-    @Volatile
-    var localeTag: String = UNSET
-}
+
+
+
+
+
 
 

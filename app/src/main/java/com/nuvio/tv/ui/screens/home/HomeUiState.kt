@@ -19,6 +19,7 @@ data class HomeUiState(
     val catalogRows: List<CatalogRow> = emptyList(),
     val continueWatchingItems: List<ContinueWatchingItem> = emptyList(),
     val freeboxVideoEntries: List<FreeboxFileEntry> = emptyList(),
+    val freeboxVideoArtwork: Map<String, String> = emptyMap(),
     val isLoading: Boolean = true,
     val layoutPreferencesReady: Boolean = false,
     val error: String? = null,

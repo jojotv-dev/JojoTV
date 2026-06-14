@@ -384,9 +384,17 @@ fun GridHomeContent(
                     span = { GridItemSpan(maxLineSpan) },
                     contentType = "freebox_videos"
                 ) {
+                    val gridCwPortraitScale = continueWatchingThumbnailSize.cardWidth.value / 220f
+                    val gridCwCardWidth = if (continueWatchingPortraitMode) (126f * gridCwPortraitScale).dp else continueWatchingThumbnailSize.cardWidth
+                    val gridCwImageHeight = if (continueWatchingPortraitMode) (189f * gridCwPortraitScale).dp else continueWatchingThumbnailSize.imageHeight
                     FreeboxVideosSection(
                         entries = uiState.freeboxVideoEntries,
-                        onItemClick = { entry -> onNavigateToFreebox(entry.path) }
+                        onItemClick = { entry -> onNavigateToFreebox(entry.path) },
+                        continueWatchingIds = uiState.continueWatchingItems.filterIsInstance<com.nuvio.tv.ui.screens.home.ContinueWatchingItem.InProgress>().map { it.progress.contentId }.toSet(),
+                        artworkMap = uiState.freeboxVideoArtwork,
+                        cardWidth = gridCwCardWidth,
+                        imageHeight = gridCwImageHeight,
+                        horizontalPadding = 0.dp,
                     )
                 }
             }

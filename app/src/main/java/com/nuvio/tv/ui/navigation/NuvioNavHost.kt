@@ -44,7 +44,6 @@ import com.nuvio.tv.ui.screens.freebox.FreeboxPhotoViewerScreen
 import com.nuvio.tv.ui.screens.settings.FreeboxBrowserViewModel
 import com.nuvio.tv.ui.screens.settings.FreeboxPlaybackRequest
 import com.nuvio.tv.ui.screens.explorer.ExplorerScreen
-import com.nuvio.tv.ui.screens.iptv.IptvHomeScreen
 import com.nuvio.tv.ui.screens.iptv.IptvProviderListScreen
 import com.nuvio.tv.ui.screens.iptv.IptvProviderTypeSelectScreen
 import com.nuvio.tv.ui.screens.iptv.IptvProviderSetupScreen
@@ -1212,7 +1211,12 @@ fun NuvioNavHost(
                 },
                 onNavigateToLicensesAttributions = {
                     navController.navigate(Screen.LicensesAttributions.route)
-                }
+                },
+                onNavigateToIptvProviderSetup = { navController.navigate(Screen.IptvProviderTypeSelect.route) },
+                onNavigateToIptvProviderList = { navController.navigate(Screen.IptvProviderList.route) },
+                onNavigateToIptvSchedule = { navController.navigate(Screen.IptvRecordingSchedule.route) },
+                onNavigateToIptvDns = { /* bientot disponible */ },
+                onNavigateToIptvEpg = { navController.navigate(Screen.IptvEpg.route) },
             )
         }
 
@@ -1439,18 +1443,9 @@ fun NuvioNavHost(
             )
         }
 
-        // —
-        composable(Screen.IptvHome.route) {
-            IptvHomeScreen(
-                onNavigateToProviderList = { navController.navigate(Screen.IptvProviderList.route) },
-                onNavigateToSchedule = { navController.navigate(Screen.IptvRecordingSchedule.route) },
-                onNavigateToRecordings = { navController.navigate(Screen.IptvRecordingList.route) },
-                onNavigateToEpg = { navController.navigate(Screen.IptvEpg.route) },
-                onNavigateToDns = { /* bientot disponible */ }
-            )
-        }
         composable(Screen.IptvProviderList.route) {
             IptvProviderListScreen(
+                onBack = { navController.popBackStack() },
                 onNavigateToSetup = { navController.navigate(Screen.IptvProviderTypeSelect.route) },
                 onNavigateToEdit = { providerId, type ->
                     navController.navigate(Screen.IptvProviderSetup.createRoute(type, providerId))

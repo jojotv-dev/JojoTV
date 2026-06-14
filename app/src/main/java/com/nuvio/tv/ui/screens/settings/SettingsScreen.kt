@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalTvMaterial3Api::class)
+﻿@file:OptIn(ExperimentalTvMaterial3Api::class)
 
 package com.nuvio.tv.ui.screens.settings
 
@@ -53,7 +53,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import com.nuvio.tv.BuildConfig
@@ -230,6 +230,11 @@ fun SettingsScreen(
     onNavigateToAuthQrSignIn: () -> Unit = {},
     onNavigateToManageProfiles: () -> Unit = {},
     onNavigateToIptvHome: () -> Unit = {},
+    onNavigateToIptvProviderSetup: () -> Unit = {},
+    onNavigateToIptvProviderList: () -> Unit = {},
+    onNavigateToIptvSchedule: () -> Unit = {},
+    onNavigateToIptvDns: () -> Unit = {},
+    onNavigateToIptvEpg: () -> Unit = {},
     onNavigateToSupportersContributors: () -> Unit = {},
     onNavigateToLicensesAttributions: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
@@ -475,7 +480,13 @@ fun SettingsScreen(
                                 null
                             }
                         )
-                        SettingsCategory.IPTV -> IptvSettingsScreen()
+                        SettingsCategory.IPTV -> IptvSettingsScreen(
+                            onNavigateToProviderSetup = onNavigateToIptvProviderSetup,
+                            onNavigateToProviderList = onNavigateToIptvProviderList,
+                            onNavigateToSchedule = onNavigateToIptvSchedule,
+                            onNavigateToDns = onNavigateToIptvDns,
+                            onNavigateToEpg = onNavigateToIptvEpg
+                        )
                         SettingsCategory.APPEARANCE -> ThemeSettingsContent(
                             initialFocusRequester = if (allowDetailAutofocus) {
                                 contentFocusRequesters[SettingsCategory.APPEARANCE]

@@ -1,8 +1,10 @@
-package com.nuvio.tv.ui.components
+﻿package com.nuvio.tv.ui.components
 
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -88,7 +90,7 @@ private val BadgeShape = RoundedCornerShape(4.dp)
 private val CwNewEpisodeBadgeColor = Color(0xFF1D4ED8)
 private val CwNewSeasonBadgeColor = Color(0xFFB45309)
 
-/** URLs that failed to load  — ’ — ‚ — ¢ — ¢ — ¢ — ‚¬ — ¡ — ‚ — ¬ — ¢ — ¢ — € — ¬ — ‚ —  skip them immediately on next recomposition. */
+/** URLs that failed to load  â€” â€™ â€” â€š â€” Â¢ â€” Â¢ â€” Â¢ â€” â€šÂ¬ â€” Â¡ â€” â€š â€” Â¬ â€” Â¢ â€” Â¢ â€” â‚¬ â€” Â¬ â€” â€š â€” Â skip them immediately on next recomposition. */
 internal val brokenImageUrls = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
@@ -347,7 +349,8 @@ fun ContinueWatchingCard(
     }
     val isFreeboxProgress = progress?.isFreeboxProgressForDisplay() == true
     val badgeText = remember(isFreeboxProgress, remainingText, nextUpBadgeText, strNextUp) {
-        remainingText ?: nextUpBadgeText ?: strNextUp
+        if (isFreeboxProgress && (progress?.duration ?: 0L) == 0L) null
+        else remainingText ?: nextUpBadgeText ?: strNextUp
     }
     val progressFraction = remember(progress) { progress?.progressPercentage ?: 0f }
     val imageModel = remember(nextUp, progress, item, useEpisodeThumbnails) {
@@ -520,35 +523,13 @@ fun ContinueWatchingCard(
                                 compositingStrategy =
                                     CompositingStrategy.Offscreen
                             }
-                            .clip(CwClipShape)
-
-                            // Gradient overlay for text legibility
-                            .drawWithContent {
-                                drawContent()
-
-                                val startYPos = size.height * 0.45f
-                                val gradient = Brush.verticalGradient(
-                                    colorStops = arrayOf(
-                                        0.0f to Color.Transparent,
-                                        0.6f to bgColor.copy(alpha = 0.7f),
-                                        1.0f to bgColor.copy(alpha = 0.95f)
-                                    ),
-                                    startY = startYPos,
-                                    endY = size.height
-                                )
-
-                                drawRect(
-                                    brush = gradient,
-                                    topLeft = Offset(-2f, startYPos),
-                                    size = Size(size.width + 4f, (size.height - startYPos) + 4f)
-                                )
-                            },
+                            .clip(CwClipShape),
                         placeholder = backgroundPainter,
                         error = backgroundPainter,
                         fallback = backgroundPainter,
                         contentScale = ContentScale.Crop,
                         onError = {
-                            // Primary image failed (e.g. broken thumbnail URL)  — ’ — ‚ — ¢ — ¢ — ¢ — ‚¬ — ¡ — ‚ — ¬ — ¢ — ¢ — € — ¬ — ‚ —  remember and try fallback.
+                            // Primary image failed (e.g. broken thumbnail URL)  â€” â€™ â€” â€š â€” Â¢ â€” Â¢ â€” Â¢ â€” â€šÂ¬ â€” Â¡ â€” â€š â€” Â¬ â€” Â¢ â€” Â¢ â€” â‚¬ â€” Â¬ â€” â€š â€” Â remember and try fallback.
                             if (!usesFallbackImage && effectiveImageModel != null) {
                                 brokenImageUrls.add(effectiveImageModel)
                                 if (fallbackImageModel != null && fallbackImageModel != effectiveImageModel) {
@@ -559,44 +540,25 @@ fun ContinueWatchingCard(
                     )
                 }
 
-                // Content info at bottom
-                Column(
+
+                val themeAccentColor = NuvioColors.Secondary
+                Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(12.dp)
-                ) {
-                    // Episode info (for series)
-                    if (episodeStr != null) {
-                        Text(
-                            text = episodeStr,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = NuvioColors.TextPrimary
-                        )
-                    }
-
-                    Text(
-                        text = titleText,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = NuvioColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
-                    )
-
-                    // Episode title if available (not for Freebox items)
-                    val isFreebox = progress?.isFreeboxProgressForDisplay() == true
-                    if (!isFreebox) {
-                        episodeTitle?.let { title ->
-                            Text(
-                                text = title,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = NuvioTheme.extendedColors.textSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .drawWithCache {
+                            val gradient = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    themeAccentColor.copy(alpha = 0.82f)
+                                ),
+                                startY = 0f,
+                                endY = size.height
                             )
+                            onDrawBehind { drawRect(gradient) }
                         }
-                    }
-                }
+                )
 
                 badgeText?.let { text ->
                     Box(
@@ -615,7 +577,7 @@ fun ContinueWatchingCard(
                     }
                 }
 
-                if (progress != null) {
+                if (progress != null && progress.duration > 0L) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
@@ -630,7 +592,48 @@ fun ContinueWatchingCard(
                                 .fillMaxWidth(progressFraction)
                                 .clip(RoundedCornerShape(1.5.dp))
                                 .height(3.dp)
-                                .background(NuvioColors.Primary)
+                                .background(NuvioColors.Secondary)
+                        )
+                    }
+                }
+            }
+
+            // Title below thumbnail
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .fillMaxWidth()
+            ) {
+                // Episode info (for series)
+                if (episodeStr != null) {
+                    Text(
+                        text = episodeStr,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = NuvioColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Text(
+                    text = titleText,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = NuvioColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                )
+
+                // Episode title if available (not for Freebox items)
+                val isFreebox = progress?.isFreeboxProgressForDisplay() == true
+                if (!isFreebox) {
+                    episodeTitle?.let { title ->
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NuvioTheme.extendedColors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -755,13 +758,13 @@ internal fun formatRemainingTime(
     val totalMinutes = TimeUnit.MILLISECONDS.toMinutes(remainingMs)
     val hours = totalMinutes / 60
     val minutes = totalMinutes % 60
-
-    return when {
-        hours > 0 -> strHoursMinLeft.format(hours, minutes).compactHoursMinutes()
-        minutes > 0 -> strMinLeft.format(minutes)
-        else -> strAlmostDone
-    }
+    if (totalMinutes <= 0L) return strAlmostDone
+    return "reste ${hours}h${minutes.toString().padStart(2, '0')}m"
 }
+
+
+
+
 
 private fun String.compactHoursMinutes(): String =
     replace(Regex("(\\d+)h\\s+(\\d+)m"), "$1h$2m")

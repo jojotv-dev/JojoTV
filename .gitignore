@@ -61,3 +61,6 @@ status-page/
 /build
 .DS_Store
 /capture/
+node_modules/
+repomix-*.txt
+repomix-*.xml

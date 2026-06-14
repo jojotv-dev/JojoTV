@@ -512,8 +512,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
 
         isCoreLibraryDesugaringEnabled = true
-        encoding = "UTF-8"
-
     }
 
     kotlin {
@@ -640,7 +638,11 @@ baselineProfile {
 
         include("com.nuvio.tv.**")
 
+        warnings {
+        maxAgpVersion = false
     }
+}
+
 
 }
 

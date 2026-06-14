@@ -256,25 +256,27 @@ class TmdbService @Inject constructor(
             val cleanQuery = query.trim()
             if (cleanQuery.length < 2 || TMDB_API_KEY.isBlank()) return@withContext null
 
-            fun titleScore(title: String?): Int {
+            fun titleScore(title: String?, originalLanguage: String? = null): Int {
                 if (title.isNullOrBlank()) return 0
                 val q = cleanQuery.lowercase().trim()
                 val t = title.lowercase().trim()
-                return when {
+                val base = when {
                     t == q -> 100
                     t.startsWith(q) || q.startsWith(t) -> 80
                     t.contains(q) || q.contains(t) -> 60
                     else -> 0
                 }
+                val langBonus = if (originalLanguage == "fr") 20 else 0
+                return base + langBonus
             }
 
             suspend fun searchMovieBest(): Pair<Int, TmdbImages>? {
                 val results = tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
                     .body()?.results.orEmpty()
                     .filter { !it.posterPath.isNullOrBlank() || !it.backdropPath.isNullOrBlank() }
-                val result = results.maxByOrNull { titleScore(it.title ?: it.originalTitle) } ?: return null
-                val score = titleScore(result.title ?: result.originalTitle)
-                if (score == 0) return null
+                val result = results.maxByOrNull { titleScore(it.title ?: it.originalTitle, it.originalLanguage) } ?: return null
+                val score = titleScore(result.title ?: result.originalTitle, result.originalLanguage)
+                if (score < 60) return null
                 val frPosterUrl = runCatching {
                     tmdbApi.getMovieImages(result.id, TMDB_API_KEY, "fr,en,null")
                         .body()?.posters
@@ -293,9 +295,9 @@ class TmdbService @Inject constructor(
                 val results = tmdbApi.searchTv(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
                     .body()?.results.orEmpty()
                     .filter { !it.posterPath.isNullOrBlank() || !it.backdropPath.isNullOrBlank() }
-                val result = results.maxByOrNull { titleScore(it.name ?: it.originalName) } ?: return null
-                val score = titleScore(result.name ?: result.originalName)
-                if (score == 0) return null
+                val result = results.maxByOrNull { titleScore(it.name ?: it.originalName, it.originalLanguage) } ?: return null
+                val score = titleScore(result.name ?: result.originalName, result.originalLanguage)
+                if (score < 60) return null
                 val frPosterUrl = runCatching {
                     tmdbApi.getTvImages(result.id, TMDB_API_KEY, "fr,en,null")
                         .body()?.posters
@@ -326,24 +328,26 @@ suspend fun fetchMetadataForTitleQuery(query: String, mediaTypeHint: String = "m
             val cleanQuery = query.trim()
             if (cleanQuery.length < 2 || TMDB_API_KEY.isBlank()) return@withContext null
 
-            fun titleScore(title: String?): Int {
+            fun titleScore(title: String?, originalLanguage: String? = null): Int {
                 if (title.isNullOrBlank()) return 0
                 val q = cleanQuery.lowercase().trim()
                 val t = title.lowercase().trim()
-                return when {
+                val base = when {
                     t == q -> 100
                     t.startsWith(q) || q.startsWith(t) -> 80
                     t.contains(q) || q.contains(t) -> 60
                     else -> 0
                 }
+                val langBonus = if (originalLanguage == "fr") 20 else 0
+                return base + langBonus
             }
 
             suspend fun searchMovieMeta(): Pair<Int, FreeboxVideoMeta>? {
                 val results = tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
                     .body()?.results.orEmpty()
-                val result = results.maxByOrNull { titleScore(it.title ?: it.originalTitle) } ?: return null
-                val score = titleScore(result.title ?: result.originalTitle)
-                if (score == 0) return null
+                val result = results.maxByOrNull { titleScore(it.title ?: it.originalTitle, it.originalLanguage) } ?: return null
+                val score = titleScore(result.title ?: result.originalTitle, result.originalLanguage)
+                if (score < 60) return null
                 val details = tmdbApi.getMovieDetails(result.id, TMDB_API_KEY, "fr-FR").body()
                 val frPoster = runCatching {
                     tmdbApi.getMovieImages(result.id, TMDB_API_KEY, "fr,en,null")
@@ -365,9 +369,9 @@ suspend fun fetchMetadataForTitleQuery(query: String, mediaTypeHint: String = "m
             suspend fun searchTvMeta(): Pair<Int, FreeboxVideoMeta>? {
                 val results = tmdbApi.searchTv(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
                     .body()?.results.orEmpty()
-                val result = results.maxByOrNull { titleScore(it.name ?: it.originalName) } ?: return null
-                val score = titleScore(result.name ?: result.originalName)
-                if (score == 0) return null
+                val result = results.maxByOrNull { titleScore(it.name ?: it.originalName, it.originalLanguage) } ?: return null
+                val score = titleScore(result.name ?: result.originalName, result.originalLanguage)
+                if (score < 60) return null
                 val details = tmdbApi.getTvDetails(result.id, TMDB_API_KEY, "fr-FR").body()
                 val frPoster = runCatching {
                     tmdbApi.getTvImages(result.id, TMDB_API_KEY, "fr,en,null")

@@ -1,4 +1,4 @@
-package com.streamvault.data.sync
+﻿package com.streamvault.data.sync
 
 import android.content.Context
 import android.database.sqlite.SQLiteException
@@ -241,6 +241,11 @@ class ProviderSyncWorker(
                 ExistingWorkPolicy.REPLACE,
                 request
             )
+        }
+
+        fun cancelProvider(context: Context, providerId: Long) {
+            WorkManager.getInstance(context)
+                .cancelUniqueWork(UNIQUE_PROVIDER_WORK_PREFIX + providerId)
         }
     }
 

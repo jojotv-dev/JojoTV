@@ -1,4 +1,4 @@
-package com.nuvio.tv.data.remote.api
+﻿package com.nuvio.tv.data.remote.api
 
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
@@ -617,6 +617,7 @@ data class TmdbDiscoverResult(
     @Json(name = "first_air_date") val firstAirDate: String? = null,
     @Json(name = "vote_average") val voteAverage: Double? = null,
     @Json(name = "vote_count") val voteCount: Int? = null,
+    @Json(name = "original_language") val originalLanguage: String? = null,
     @Json(name = "popularity") val popularity: Double? = null
 )
 

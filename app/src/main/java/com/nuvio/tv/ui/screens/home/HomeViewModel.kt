@@ -865,6 +865,23 @@ class HomeViewModel @Inject constructor(
                     .onSuccess { entries ->
                         val videos = entries.filter { !it.isDirectory }
                         _uiState.update { it.copy(freeboxVideoEntries = videos) }
+                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { migrateFreeboxRenamedFiles(videos) }
+                        // Charger les artworks TMDB en arriere-plan
+                        val artworkMap = mutableMapOf<String, String>()
+                        videos.forEach { entry ->
+                            try {
+                                val contentId = "freebox:${entry.path}"
+                                val query = com.nuvio.tv.data.freebox.freeboxTmdbSearchQuery(entry.name)
+                                val meta = tmdbService.fetchMetadataForTitleQuery(query)
+                                val artwork = meta?.posterUrl ?: meta?.backdropUrl
+                                if (!artwork.isNullOrBlank()) {
+                                    artworkMap[contentId] = artwork
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        if (artworkMap.isNotEmpty()) {
+                            _uiState.update { it.copy(freeboxVideoArtwork = artworkMap) }
+                        }
                     }
             } catch (e: Exception) {
                 // Freebox non connectee ou dossier absent, on ignore silencieusement
@@ -872,6 +889,39 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+
+    private suspend fun migrateFreeboxRenamedFiles(entries: List<FreeboxFileEntry>) {
+        val allProgress = watchProgressRepository.allProgress.first()
+        val freeboxProgress = allProgress.filter { it.contentId.startsWith("freebox:") && it.position > 0L }
+        if (freeboxProgress.isEmpty()) return
+        val currentPaths = entries.filter { !it.isDirectory }.map { it.path.trim() }.toSet()
+        val orphaned = freeboxProgress.filter { it.contentId.removePrefix("freebox:") !in currentPaths }
+        if (orphaned.isEmpty()) return
+        val byDir = entries.filter { !it.isDirectory }.groupBy { it.path.substringBeforeLast("/") }
+        orphaned.forEach { progress ->
+            val pp = progress.contentId.removePrefix("freebox:")
+            val dir = pp.substringBeforeLast("/")
+            val pname = pp.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()
+            val candidates = byDir[dir] ?: return@forEach
+            val best = candidates.maxByOrNull { nameSimilarityHome(pname, it.path.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()) } ?: return@forEach
+            val bname = best.path.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()
+            if (nameSimilarityHome(pname, bname) < 0.6) return@forEach
+            val newId = freeboxContentIdForPath(best.path)
+            if (allProgress.any { it.contentId == newId && it.position > 0L }) return@forEach
+            val migrated = progress.copy(contentId = newId, videoId = newId, name = freeboxFileNameOnly(best.path))
+            watchProgressRepository.saveProgress(migrated)
+            watchProgressRepository.removeProgress(progress.contentId)
+        }
+    }
+
+    private fun nameSimilarityHome(a: String, b: String): Double {
+        if (a == b) return 1.0
+        if (a.length < 2 || b.length < 2) return 0.0
+        fun bigrams(s: String) = (0 until s.length - 1).map { s.substring(it, it + 2) }
+        val ba = bigrams(a); val bb = bigrams(b).toMutableList(); var inter = 0
+        ba.forEach { bg -> val i = bb.indexOf(bg); if (i >= 0) { inter++; bb.removeAt(i) } }
+        return 2.0 * inter / (ba.size + bigrams(b).size)
+    }
     override fun onCleared() {
         startupAuthNoticeJob?.cancel()
         posterStatusReconcileJob?.cancel()

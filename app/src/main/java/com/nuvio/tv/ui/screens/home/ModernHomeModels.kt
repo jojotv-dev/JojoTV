@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.home
+﻿package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
@@ -647,9 +647,9 @@ private fun formatHeroRuntime(runtime: String?): String? {
     val wholeHours = totalMinutes / 60
     val remainingMinutes = totalMinutes % 60
     return when {
-        wholeHours > 0 && remainingMinutes > 0 -> "${wholeHours}h ${remainingMinutes}m"
-        wholeHours > 0 -> "${wholeHours}h"
-        else -> "${remainingMinutes}m"
+        wholeHours > 0 && remainingMinutes > 0 -> "${wholeHours}h${remainingMinutes.toString().padStart(2, '0')}m"
+        wholeHours > 0 -> "${wholeHours}h00m"
+        else -> "0h${remainingMinutes.toString().padStart(2, '0')}m"
     }
 }
 

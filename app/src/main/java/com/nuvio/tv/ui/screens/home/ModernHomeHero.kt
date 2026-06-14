@@ -483,7 +483,7 @@ private fun HeroTitleContent(
 
             if (hasTrailingMeta) {
                 if (hasLeadingMeta) {
-                    HeroMetaDivider(metaScale)
+                    HeroMetaHorizontalDivider(metaScale)
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -498,7 +498,7 @@ private fun HeroTitleContent(
                         )
                     }
                     if (!runtimeText.isNullOrBlank() && !yearText.isNullOrBlank()) {
-                        HeroMetaDivider(metaScale)
+                        HeroMetaHorizontalDivider(metaScale)
                     }
                     if (!yearText.isNullOrBlank()) {
                         Text(
@@ -539,7 +539,7 @@ private fun HeroTitleContent(
                     )
                 }
                 if (secondaryHighlightText != null && (hasSecondaryBadge || showImdbInSecondary || secondaryDetails.isNotEmpty())) {
-                    HeroMetaDivider(metaScale)
+                    HeroMetaHorizontalDivider(metaScale)
                 }
                 if (ageRatingBadge != null && statusBadge != null) {
                     HeroCombinedMetaBadge(
@@ -565,7 +565,7 @@ private fun HeroTitleContent(
                     }
                 }
                 if ((ageRatingBadge != null || statusBadge != null) && (showImdbInSecondary || secondaryDetails.isNotEmpty())) {
-                    HeroMetaDivider(metaScale)
+                    HeroMetaHorizontalDivider(metaScale)
                 }
                 if (showImdbInSecondary) {
                     HeroImdbMeta(
@@ -578,7 +578,7 @@ private fun HeroTitleContent(
                     )
                 }
                 if (showImdbInSecondary && secondaryDetails.isNotEmpty()) {
-                    HeroMetaDivider(metaScale)
+                    HeroMetaHorizontalDivider(metaScale)
                 }
                 secondaryDetails.forEachIndexed { index, value ->
                     Text(
@@ -589,7 +589,7 @@ private fun HeroTitleContent(
                         overflow = TextOverflow.Ellipsis
                     )
                     if (index < secondaryDetails.lastIndex) {
-                        HeroMetaDivider(metaScale)
+                        HeroMetaHorizontalDivider(metaScale)
                     }
                 }
             }
@@ -707,7 +707,7 @@ private fun HeroMetaBadge(
 }
 
 @Composable
-private fun HeroMetaDivider(scale: Float) {
+private fun HeroMetaHorizontalDivider(scale: Float) {
     Box(
         modifier = Modifier
             .size((4.dp * scale).coerceAtLeast(2.dp))

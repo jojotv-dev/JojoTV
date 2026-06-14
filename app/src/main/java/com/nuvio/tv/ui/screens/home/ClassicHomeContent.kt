@@ -119,14 +119,9 @@ fun ClassicHomeContent(
             height = posterCardStyle.height * CLASSIC_SECONDARY_ROW_POSTER_SCALE
         )
     }
-    val classicContinueWatchingCardWidth = remember(classicSecondaryPosterCardStyle, continueWatchingPortraitMode) {
-        if (continueWatchingPortraitMode) classicSecondaryPosterCardStyle.width
-        else classicSecondaryPosterCardStyle.width * (16f / 9f)
-    }
-    val classicContinueWatchingImageHeight = remember(classicSecondaryPosterCardStyle, continueWatchingPortraitMode) {
-        if (continueWatchingPortraitMode) classicSecondaryPosterCardStyle.width * (3f / 2f)
-        else classicSecondaryPosterCardStyle.width
-    }
+    // Memes dimensions que la section Continuer a regarder (Classic l'affiche toujours en paysage)
+    val classicContinueWatchingCardWidth = continueWatchingThumbnailSize.cardWidth
+    val classicContinueWatchingImageHeight = continueWatchingThumbnailSize.imageHeight
 
     // Nested prefetch: when LazyColumn prefetches a row ahead of scrolling,
     // pre-compose up to 2 ContentCards in its nested LazyRow across multiple frames.
@@ -510,7 +505,10 @@ fun ClassicHomeContent(
                     entries = uiState.freeboxVideoEntries,
                     onItemClick = { entry ->
                         onNavigateToFreebox(entry.path)
-                    }
+                    },
+                    artworkMap = uiState.freeboxVideoArtwork,
+                    cardWidth = classicContinueWatchingCardWidth,
+                    imageHeight = classicContinueWatchingImageHeight,
                 )
             }
         }

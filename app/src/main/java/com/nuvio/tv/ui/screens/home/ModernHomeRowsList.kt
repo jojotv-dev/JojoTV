@@ -130,7 +130,9 @@ internal fun ModernHomeRowsList(
     onFocusedHeroMediaNonceChange: (Int) -> Unit,
     onExpansionInteractionNonceChange: (Int) -> Unit,
     freeboxVideoEntries: List<com.nuvio.tv.data.freebox.FreeboxFileEntry> = emptyList(),
+    continueWatchingContentIds: Set<String> = emptySet(),
     onNavigateToFreebox: (String) -> Unit = {},
+    freeboxVideoArtwork: Map<String, String> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     // Unwrap StableRef wrappers for internal use (not passed to child composables)
@@ -257,7 +259,7 @@ internal fun ModernHomeRowsList(
                 .clipToBounds()
                 .graphicsLayer { alpha = trailerContentAlpha() }
                 .focusRequester(contentFocusRequester)
-                .focusRestorer { focusRestorerRequester() }
+                .focusRestorer(focusRestorerRequester)
                 .dpadVerticalFastScroll(
                     scrollableState = verticalRowListState,
                     onFastScrollingChanged = onFastScrollingChanged,
@@ -421,7 +423,11 @@ internal fun ModernHomeRowsList(
                 item(key = "freebox_videos", contentType = "freebox_videos") {
                     FreeboxVideosSection(
                         entries = freeboxVideoEntries,
-                        onItemClick = { entry -> onNavigateToFreebox(entry.path) }
+                        onItemClick = { entry -> onNavigateToFreebox(entry.path) },
+                        artworkMap = freeboxVideoArtwork,
+                        continueWatchingIds = continueWatchingContentIds,
+                        cardWidth = continueWatchingCardWidth,
+                        imageHeight = continueWatchingCardHeight,
                     )
                 }
             }

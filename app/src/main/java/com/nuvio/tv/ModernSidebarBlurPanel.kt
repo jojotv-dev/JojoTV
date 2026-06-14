@@ -33,6 +33,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
@@ -73,6 +78,7 @@ internal fun ModernSidebarBlurPanel(
     sidebarHazeState: HazeState,
     panelShape: RoundedCornerShape,
     drawerItemFocusRequesters: Map<String, FocusRequester>,
+    focusedItemIndex: Int,
     onDrawerItemFocused: (Int) -> Unit,
     onDrawerItemClick: (String) -> Unit,
     activeProfileName: String,
@@ -136,13 +142,35 @@ internal fun ModernSidebarBlurPanel(
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
+                .weight(1f)
+                .onKeyEvent { keyEvent ->
+                    if (keyEvent.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onKeyEvent false
+                    val firstRequester = drawerItemFocusRequesters.values.firstOrNull()
+                    val lastRequester = drawerItemFocusRequesters.values.lastOrNull()
+                    when (keyEvent.key) {
+                        androidx.compose.ui.input.key.Key.DirectionDown -> {
+                            if (focusedItemIndex == drawerItems.lastIndex + 1) {
+                                firstRequester?.requestFocus()
+                                true
+                            } else false
+                        }
+                        androidx.compose.ui.input.key.Key.DirectionUp -> {
+                            if (focusedItemIndex == 1) {
+                                lastRequester?.requestFocus()
+                                true
+                            } else false
+                        }
+                        else -> false
+                    }
+                },
             contentPadding = PaddingValues(top = 2.dp, bottom = 6.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item(key = "profile_header") {
                 if (showProfileSelector && activeProfileName.isNotEmpty()) {
+                    val firstNavRequester = drawerItemFocusRequesters.values.firstOrNull()
+                    val lastNavRequester = drawerItemFocusRequesters.values.lastOrNull()
                     SidebarProfileItem(
                         profileName = activeProfileName,
                         profileColorHex = activeProfileColorHex,
@@ -153,7 +181,20 @@ internal fun ModernSidebarBlurPanel(
                             if (focused) onDrawerItemFocused(0)
                         },
                         onClick = onSwitchProfile,
-                        modifier = Modifier.fillMaxWidth(0.96f)
+                        modifier = Modifier
+                            .fillMaxWidth(0.96f)
+                            .onKeyEvent { keyEvent ->
+                                if (keyEvent.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onKeyEvent false
+                                when (keyEvent.key) {
+                                    androidx.compose.ui.input.key.Key.DirectionDown -> {
+                                        firstNavRequester?.requestFocus(); true
+                                    }
+                                    androidx.compose.ui.input.key.Key.DirectionUp -> {
+                                        lastNavRequester?.requestFocus(); true
+                                    }
+                                    else -> false
+                                }
+                            }
                     )
                 } else {
                     Box(
@@ -177,6 +218,10 @@ internal fun ModernSidebarBlurPanel(
                 items = drawerItems,
                 key = { _, item -> item.route }
             ) { index, item ->
+                val isFirst = index == 0
+                val isLast = index == drawerItems.lastIndex
+                val firstRequester = drawerItemFocusRequesters.values.firstOrNull()
+                val lastRequester = drawerItemFocusRequesters.values.lastOrNull()
                 SidebarNavigationItem(
                     label = item.label,
                     iconRes = item.iconRes,
@@ -194,6 +239,9 @@ internal fun ModernSidebarBlurPanel(
                     modifier = Modifier
                         .fillMaxWidth(0.96f)
                         .focusRequester(drawerItemFocusRequesters.getValue(item.route))
+                        .focusProperties {
+                            if (isLast && firstRequester != null) down = firstRequester
+                        }
                 )
             }
         }

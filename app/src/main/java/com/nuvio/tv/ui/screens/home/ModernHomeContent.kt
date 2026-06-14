@@ -551,11 +551,12 @@ fun ModernHomeContent(
     val portraitModernPosterScale = 1.08f
     val landscapeModernPosterScale = 1.34f
     val portraitCatalogCardWidth = portraitBaseWidth * 0.84f * portraitModernPosterScale
-    val portraitCatalogCardHeight = portraitBaseHeight * 0.84f * portraitModernPosterScale
     val landscapeCatalogCardWidth = portraitBaseWidth * 1.24f * landscapeModernPosterScale
+    val portraitCatalogCardHeight = portraitBaseHeight * 0.84f * portraitModernPosterScale
     val landscapeCatalogCardHeight = landscapeCatalogCardWidth / 1.77f
-    val continueWatchingCardWidth = if (continueWatchingPortraitMode) continueWatchingThumbnailSize.cardWidth * 0.69f else continueWatchingThumbnailSize.cardWidth
-    val continueWatchingCardHeight = if (continueWatchingPortraitMode) continueWatchingCardWidth * (3f / 2f) else continueWatchingThumbnailSize.imageHeight
+    val cwPortraitScale = continueWatchingThumbnailSize.cardWidth.value / 220f
+    val continueWatchingCardWidth = if (continueWatchingPortraitMode) (126f * cwPortraitScale).dp else continueWatchingThumbnailSize.cardWidth
+    val continueWatchingCardHeight = if (continueWatchingPortraitMode) (189f * cwPortraitScale).dp else continueWatchingThumbnailSize.imageHeight
 
     val localConfiguration = LocalConfiguration.current
     val screenWidth = localConfiguration.screenWidthDp.dp
@@ -1070,7 +1071,9 @@ fun ModernHomeContent(
                 onExpansionInteractionNonceChange = onExpansionInteractionNonceChangeLambda,
                 isVerticalRowsScrollingState = isVerticalRowsScrollingState,
                 freeboxVideoEntries = uiState.freeboxVideoEntries,
+                continueWatchingContentIds = uiState.continueWatchingItems.filterIsInstance<ContinueWatchingItem.InProgress>().map { it.progress.contentId }.toSet(),
                 onNavigateToFreebox = onNavigateToFreebox,
+                freeboxVideoArtwork = uiState.freeboxVideoArtwork,
                 modifier = Modifier.align(Alignment.BottomStart)
             )
     }

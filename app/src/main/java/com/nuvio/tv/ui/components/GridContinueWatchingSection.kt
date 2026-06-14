@@ -138,8 +138,8 @@ fun GridContinueWatchingSection(
                                 lastFocusedIndex.intValue = index
                             }
                         },
-                    cardWidth = if (continueWatchingPortraitMode) (thumbnailSize.cardWidth * 0.69f) else thumbnailSize.cardWidth,
-                    imageHeight = if (continueWatchingPortraitMode) (thumbnailSize.cardWidth * 0.69f * (3f / 2f)) else thumbnailSize.imageHeight
+                    cardWidth = if (continueWatchingPortraitMode) (126f * (thumbnailSize.cardWidth.value / 220f)).dp else thumbnailSize.cardWidth,
+                    imageHeight = if (continueWatchingPortraitMode) (189f * (thumbnailSize.cardWidth.value / 220f)).dp else thumbnailSize.imageHeight
                 )
             }
         }

@@ -156,7 +156,6 @@ sealed class Screen(val route: String) {
         }
     }
     data object Settings : Screen("settings")
-    data object IptvHome : Screen("iptv_home")
     data object IptvProviderHome : Screen("iptv_provider_home/{providerId}/{providerName}") {
         private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
         fun createRoute(providerId: Long, providerName: String): String = "iptv_provider_home/$providerId/${encode(providerName)}"

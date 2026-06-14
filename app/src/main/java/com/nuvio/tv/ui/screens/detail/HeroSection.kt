@@ -657,7 +657,7 @@ private fun MetaInfoRow(
                     color = NuvioTheme.extendedColors.textSecondary
                 )
                 if (yearText != null || shouldShowImdbRating || shouldShowTmdbRating) {
-                    MetaInfoDivider()
+                    MetaInfoHorizontalDivider()
                 }
             }
 
@@ -668,7 +668,7 @@ private fun MetaInfoRow(
                     color = NuvioTheme.extendedColors.textSecondary
                 )
                 if (shouldShowImdbRating || shouldShowTmdbRating) {
-                    MetaInfoDivider()
+                    MetaInfoHorizontalDivider()
                 }
             }
 
@@ -738,7 +738,7 @@ private fun MetaInfoRow(
                     }
                 }
                 if ((ageRatingBadge != null || statusBadge != null) && secondaryItems.isNotEmpty()) {
-                    MetaInfoDivider()
+                    MetaInfoHorizontalDivider()
                 }
                 secondaryItems.forEachIndexed { index, value ->
                     Text(
@@ -747,7 +747,7 @@ private fun MetaInfoRow(
                         color = NuvioColors.TextPrimary
                     )
                     if (index < secondaryItems.lastIndex) {
-                        MetaInfoDivider()
+                        MetaInfoHorizontalDivider()
                     }
                 }
             }
@@ -988,7 +988,7 @@ private fun rememberRawSvgPainter(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun MetaInfoDivider() {
+private fun MetaInfoHorizontalDivider() {
     Text(
         text = "•",
         style = MaterialTheme.typography.labelLarge,

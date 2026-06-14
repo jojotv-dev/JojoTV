@@ -47,7 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Border
 import androidx.tv.material3.Card
@@ -62,6 +62,7 @@ import com.nuvio.tv.ui.theme.NuvioColors
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.activity.compose.BackHandler
 
 @Composable
 fun IptvProviderListScreen(
@@ -69,12 +70,14 @@ fun IptvProviderListScreen(
     onNavigateToSetup: () -> Unit,
     onNavigateToEdit: (Long, String) -> Unit = { _, _ -> },
     onNavigateToProvider: (Long, String) -> Unit,
+    onBack: () -> Unit = {},
     viewModel: IptvHomeViewModel = hiltViewModel()
 ) {
     val providers by viewModel.providers.collectAsStateWithLifecycle()
     val syncStates by viewModel.syncStates.collectAsStateWithLifecycle()
     val providerCounts by viewModel.providerCounts.collectAsStateWithLifecycle()
 
+    BackHandler { onBack() }
     Box(
         modifier = Modifier
             .fillMaxSize()

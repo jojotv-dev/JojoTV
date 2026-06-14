@@ -49,7 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.FileProvider
 import androidx.tv.material3.Button
@@ -757,8 +757,8 @@ private fun formatFreeboxRemaining(remainingMs: Long): String {
     val totalMinutes = remainingMs / 60000
     val hours = totalMinutes / 60
     val minutes = totalMinutes % 60
-    return if (hours > 0) "${hours}h${minutes}m restantes"
-    else "${minutes}m restantes"
+    return "reste ${hours}h${minutes.toString().padStart(2, '0')}m"
+
 }
 
 private fun freeboxEntryComparator(

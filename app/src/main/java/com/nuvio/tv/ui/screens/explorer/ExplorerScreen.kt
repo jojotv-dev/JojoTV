@@ -63,7 +63,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.FileProvider
 import androidx.tv.material3.Border
@@ -291,7 +291,8 @@ private fun ExplorerPanelCard(
                             modifier = Modifier.weight(1f),
                             onFocused = onPanelFocused,
                             onClick = onUp,
-                            onLongClick = { }
+                            onLongClick = { },
+                            compact = true
                         )
                         ExplorerCommandRow(
                             title = stringResource(R.string.explorer_refresh),
@@ -299,7 +300,8 @@ private fun ExplorerPanelCard(
                             modifier = Modifier.weight(1f),
                             onFocused = onPanelFocused,
                             onClick = onRefresh,
-                            onLongClick = { }
+                            onLongClick = { },
+                            compact = true
                         )
                     }
                 }
@@ -350,7 +352,8 @@ private fun ExplorerCommandRow(
     onFocused: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    value: String? = null
+    value: String? = null,
+    compact: Boolean = false
 ) {
     ExplorerCardRow(
         title = title,
@@ -358,6 +361,7 @@ private fun ExplorerCommandRow(
         value = value,
         icon = icon,
         modifier = modifier,
+        compact = compact,
         onFocused = onFocused,
         onClick = onClick,
         onLongClick = onLongClick
@@ -426,6 +430,7 @@ private fun ExplorerCardRow(
     leadingSelectionIcon: ImageVector? = null,
     modifier: Modifier = Modifier,
     activeBorderColor: Color = NuvioColors.FocusRing,
+    compact: Boolean = false,
     onFocused: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit
@@ -481,54 +486,81 @@ private fun ExplorerCardRow(
         shape = CardDefaults.shape(RoundedCornerShape(12.dp)),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 56.dp)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (leadingSelectionIcon != null) {
+        if (compact) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
                 Icon(
-                    imageVector = leadingSelectionIcon,
+                    imageVector = icon,
                     contentDescription = null,
-                    tint = NuvioColors.FocusRing,
+                    tint = NuvioColors.TextPrimary,
                     modifier = Modifier.size(22.dp)
                 )
-                Spacer(modifier = Modifier.size(10.dp))
-            }
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = NuvioColors.TextPrimary,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(modifier = Modifier.size(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
+                Spacer(modifier = Modifier.size(4.dp))
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodySmall,
                     color = NuvioColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
-                if (!subtitle.isNullOrBlank()) {
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (leadingSelectionIcon != null) {
+                    Icon(
+                        imageVector = leadingSelectionIcon,
+                        contentDescription = null,
+                        tint = NuvioColors.FocusRing,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.size(10.dp))
+                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = NuvioColors.TextPrimary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.size(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = NuvioColors.TextSecondary,
+                        text = title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = NuvioColors.TextPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NuvioColors.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
-            }
-            if (!value.isNullOrBlank()) {
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = NuvioColors.TextSecondary,
-                    maxLines = 1
-                )
+                if (!value.isNullOrBlank()) {
+                    Text(
+                        text = value,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NuvioColors.TextSecondary,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }

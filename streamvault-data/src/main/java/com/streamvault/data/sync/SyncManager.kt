@@ -1,4 +1,4 @@
-package com.streamvault.data.sync
+﻿package com.streamvault.data.sync
 
 import android.content.Context
 import android.util.Log
@@ -378,6 +378,7 @@ class SyncManager @Inject constructor(
 
     suspend fun onProviderDeleted(providerId: Long) {
         BackgroundEpgSyncWorker.cancel(applicationContext, providerId)
+        ProviderSyncWorker.cancelProvider(applicationContext, providerId)
         withProviderLock(providerId) {
             withProviderEpgLock(providerId) {
                 syncStateTracker.reset(providerId)

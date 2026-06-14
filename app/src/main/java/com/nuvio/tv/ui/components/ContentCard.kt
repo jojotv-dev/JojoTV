@@ -438,6 +438,7 @@ fun ContentCard(
                 }
 
                 if (isBackdropExpanded) {
+                    val themeAccentColor = NuvioColors.Secondary
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
@@ -447,7 +448,7 @@ fun ContentCard(
                                 val gradient = Brush.verticalGradient(
                                     colors = listOf(
                                         Color.Transparent,
-                                        Color.Black.copy(alpha = 0.76f)
+                                        themeAccentColor.copy(alpha = 0.82f)
                                     ),
                                     startY = 0f,
                                     endY = size.height

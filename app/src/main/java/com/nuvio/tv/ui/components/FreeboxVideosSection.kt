@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
-import com.nuvio.tv.data.freebox.freeboxDisplayName
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
@@ -25,35 +24,47 @@ import com.nuvio.tv.ui.theme.NuvioColors
 fun FreeboxVideosSection(
     entries: List<FreeboxFileEntry>,
     onItemClick: (FreeboxFileEntry) -> Unit,
-    modifier: Modifier = Modifier,
-    cardWidth: Dp = 288.dp,
-    imageHeight: Dp = 162.dp
+    artworkMap: Map<String, String> = emptyMap(),
+    continueWatchingIds: Set<String> = emptySet(),
+    cardWidth: Dp = 126.dp,
+    imageHeight: Dp = 189.dp,
+    horizontalPadding: Dp = 48.dp,
+    modifier: Modifier = Modifier
 ) {
-    if (entries.isEmpty()) return
+    val filteredEntries = remember(entries, continueWatchingIds) {
+        entries.filter { entry -> "freebox:${entry.path}" !in continueWatchingIds }
+    }
+
+    if (filteredEntries.isEmpty()) return
 
     Column(modifier = modifier) {
         Text(
             text = "Vid\u00e9os",
             style = MaterialTheme.typography.headlineMedium,
             color = NuvioColors.TextPrimary,
-            modifier = Modifier.padding(start = 48.dp, end = 48.dp, bottom = 16.dp)
+            modifier = Modifier.padding(start = horizontalPadding, end = horizontalPadding, bottom = 16.dp)
         )
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 48.dp),
+            contentPadding = PaddingValues(horizontal = horizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            itemsIndexed(entries, key = { _, e -> e.path }) { _, entry ->
-                val cwItem = remember(entry) {
+            itemsIndexed(filteredEntries, key = { _, e -> e.path }) { _, entry ->
+                val contentId = "freebox:${entry.path}"
+                val artwork = artworkMap[contentId]
+                val title = remember(entry) {
+                    com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle(entry.name, entry.durationMs)
+                }
+                val cwItem = remember(entry, artwork) {
                     ContinueWatchingItem.InProgress(
                         progress = WatchProgress(
-                            contentId = "freebox:${entry.path}",
+                            contentId = contentId,
                             contentType = "freebox",
-                            name = freeboxDisplayName(entry.name),
-                            poster = null,
-                            backdrop = null,
+                            name = title,
+                            poster = artwork,
+                            backdrop = artwork,
                             logo = null,
-                            videoId = "freebox:${entry.path}",
+                            videoId = contentId,
                             season = null,
                             episode = null,
                             episodeTitle = null,

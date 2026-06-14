@@ -546,7 +546,7 @@ internal fun DiscoverGrid(
         state = gridState,
         columns = GridCells.Adaptive(minSize = adaptiveStyle.width),
         modifier = Modifier.fillMaxSize()
-            .focusRestorer { focusedItemRequester }
+            .focusRestorer(focusedItemRequester)
             .dpadVerticalFastScroll(
                 scrollableState = gridState,
                 onFastScrollingChanged = { active ->

@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.components
+﻿package com.nuvio.tv.ui.components
 
 import com.nuvio.tv.domain.model.WatchProgress
 import java.util.concurrent.TimeUnit
@@ -15,8 +15,6 @@ internal fun formatContinueWatchingProgressLabel(
     val effectivePosition = if (progress.position > 0L) {
         progress.position
     } else if (effectiveDuration > 0L && progress.progressPercent != null) {
-        // Trakt provides only a percentage without position/duration from playback.
-        // Derive position from the explicit percent so remaining time is correct.
         (effectiveDuration * (progress.progressPercent / 100f)).toLong()
     } else {
         0L
@@ -38,11 +36,6 @@ internal fun formatContinueWatchingProgressLabel(
     val hours = totalMinutes / 60
     val minutes = totalMinutes % 60
 
-    return when {
-        hours > 0 -> hoursMinLeftLabel.format(hours, minutes).compactHoursMinutes()
-        else -> minLeftLabel.format(totalMinutes.coerceAtLeast(1))
-    }
+    if (totalMinutes <= 0L) return resumeLabel
+    return "reste ${hours}h${minutes.toString().padStart(2, '0')}m"
 }
-
-private fun String.compactHoursMinutes(): String =
-    replace(Regex("(\\d+)h\\s+(\\d+)m"), "$1h$2m")

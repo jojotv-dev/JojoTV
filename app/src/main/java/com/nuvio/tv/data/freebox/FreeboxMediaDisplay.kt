@@ -1,4 +1,4 @@
-package com.nuvio.tv.data.freebox
+﻿package com.nuvio.tv.data.freebox
 
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -41,9 +41,9 @@ fun formatFreeboxDurationCompact(durationMs: Long?): String? {
     val hours = totalMinutes / 60L
     val minutes = totalMinutes % 60L
     return if (hours > 0L) {
-        if (minutes > 0L) "${hours}h${minutes.toString().padStart(2, '0')}" else "${hours}h"
+        if (minutes > 0L) "0${hours}h${minutes.toString().padStart(2, '0')}" else "${hours}h00m"
     } else {
-        "${minutes}min"
+        "0h${minutes.toString().padStart(2, '0')}m"
     }
 }
 
@@ -56,7 +56,7 @@ fun freeboxVideoDisplayTitle(rawNameOrPath: String, durationMs: Long? = null, sh
 fun freeboxTmdbSearchQuery(rawNameOrPath: String): String {
     val fileName = freeboxDisplayName(rawNameOrPath)
     val withoutExtension = fileName.replace(VIDEO_FILE_EXTENSION_REGEX, "")
-    return withoutExtension
+    val cleaned = withoutExtension
         .replace('.', ' ')
         .replace('_', ' ')
         .replace('-', ' ')
@@ -69,4 +69,7 @@ fun freeboxTmdbSearchQuery(rawNameOrPath: String): String {
         .trim()
         .replaceFirstChar { char -> if (char.isLowerCase()) char.titlecase(Locale.getDefault()) else char.toString() }
         .ifBlank { withoutExtension.trim() }
+    // Retire un numero de segment isole en fin de titre (ex: "Envoye Special 3" -> "Envoye Special")
+    val withoutTrailingNumber = cleaned.replace(Regex("\\s+\\d{1,3}$"), "").trim()
+    return withoutTrailingNumber.ifBlank { cleaned }
 }
