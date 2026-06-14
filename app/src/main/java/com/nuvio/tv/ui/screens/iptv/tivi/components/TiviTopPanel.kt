@@ -16,6 +16,7 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.streamvault.domain.model.Channel
 import com.streamvault.domain.model.Program
+import com.nuvio.tv.ui.theme.NuvioColors
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -32,7 +33,7 @@ fun TiviTopPanel(
         modifier = modifier
             .fillMaxWidth()
             .height(160.dp)
-            .background(Color(0xFF0D0D20))
+            .background(NuvioColors.BackgroundElevated)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -42,7 +43,7 @@ fun TiviTopPanel(
                 .width(240.dp)
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF050510)),
+                .background(NuvioColors.Background),
             contentAlignment = Alignment.Center,
         ) {
             if (channel != null) {
@@ -58,7 +59,7 @@ fun TiviTopPanel(
                 } else {
                     Text(
                         text = channel.name,
-                        color = Color.White,
+                        color = NuvioColors.TextPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                     )
@@ -66,7 +67,7 @@ fun TiviTopPanel(
             } else {
                 Text(
                     text = "Aucune chaîne",
-                    color = Color(0xFF444466),
+                    color = NuvioColors.TextDisabled,
                     fontSize = 11.sp,
                 )
             }
@@ -83,7 +84,7 @@ fun TiviTopPanel(
                 Text(
                     text = channel.name,
                     fontSize = 11.sp,
-                    color = Color(0xFF7777AA),
+                    color = NuvioColors.TextTertiary,
                     fontWeight = FontWeight.Medium,
                 )
             }
@@ -94,7 +95,7 @@ fun TiviTopPanel(
                     text = currentProgram.title,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    color = NuvioColors.TextPrimary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -105,13 +106,13 @@ fun TiviTopPanel(
                         append(timeFmt.format(Date(currentProgram.endTime)))
                     },
                     fontSize = 11.sp,
-                    color = Color(0xFF4FC3F7),
+                    color = NuvioColors.Secondary,
                 )
                 if (currentProgram.description.isNotBlank()) {
                     Text(
                         text = currentProgram.description,
                         fontSize = 11.sp,
-                        color = Color(0xFF888899),
+                        color = NuvioColors.TextSecondary,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -120,7 +121,7 @@ fun TiviTopPanel(
                 Text(
                     text = "Aucune info EPG",
                     fontSize = 12.sp,
-                    color = Color(0xFF555566),
+                    color = NuvioColors.TextTertiary,
                 )
             }
 
@@ -129,7 +130,7 @@ fun TiviTopPanel(
                 Text(
                     text = "Ensuite : ${nextProgram.title}  ${timeFmt.format(Date(nextProgram.startTime))}",
                     fontSize = 10.sp,
-                    color = Color(0xFF666677),
+                    color = NuvioColors.TextTertiary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

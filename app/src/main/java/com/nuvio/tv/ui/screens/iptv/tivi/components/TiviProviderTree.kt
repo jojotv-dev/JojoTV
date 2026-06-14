@@ -14,11 +14,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import com.nuvio.tv.ui.theme.NuvioColors
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
+import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.screens.iptv.tivi.TiviProviderNode
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -26,8 +26,11 @@ import com.nuvio.tv.ui.screens.iptv.tivi.TiviProviderNode
 fun TiviProviderTree(
     providerNodes: List<TiviProviderNode>,
     selectedGroupId: Long?,
+    selectedProviderId: Long?,
     onProviderClick: (Long) -> Unit,
+    onProviderFocus: (Long) -> Unit,
     onGroupClick: (Long, Long) -> Unit,
+    onGroupFocus: (Long, Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -42,7 +45,9 @@ fun TiviProviderTree(
                 TiviProviderHeader(
                     label = node.provider.name,
                     isExpanded = node.isExpanded,
+                    isSelected = node.provider.id == selectedProviderId,
                     onClick = { onProviderClick(node.provider.id) },
+                    onFocus = { onProviderFocus(node.provider.id) },
                 )
             }
             if (node.isExpanded) {
@@ -51,6 +56,7 @@ fun TiviProviderTree(
                         label = group.name,
                         isSelected = group.id == selectedGroupId,
                         onClick = { onGroupClick(node.provider.id, group.id) },
+                        onFocus = { onGroupFocus(node.provider.id, group.id) },
                     )
                 }
             }
@@ -63,7 +69,9 @@ fun TiviProviderTree(
 private fun TiviProviderHeader(
     label: String,
     isExpanded: Boolean,
+    isSelected: Boolean,
     onClick: () -> Unit,
+    onFocus: () -> Unit,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val rotation by animateFloatAsState(
@@ -75,11 +83,14 @@ private fun TiviProviderHeader(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .onFocusChanged { isFocused = it.isFocused },
+            .onFocusChanged {
+                isFocused = it.isFocused
+                if (it.isFocused) onFocus()
+            },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color(0xFF252550),
-            pressedContainerColor = Color(0xFF303060),
+            containerColor = if (isSelected) NuvioColors.FocusBackground else Color.Transparent,
+            focusedContainerColor = NuvioColors.FocusBackground,
+            pressedContainerColor = NuvioColors.FocusBackground,
         ),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
     ) {
@@ -94,13 +105,13 @@ private fun TiviProviderHeader(
                 text = label,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = if (isFocused) Color.White else Color(0xFFCCCCCC),
+                color = if (isFocused || isSelected) NuvioColors.TextPrimary else NuvioColors.TextSecondary,
                 modifier = Modifier.weight(1f),
             )
             androidx.compose.material3.Icon(
                 imageVector = Icons.Filled.ExpandMore,
                 contentDescription = null,
-                tint = Color(0xFF7777AA),
+                tint = if (isFocused || isSelected) NuvioColors.Secondary else NuvioColors.TextTertiary,
                 modifier = Modifier
                     .size(16.dp)
                     .rotate(rotation),
@@ -115,6 +126,7 @@ private fun TiviGroupItem(
     label: String,
     isSelected: Boolean,
     onClick: () -> Unit,
+    onFocus: () -> Unit,
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
@@ -122,11 +134,14 @@ private fun TiviGroupItem(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .onFocusChanged { isFocused = it.isFocused },
+            .onFocusChanged {
+                isFocused = it.isFocused
+                if (it.isFocused) onFocus()
+            },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) Color(0xFF1A3A6A) else Color.Transparent,
-            focusedContainerColor = Color(0xFF1E2A4A),
-            pressedContainerColor = Color(0xFF1A3A6A),
+            containerColor = if (isSelected) NuvioColors.FocusBackground else Color.Transparent,
+            focusedContainerColor = NuvioColors.BackgroundCard,
+            pressedContainerColor = NuvioColors.FocusBackground,
         ),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
     ) {
@@ -141,7 +156,7 @@ private fun TiviGroupItem(
                     modifier = Modifier
                         .width(3.dp)
                         .height(14.dp)
-                        .background(Color(0xFF4FC3F7), RoundedCornerShape(2.dp))
+                        .background(NuvioColors.Secondary, RoundedCornerShape(2.dp))
                 )
                 Spacer(Modifier.width(8.dp))
             } else {
@@ -151,9 +166,9 @@ private fun TiviGroupItem(
                 text = label,
                 fontSize = 12.sp,
                 color = when {
-                    isSelected -> Color.White
-                    isFocused  -> Color(0xFFDDDDDD)
-                    else       -> Color(0xFF8888AA)
+                    isSelected -> NuvioColors.TextPrimary
+                    isFocused  -> NuvioColors.TextSecondary
+                    else       -> NuvioColors.TextTertiary
                 },
                 fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
             )

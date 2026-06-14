@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
 import coil3.compose.AsyncImage
 import com.streamvault.domain.model.Channel
+import com.nuvio.tv.ui.theme.NuvioColors
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -31,7 +32,7 @@ fun TiviChannelList(
         modifier = modifier
             .width(280.dp)
             .fillMaxHeight()
-            .background(Color(0xFF0F0F22)),
+            .background(NuvioColors.Background),
         contentPadding = PaddingValues(vertical = 4.dp),
     ) {
         items(channels, key = { it.id }) { channel ->
@@ -64,9 +65,9 @@ private fun TiviChannelRow(
                 if (it.isFocused) onFocused()
             },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isActive) Color(0xFF1C1C3E) else Color.Transparent,
-            focusedContainerColor = Color(0xFF22225A),
-            pressedContainerColor = Color(0xFF1A3A6A),
+            containerColor = if (isActive) NuvioColors.FocusBackground else Color.Transparent,
+            focusedContainerColor = NuvioColors.BackgroundCard,
+            pressedContainerColor = NuvioColors.FocusBackground,
         ),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
     ) {
@@ -80,7 +81,7 @@ private fun TiviChannelRow(
             Box(
                 modifier = Modifier
                     .size(width = 50.dp, height = 28.dp)
-                    .background(Color(0xFF1A1A30), RoundedCornerShape(4.dp)),
+                    .background(NuvioColors.BackgroundElevated, RoundedCornerShape(4.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 if (!channel.logoUrl.isNullOrBlank()) {
@@ -99,8 +100,8 @@ private fun TiviChannelRow(
                 text = channel.name,
                 fontSize = 12.sp,
                 color = when {
-                    isFocused || isActive -> Color.White
-                    else -> Color(0xFFAAAAAA)
+                    isFocused || isActive -> NuvioColors.TextPrimary
+                    else -> NuvioColors.TextSecondary
                 },
                 fontWeight = if (isFocused || isActive) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
@@ -113,7 +114,7 @@ private fun TiviChannelRow(
                 Box(
                     modifier = Modifier
                         .size(6.dp)
-                        .background(Color(0xFF4FC3F7), RoundedCornerShape(3.dp))
+                        .background(NuvioColors.Secondary, RoundedCornerShape(3.dp))
                 )
             }
         }

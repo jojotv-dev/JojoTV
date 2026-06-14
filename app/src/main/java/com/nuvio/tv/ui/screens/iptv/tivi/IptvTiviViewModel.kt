@@ -146,6 +146,54 @@ class IptvTiviViewModel @Inject constructor(
         }
     }
 
+    /** Survol provider sans clic : charge les groupes si besoin puis affiche le 1er groupe */
+    fun focusProvider(providerId: Long) {
+        val node = _uiState.value.providerNodes.firstOrNull { it.provider.id == providerId } ?: return
+        if (node.groups.isEmpty()) {
+            viewModelScope.launch {
+                val tab = _uiState.value.selectedTab
+                val categoriesFlow: Flow<List<Category>> = when (tab) {
+                    TiviTab.LIVE    -> channelRepository.getCategories(providerId)
+                    TiviTab.MOVIES  -> movieRepository.getCategories(providerId)
+                    TiviTab.SERIES  -> seriesRepository.getCategories(providerId)
+                }
+                categoriesFlow.catch { }.first().let { cats ->
+                    val groups = cats
+                        .filter { c -> when (tab) {
+                            TiviTab.LIVE   -> c.type == ContentType.LIVE
+                            TiviTab.MOVIES -> c.type == ContentType.MOVIE
+                            TiviTab.SERIES -> c.type == ContentType.SERIES
+                        }}
+                        .map { TiviGroup(it.id, it.name) }
+                    _uiState.update { state ->
+                        state.copy(providerNodes = state.providerNodes.map { n ->
+                            if (n.provider.id == providerId) n.copy(groups = groups) else n
+                        })
+                    }
+                    // Affiche le premier groupe au survol
+                    val firstGroup = _uiState.value.providerNodes
+                        .firstOrNull { it.provider.id == providerId }?.groups?.firstOrNull()
+                    if (firstGroup != null) selectGroup(providerId, firstGroup.id)
+                }
+            }
+        } else {
+            // Groupes déjà chargés : affiche le premier (ou le sélectionné s'il appartient à ce provider)
+            val current = _uiState.value
+            val alreadySelected = current.selectedProviderId == providerId
+            if (!alreadySelected) {
+                val firstGroup = node.groups.firstOrNull()
+                if (firstGroup != null) selectGroup(providerId, firstGroup.id)
+            }
+        }
+    }
+
+    /** Survol groupe sans clic : charge le contenu immédiatement */
+    fun focusGroup(providerId: Long, groupId: Long) {
+        val current = _uiState.value
+        if (current.selectedGroupId == groupId && current.selectedProviderId == providerId) return
+        selectGroup(providerId, groupId)
+    }
+
     fun selectGroup(providerId: Long, groupId: Long) {
         _uiState.update {
             it.copy(
