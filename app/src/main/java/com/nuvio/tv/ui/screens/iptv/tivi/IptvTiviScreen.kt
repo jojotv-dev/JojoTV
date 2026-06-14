@@ -27,8 +27,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.navigation.NavController
 import androidx.tv.material3.*
 import coil3.compose.AsyncImage
+import com.nuvio.tv.ui.navigation.Screen
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.screens.iptv.tivi.components.*
 
@@ -38,10 +40,13 @@ private val TabShape = RoundedCornerShape(10.dp)
 @Composable
 fun IptvTiviScreen(
     onBack: () -> Unit,
+    navController: NavController,
     initialTab: TiviTab = TiviTab.LIVE,
     viewModel: IptvTiviViewModel = hiltViewModel(),
+    miniPlayerVm: TiviMiniPlayerViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val miniState by miniPlayerVm.state.collectAsState()
     LaunchedEffect(initialTab) { viewModel.selectTab(initialTab) }
     BackHandler { onBack() }
 
@@ -51,7 +56,7 @@ fun IptvTiviScreen(
             .background(NuvioColors.Background),
     ) {
 
-        // ── Colonne 1 : Provider Tree accordéon ─────────────────────────
+        // -- Colonne 1 : Provider Tree accordeon --------------------------
         TiviProviderTree(
             providerNodes = uiState.providerNodes,
             selectedGroupId = uiState.selectedGroupId,
@@ -63,7 +68,7 @@ fun IptvTiviScreen(
             modifier = Modifier.fillMaxHeight(),
         )
 
-        // ── Séparateur vertical ──────────────────────────────────────────
+        // -- Separateur vertical ------------------------------------------
         Box(
             modifier = Modifier
                 .width(1.dp)
@@ -71,7 +76,7 @@ fun IptvTiviScreen(
                 .background(NuvioColors.Border)
         )
 
-        // ── Colonne 2 : Contenu dynamique selon le tab ───────────────────
+        // -- Colonne 2 : Contenu dynamique --------------------------------
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -80,13 +85,28 @@ fun IptvTiviScreen(
             when (val c = uiState.content) {
                 is TiviContent.LiveContent -> {
                     if (uiState.selectedGroupId == null) {
-                        TiviEmptyHint("Sélectionne un groupe Live TV")
+                        TiviEmptyHint("S\u00e9lectionne un groupe Live TV")
                     } else {
                         Column(Modifier.fillMaxSize()) {
                             TiviTopPanel(
                                 channel = c.focusedChannel,
                                 currentProgram = c.currentProgram,
                                 nextProgram = c.nextProgram,
+                                exoPlayer = if (miniState.isReady) miniPlayerVm.exoPlayer else null,
+                                miniPlayerActive = miniState.isReady,
+                                onMiniPlayerClick = {
+                                    miniState.channel?.let { ch ->
+                                        miniState.streamUrl?.let { url ->
+                                            miniPlayerVm.stop()
+                                            navController.navigate(
+                                                Screen.Player.createRoute(
+                                                    streamUrl = url,
+                                                    title = ch.name,
+                                                )
+                                            )
+                                        }
+                                    }
+                                },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             var channelListFocused by remember { mutableStateOf(false) }
@@ -105,7 +125,21 @@ fun IptvTiviScreen(
                                     channels = c.channels,
                                     focusedChannelId = c.focusedChannel?.id,
                                     onChannelFocused = { ch -> viewModel.focusChannel(ch.providerId, ch) },
-                                    onChannelClick = { /* TODO player */ },
+                                    onChannelClick = { channel ->
+                                        if (miniState.channel?.id == channel.id && miniState.isReady) {
+                                            // 2e clic -> plein ecran
+                                            miniPlayerVm.stop()
+                                            navController.navigate(
+                                                Screen.Player.createRoute(
+                                                    streamUrl = channel.streamUrl,
+                                                    title = channel.name,
+                                                )
+                                            )
+                                        } else {
+                                            // 1er clic -> mini lecteur
+                                            miniPlayerVm.loadChannel(channel, channel.streamUrl)
+                                        }
+                                    },
                                     onFocusChanged = { channelListFocused = it },
                                     modifier = Modifier.weight(channelWeight).fillMaxHeight(),
                                 )
@@ -120,7 +154,7 @@ fun IptvTiviScreen(
                 }
                 is TiviContent.MoviesContent -> {
                     if (uiState.selectedGroupId == null) {
-                        TiviEmptyHint("Sélectionne un groupe Films")
+                        TiviEmptyHint("S\u00e9lectionne un groupe Films")
                     } else if (c.isLoading) {
                         TiviEmptyHint("Chargement...")
                     } else {
@@ -129,7 +163,7 @@ fun IptvTiviScreen(
                 }
                 is TiviContent.SeriesContent -> {
                     if (uiState.selectedGroupId == null) {
-                        TiviEmptyHint("Sélectionne un groupe Séries")
+                        TiviEmptyHint("S\u00e9lectionne un groupe S\u00e9ries")
                     } else if (c.isLoading) {
                         TiviEmptyHint("Chargement...")
                     } else {
@@ -137,114 +171,14 @@ fun IptvTiviScreen(
                     }
                 }
                 TiviContent.Empty -> {
-                    TiviEmptyHint("Sélectionne un provider puis un groupe")
+                    TiviEmptyHint("S\u00e9lectionne un provider puis un groupe")
                 }
             }
         }
     }
 }
 
-// ── Mini sidebar des tabs ────────────────────────────────────────────────────
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun TiviTabSidebar(
-    selectedTab: TiviTab,
-    onTabSelected: (TiviTab) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .width(130.dp)
-            .fillMaxHeight()
-            .background(NuvioColors.BackgroundElevated)
-            .padding(vertical = 20.dp, horizontal = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text = "IPTV",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            color = NuvioColors.Primary,
-            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-        )
-        TiviTab.entries.forEach { tab ->
-            TiviTabItem(
-                tab = tab,
-                isSelected = tab == selectedTab,
-                onClick = { onTabSelected(tab) },
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun TiviTabItem(
-    tab: TiviTab,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    var isFocused by remember { mutableStateOf(false) }
-    val bgColor by animateColorAsState(
-        targetValue = when {
-            isSelected -> NuvioColors.FocusBackground
-            isFocused  -> NuvioColors.BackgroundCard
-            else       -> Color.Transparent
-        },
-        label = "tabBg"
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (isFocused) NuvioColors.FocusRing else Color.Transparent,
-        label = "tabBorder"
-    )
-    val icon: ImageVector = when (tab) {
-        TiviTab.LIVE   -> Icons.Default.Tv
-        TiviTab.MOVIES -> Icons.Default.Movie
-        TiviTab.SERIES -> Icons.Default.Subscriptions
-    }
-
-    Surface(
-        onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .border(1.5.dp, borderColor, TabShape)
-            .onFocusChanged { isFocused = it.isFocused },
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = bgColor,
-            focusedContainerColor = bgColor,
-            pressedContainerColor = NuvioColors.FocusBackground,
-        ),
-        shape = ClickableSurfaceDefaults.shape(TabShape),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            androidx.compose.material3.Icon(
-                imageVector = icon,
-                contentDescription = tab.label,
-                tint = if (isSelected || isFocused) NuvioColors.Secondary
-                       else NuvioColors.TextSecondary,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = tab.label,
-                fontSize = 12.sp,
-                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (isSelected || isFocused) NuvioColors.TextPrimary
-                        else NuvioColors.TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-// ── Grille Films ─────────────────────────────────────────────────────────────
+// -- Grille Films -------------------------------------------------------------
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -271,7 +205,7 @@ private fun TiviMovieGrid(
     }
 }
 
-// ── Grille Séries ─────────────────────────────────────────────────────────────
+// -- Grille Series ------------------------------------------------------------
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -279,7 +213,7 @@ private fun TiviSeriesGrid(
     series: List<com.streamvault.domain.model.Series>,
 ) {
     if (series.isEmpty()) {
-        TiviEmptyHint("Aucune série dans ce groupe")
+        TiviEmptyHint("Aucune s\u00e9rie dans ce groupe")
         return
     }
     LazyVerticalGrid(
@@ -298,7 +232,7 @@ private fun TiviSeriesGrid(
     }
 }
 
-// ── Card média générique ──────────────────────────────────────────────────────
+// -- Card media generique -----------------------------------------------------
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -345,7 +279,7 @@ private fun TiviMediaCard(
     }
 }
 
-// ── Hint vide ────────────────────────────────────────────────────────────────
+// -- Hint vide ----------------------------------------------------------------
 
 @Composable
 private fun TiviEmptyHint(text: String) {

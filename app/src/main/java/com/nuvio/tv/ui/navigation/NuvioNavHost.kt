@@ -1459,16 +1459,16 @@ fun NuvioNavHost(
             IptvEpgScreen(onBack = { navController.popBackStack() })
         }
         composable(Screen.IptvTivi.route) {
-            IptvTiviScreen(onBack = { navController.popBackStack() })
+            IptvTiviScreen(navController = navController, onBack = { navController.popBackStack() })
         }
         composable(Screen.IptvLiveProviders.route) {
-            IptvTiviScreen(initialTab = TiviTab.LIVE, onBack = { navController.popBackStack() })
+            IptvTiviScreen(navController = navController, initialTab = TiviTab.LIVE, onBack = { navController.popBackStack() })
         }
         composable(Screen.IptvMovieProviders.route) {
-            IptvTiviScreen(initialTab = TiviTab.MOVIES, onBack = { navController.popBackStack() })
+            IptvTiviScreen(navController = navController, initialTab = TiviTab.MOVIES, onBack = { navController.popBackStack() })
         }
         composable(Screen.IptvSeriesProviders.route) {
-            IptvTiviScreen(initialTab = TiviTab.SERIES, onBack = { navController.popBackStack() })
+            IptvTiviScreen(navController = navController, initialTab = TiviTab.SERIES, onBack = { navController.popBackStack() })
         }
         composable(Screen.IptvRecordingSchedule.route) {
             IptvRecordingScheduleScreen(

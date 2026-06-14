@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.iptv
+﻿package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -127,7 +127,7 @@ private fun SeriesCategoryCard(name: String, count: Int?, onClick: () -> Unit) {
             .onFocusChanged { isFocused = it.hasFocus },
         shape = CardDefaults.shape(shape),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
-        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
+        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), inset = 0.dp, shape = shape)),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.97f)
     ) {
         Row(

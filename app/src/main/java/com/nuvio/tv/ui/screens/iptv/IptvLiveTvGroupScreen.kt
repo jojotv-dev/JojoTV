@@ -250,7 +250,7 @@ private fun ToggleEditButton(editMode: Boolean, onClick: () -> Unit) {
         modifier = Modifier.size(36.dp).onFocusChanged { isFocused = it.hasFocus },
         shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
-        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
+        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), inset = 0.dp, shape = RoundedCornerShape(8.dp))),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.92f)
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -297,7 +297,7 @@ private fun GroupListRow(
         modifier = Modifier.fillMaxWidth().height(64.dp).onFocusChanged { isFocused = it.hasFocus }.onPreviewKeyEvent { event -> longPressTracker.handle(event.nativeKeyEvent, { kc -> kc == android.view.KeyEvent.KEYCODE_DPAD_CENTER || kc == android.view.KeyEvent.KEYCODE_ENTER }) { onLongPress() } },
         shape = CardDefaults.shape(shape),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
-        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
+        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), inset = 0.dp, shape = shape)),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.97f)
     ) {
         Row(
@@ -371,7 +371,7 @@ private fun GroupCard(
         modifier = Modifier.fillMaxWidth().height(80.dp).onFocusChanged { isFocused = it.hasFocus }.onPreviewKeyEvent { event -> longPressTracker.handle(event.nativeKeyEvent, { kc -> kc == android.view.KeyEvent.KEYCODE_DPAD_CENTER || kc == android.view.KeyEvent.KEYCODE_ENTER }) { onLongPress() } },
         shape = CardDefaults.shape(shape),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
-        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
+        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), inset = 0.dp, shape = shape)),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.97f)
     ) {
         Row(

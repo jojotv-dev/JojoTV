@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.iptv
+﻿package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -113,7 +113,7 @@ fun IptvSeriesListScreen(
             }
         } else if (viewMode == IptvViewMode.GRID) {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 140.dp),
+                columns = GridCells.Fixed(6),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -260,3 +260,4 @@ private fun SeriesCard(series: Series, onClick: () -> Unit) {
         }
     }
 }
+

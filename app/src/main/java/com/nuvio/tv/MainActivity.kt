@@ -1087,7 +1087,7 @@ private fun LegacySidebarScaffold(
                             val closeKey = if (isRtl) Key.DirectionLeft else Key.DirectionRight
                             if (keyEvent.key == closeKey && keyEvent.type == KeyEventType.KeyDown) {
                                 drawerState.setValue(DrawerValue.Closed)
-                                pendingContentFocusTransfer = false
+                                pendingContentFocusTransfer = true
                                 true
                             } else {
                                 false
@@ -1935,6 +1935,7 @@ private fun rememberRawSvgPainter(rawIconRes: Int): Painter {
             .build()
     )
 }
+
 
 
 
