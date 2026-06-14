@@ -37,5 +37,16 @@ internal fun formatContinueWatchingProgressLabel(
     val minutes = totalMinutes % 60
 
     if (totalMinutes <= 0L) return resumeLabel
+
+    // Si rien n'a encore ete visionne (position = 0), afficher la duree totale
+    // sans le prefixe "reste" (ex: "1h39" au lieu de "reste 1h39m").
+    if (progress.position <= 0L && progress.progressPercent == null) {
+        return if (hours > 0L) {
+            "${hours}h${minutes.toString().padStart(2, '0')}"
+        } else {
+            "${minutes}m"
+        }
+    }
+
     return "reste ${hours}h${minutes.toString().padStart(2, '0')}m"
 }

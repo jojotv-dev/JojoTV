@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.components
+package com.nuvio.tv.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -8,18 +8,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.R
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.ui.theme.NuvioColors
 
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun FreeboxVideosSection(
     entries: List<FreeboxFileEntry>,
@@ -29,13 +42,16 @@ fun FreeboxVideosSection(
     cardWidth: Dp = 126.dp,
     imageHeight: Dp = 189.dp,
     horizontalPadding: Dp = 48.dp,
+    onShowDetails: (FreeboxFileEntry) -> Unit = {},
+    onDeleteFromFreebox: (FreeboxFileEntry) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val filteredEntries = remember(entries, continueWatchingIds) {
         entries.filter { entry -> "freebox:${entry.path}" !in continueWatchingIds }
     }
-
     if (filteredEntries.isEmpty()) return
+
+    var optionsEntry by remember { mutableStateOf<FreeboxFileEntry?>(null) }
 
     Column(modifier = modifier) {
         Text(
@@ -53,7 +69,7 @@ fun FreeboxVideosSection(
                 val contentId = "freebox:${entry.path}"
                 val artwork = artworkMap[contentId]
                 val title = remember(entry) {
-                    com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle(entry.name, entry.durationMs)
+                    freeboxVideoDisplayTitle(entry.name, entry.durationMs)
                 }
                 val cwItem = remember(entry, artwork) {
                     ContinueWatchingItem.InProgress(
@@ -77,11 +93,76 @@ fun FreeboxVideosSection(
                 ContinueWatchingCard(
                     item = cwItem,
                     onClick = { onItemClick(entry) },
-                    onLongPress = {},
+                    onLongPress = { optionsEntry = entry },
                     cardWidth = cardWidth,
                     imageHeight = imageHeight
                 )
             }
+        }
+    }
+
+    val menuEntry = optionsEntry
+    if (menuEntry != null) {
+        FreeboxVideoOptionsDialog(
+            entry = menuEntry,
+            onDismiss = { optionsEntry = null },
+            onShowDetails = {
+                onShowDetails(menuEntry)
+                optionsEntry = null
+            },
+            onDeleteFromFreebox = {
+                onDeleteFromFreebox(menuEntry)
+                optionsEntry = null
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun FreeboxVideoOptionsDialog(
+    entry: FreeboxFileEntry,
+    onDismiss: () -> Unit,
+    onShowDetails: () -> Unit,
+    onDeleteFromFreebox: () -> Unit
+) {
+    val title = remember(entry) {
+        freeboxVideoDisplayTitle(entry.name, entry.durationMs)
+    }
+
+    val detailsFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        detailsFocusRequester.requestFocus()
+    }
+
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = title,
+        subtitle = stringResource(R.string.cw_dialog_subtitle)
+    ) {
+        Button(
+            onClick = onShowDetails,
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(detailsFocusRequester),
+            colors = ButtonDefaults.colors(
+                containerColor = NuvioColors.BackgroundCard,
+                contentColor = NuvioColors.TextPrimary
+            )
+        ) {
+            Text(stringResource(R.string.cw_action_go_to_details))
+        }
+
+        Button(
+            onClick = onDeleteFromFreebox,
+            colors = ButtonDefaults.colors(
+                containerColor = NuvioColors.BackgroundCard,
+                contentColor = Color(0xFFFF6E6E)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(stringResource(R.string.cw_action_delete_freebox))
         }
     }
 }

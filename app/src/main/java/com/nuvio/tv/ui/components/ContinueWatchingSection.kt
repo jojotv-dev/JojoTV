@@ -541,7 +541,6 @@ fun ContinueWatchingCard(
                 }
 
 
-                val themeAccentColor = NuvioColors.Secondary
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -551,7 +550,7 @@ fun ContinueWatchingCard(
                             val gradient = Brush.verticalGradient(
                                 colors = listOf(
                                     Color.Transparent,
-                                    themeAccentColor.copy(alpha = 0.82f)
+                                    Color.Black.copy(alpha = 0.55f)
                                 ),
                                 startY = 0f,
                                 endY = size.height
@@ -572,7 +571,9 @@ fun ContinueWatchingCard(
                         Text(
                             text = text,
                             style = MaterialTheme.typography.labelSmall,
-                            color = NuvioColors.TextPrimary
+                            color = NuvioColors.TextPrimary,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -601,8 +602,12 @@ fun ContinueWatchingCard(
             // Title below thumbnail
             Column(
                 modifier = Modifier
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
                     .fillMaxWidth()
+                    .background(
+                        color = NuvioColors.Secondary.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+                    )
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
                 // Episode info (for series)
                 if (episodeStr != null) {
