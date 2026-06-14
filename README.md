@@ -1,13 +1,13 @@
 ﻿# JojoTV
 
-Application Android TV native pour la consommation de mÃ©dias personnels.
+Application Android TV native pour la consommation de médias personnels.
 
-## FonctionnalitÃ©s
+## Fonctionnalités
 
 - Streaming IPTV (playlists M3U, portails Stalker)
 - Navigation EPG (Guide des programmes)
-- Parcours Freebox OS (vidÃ©os locales)
-- MÃ©tadonnÃ©es TMDB (affiches, synopsis en franÃ§ais)
+- Parcours Freebox OS (vidéos locales)
+- Métadonnées TMDB (affiches, synopsis en français)
 - Continuer Ã  regarder
 - Planification d'enregistrements
 
