@@ -9,6 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,8 +27,10 @@ fun TiviChannelList(
     focusedChannelId: Long?,
     onChannelFocused: (Channel) -> Unit,
     onChannelClick: (Channel) -> Unit,
+    onFocusChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    Box(modifier = modifier.onFocusChanged { onFocusChanged(it.hasFocus) }) {
     LazyColumn(
         modifier = modifier
             .width(280.dp)
@@ -118,5 +121,6 @@ private fun TiviChannelRow(
                 )
             }
         }
+    }
     }
 }

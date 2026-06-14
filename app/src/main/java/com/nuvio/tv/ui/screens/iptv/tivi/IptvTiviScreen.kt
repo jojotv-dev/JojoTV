@@ -2,6 +2,8 @@
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -53,8 +55,11 @@ fun IptvTiviScreen(
         TiviProviderTree(
             providerNodes = uiState.providerNodes,
             selectedGroupId = uiState.selectedGroupId,
+            selectedProviderId = uiState.selectedProviderId,
             onProviderClick = { viewModel.toggleProvider(it) },
+            onProviderFocus = { viewModel.focusProvider(it) },
             onGroupClick = { providerId, groupId -> viewModel.selectGroup(providerId, groupId) },
+            onGroupFocus = { providerId, groupId -> viewModel.focusGroup(providerId, groupId) },
             modifier = Modifier.fillMaxHeight(),
         )
 
@@ -84,18 +89,30 @@ fun IptvTiviScreen(
                                 nextProgram = c.nextProgram,
                                 modifier = Modifier.fillMaxWidth(),
                             )
+                            var channelListFocused by remember { mutableStateOf(false) }
+                            val channelWeight by animateFloatAsState(
+                                targetValue = if (channelListFocused) 0.25f else 0.45f,
+                                animationSpec = tween(300),
+                                label = "channelWeight"
+                            )
+                            val epgWeight by animateFloatAsState(
+                                targetValue = if (channelListFocused) 0.75f else 0.55f,
+                                animationSpec = tween(300),
+                                label = "epgWeight"
+                            )
                             Row(Modifier.weight(1f).fillMaxWidth()) {
                                 TiviChannelList(
                                     channels = c.channels,
                                     focusedChannelId = c.focusedChannel?.id,
                                     onChannelFocused = { ch -> viewModel.focusChannel(ch.providerId, ch) },
                                     onChannelClick = { /* TODO player */ },
-                                    modifier = Modifier.fillMaxHeight(),
+                                    onFocusChanged = { channelListFocused = it },
+                                    modifier = Modifier.weight(channelWeight).fillMaxHeight(),
                                 )
                                 TiviEpgGrid(
                                     epgRows = c.epgRows,
                                     focusedChannelId = c.focusedChannel?.id,
-                                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                                    modifier = Modifier.weight(epgWeight).fillMaxHeight(),
                                 )
                             }
                         }
