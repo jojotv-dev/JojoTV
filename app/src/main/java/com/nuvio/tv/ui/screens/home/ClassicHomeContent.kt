@@ -38,6 +38,7 @@ import com.nuvio.tv.ui.util.asStable
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.CollectionFolder
 import androidx.compose.foundation.layout.Box
@@ -509,6 +510,30 @@ fun ClassicHomeContent(
                     artworkMap = uiState.freeboxVideoArtwork,
                     cardWidth = classicContinueWatchingCardWidth,
                     imageHeight = classicContinueWatchingImageHeight,
+                    onShowDetails = { entry ->
+                        onNavigateToDetail("freebox:${entry.path}", "freebox", "")
+                    },
+                    onDeleteFromFreebox = { entry ->
+                        onDeleteFreeboxProgress?.invoke(
+                            ContinueWatchingItem.InProgress(
+                                progress = WatchProgress(
+                                    contentId = "freebox:${entry.path}",
+                                    contentType = "freebox",
+                                    name = entry.name,
+                                    poster = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
+                                    backdrop = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
+                                    logo = null,
+                                    videoId = "freebox:${entry.path}",
+                                    season = null,
+                                    episode = null,
+                                    episodeTitle = null,
+                                    position = 0L,
+                                    duration = entry.durationMs ?: 0L,
+                                    lastWatched = 0L
+                                )
+                            )
+                        )
+                    },
                 )
             }
         }

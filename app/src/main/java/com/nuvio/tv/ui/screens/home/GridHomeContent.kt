@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.nuvio.tv.domain.model.CollectionFolder
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.ui.components.GridContentCard
 import com.nuvio.tv.ui.components.GridContinueWatchingSection
@@ -394,7 +395,31 @@ fun GridHomeContent(
                         artworkMap = uiState.freeboxVideoArtwork,
                         cardWidth = gridCwCardWidth,
                         imageHeight = gridCwImageHeight,
-                        horizontalPadding = 0.dp,
+                        horizontalPadding = com.nuvio.tv.ui.components.GridLayoutConstants.RowHorizontalPadding,
+                        onShowDetails = { entry ->
+                            onNavigateToDetail("freebox:${entry.path}", "freebox", "")
+                        },
+                        onDeleteFromFreebox = { entry ->
+                            onDeleteFromFreebox?.invoke(
+                                ContinueWatchingItem.InProgress(
+                                    progress = WatchProgress(
+                                        contentId = "freebox:${entry.path}",
+                                        contentType = "freebox",
+                                        name = entry.name,
+                                        poster = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
+                                        backdrop = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
+                                        logo = null,
+                                        videoId = "freebox:${entry.path}",
+                                        season = null,
+                                        episode = null,
+                                        episodeTitle = null,
+                                        position = 0L,
+                                        duration = entry.durationMs ?: 0L,
+                                        lastWatched = 0L
+                                    )
+                                )
+                            )
+                        },
                     )
                 }
             }

@@ -71,6 +71,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.ContinueWatchingOptionsDialog
 import com.nuvio.tv.LocalSidebarExpanded
@@ -1074,6 +1075,27 @@ fun ModernHomeContent(
                 continueWatchingContentIds = uiState.continueWatchingItems.filterIsInstance<ContinueWatchingItem.InProgress>().map { it.progress.contentId }.toSet(),
                 onNavigateToFreebox = onNavigateToFreebox,
                 freeboxVideoArtwork = uiState.freeboxVideoArtwork,
+                onDeleteFreeboxVideo = { entry ->
+                    onDeleteFreeboxProgress?.invoke(
+                        ContinueWatchingItem.InProgress(
+                            progress = WatchProgress(
+                                contentId = "freebox:${entry.path}",
+                                contentType = "freebox",
+                                name = entry.name,
+                                poster = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
+                                backdrop = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
+                                logo = null,
+                                videoId = "freebox:${entry.path}",
+                                season = null,
+                                episode = null,
+                                episodeTitle = null,
+                                position = 0L,
+                                duration = entry.durationMs ?: 0L,
+                                lastWatched = 0L
+                            )
+                        )
+                    )
+                },
                 modifier = Modifier.align(Alignment.BottomStart)
             )
     }

@@ -133,6 +133,7 @@ internal fun ModernHomeRowsList(
     continueWatchingContentIds: Set<String> = emptySet(),
     onNavigateToFreebox: (String) -> Unit = {},
     freeboxVideoArtwork: Map<String, String> = emptyMap(),
+    onDeleteFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Unwrap StableRef wrappers for internal use (not passed to child composables)
@@ -428,6 +429,10 @@ internal fun ModernHomeRowsList(
                         continueWatchingIds = continueWatchingContentIds,
                         cardWidth = continueWatchingCardWidth,
                         imageHeight = continueWatchingCardHeight,
+                        onShowDetails = { entry ->
+                            onNavigateToDetail("freebox:${entry.path}", "freebox", "")
+                        },
+                        onDeleteFromFreebox = { entry -> onDeleteFreeboxVideo(entry) },
                     )
                 }
             }

@@ -563,10 +563,10 @@ fun ContinueWatchingCard(
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(8.dp)
+                            .padding(4.dp)
                             .clip(BadgeShape)
                             .background(badgeBackground)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .padding(horizontal = 5.dp, vertical = 3.dp)
                     ) {
                         Text(
                             text = text,
