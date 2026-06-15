@@ -302,7 +302,8 @@ fun ContinueWatchingCard(
     cardWidth: Dp = 288.dp,
     imageHeight: Dp = 162.dp,
     blurUnwatchedEpisodes: Boolean = false,
-    useEpisodeThumbnails: Boolean = true
+    useEpisodeThumbnails: Boolean = true,
+    showBadge: Boolean = true
 ) {
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
@@ -559,7 +560,7 @@ fun ContinueWatchingCard(
                         }
                 )
 
-                badgeText?.let { text ->
+                if (showBadge) badgeText?.let { text ->
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)

@@ -41,7 +41,7 @@ fun formatFreeboxDurationCompact(durationMs: Long?): String? {
     val hours = totalMinutes / 60L
     val minutes = totalMinutes % 60L
     return if (hours > 0L) {
-        if (minutes > 0L) "0${hours}h${minutes.toString().padStart(2, '0')}" else "${hours}h00m"
+        if (minutes > 0L) "${hours}h${minutes.toString().padStart(2, '0')}" else "${hours}h00m"
     } else {
         "0h${minutes.toString().padStart(2, '0')}m"
     }

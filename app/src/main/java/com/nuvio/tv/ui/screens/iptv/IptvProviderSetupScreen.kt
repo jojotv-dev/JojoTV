@@ -64,6 +64,8 @@ import com.streamvault.domain.usecase.M3uProviderSetupCommand
 import com.streamvault.domain.usecase.StalkerProviderSetupCommand
 import com.streamvault.domain.usecase.ValidateAndAddProviderResult
 import com.streamvault.domain.usecase.XtreamProviderSetupCommand
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -79,6 +81,16 @@ fun IptvProviderSetupScreen(
         "m3u" -> "M3U / URL"
         "stalker" -> "Stalker Portal"
         else -> "Xtream Codes"
+    }
+
+    val importProgress by viewModel.importProgress.collectAsStateWithLifecycle()
+
+    LaunchedEffect(importProgress.isDone) {
+        if (importProgress.isDone) {
+            delay(2_500)
+            viewModel.resetImportProgress()
+            onProviderAdded()
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(NuvioColors.Background)) {
@@ -109,6 +121,10 @@ fun IptvProviderSetupScreen(
                 }
             }
         }
+        IptvImportProgressOverlay(
+            state = importProgress,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
@@ -165,8 +181,8 @@ private fun XtreamForm(viewModel: IptvProviderSetupViewModel, providerId: Long?,
                              else viewModel.addXtream(command)
                 isLoading = false
                 when (result) {
-                    is ValidateAndAddProviderResult.Success -> { viewModel.syncProviderInBackground(result.provider.id); onProviderAdded() }
-                    is ValidateAndAddProviderResult.SavedWithWarning -> { viewModel.syncProviderInBackground(result.provider.id); onProviderAdded() }
+                    is ValidateAndAddProviderResult.Success -> { viewModel.syncProviderInBackground(result.provider.id) }
+                    is ValidateAndAddProviderResult.SavedWithWarning -> { viewModel.syncProviderInBackground(result.provider.id) }
                     is ValidateAndAddProviderResult.ValidationError -> resultMessage = false to result.message
                     is ValidateAndAddProviderResult.Error -> resultMessage = false to result.message
                 }
@@ -220,8 +236,8 @@ private fun M3uForm(viewModel: IptvProviderSetupViewModel, providerId: Long?, on
                              else viewModel.addM3u(command)
                 isLoading = false
                 when (result) {
-                    is ValidateAndAddProviderResult.Success -> { viewModel.syncProviderInBackground(result.provider.id); onProviderAdded() }
-                    is ValidateAndAddProviderResult.SavedWithWarning -> { viewModel.syncProviderInBackground(result.provider.id); onProviderAdded() }
+                    is ValidateAndAddProviderResult.Success -> { viewModel.syncProviderInBackground(result.provider.id) }
+                    is ValidateAndAddProviderResult.SavedWithWarning -> { viewModel.syncProviderInBackground(result.provider.id) }
                     is ValidateAndAddProviderResult.ValidationError -> resultMessage = false to result.message
                     is ValidateAndAddProviderResult.Error -> resultMessage = false to result.message
                 }
@@ -278,8 +294,8 @@ private fun StalkerForm(viewModel: IptvProviderSetupViewModel, providerId: Long?
                              else viewModel.addStalker(command)
                 isLoading = false
                 when (result) {
-                    is ValidateAndAddProviderResult.Success -> { viewModel.syncProviderInBackground(result.provider.id); onProviderAdded() }
-                    is ValidateAndAddProviderResult.SavedWithWarning -> { viewModel.syncProviderInBackground(result.provider.id); onProviderAdded() }
+                    is ValidateAndAddProviderResult.Success -> { viewModel.syncProviderInBackground(result.provider.id) }
+                    is ValidateAndAddProviderResult.SavedWithWarning -> { viewModel.syncProviderInBackground(result.provider.id) }
                     is ValidateAndAddProviderResult.ValidationError -> resultMessage = false to result.message
                     is ValidateAndAddProviderResult.Error -> resultMessage = false to result.message
                 }

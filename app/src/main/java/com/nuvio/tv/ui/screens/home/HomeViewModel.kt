@@ -854,7 +854,7 @@ class HomeViewModel @Inject constructor(
         )
     }
 
-    private fun loadFreeboxVideos() {
+    fun loadFreeboxVideos() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val settings = freeboxSettingsDataStore.settings.first()

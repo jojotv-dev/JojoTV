@@ -68,15 +68,12 @@ fun FreeboxVideosSection(
             itemsIndexed(filteredEntries, key = { _, e -> e.path }) { _, entry ->
                 val contentId = "freebox:${entry.path}"
                 val artwork = artworkMap[contentId]
-                val title = remember(entry) {
-                    freeboxVideoDisplayTitle(entry.name, entry.durationMs)
-                }
                 val cwItem = remember(entry, artwork) {
                     ContinueWatchingItem.InProgress(
                         progress = WatchProgress(
                             contentId = contentId,
                             contentType = "freebox",
-                            name = title,
+                            name = entry.name,
                             poster = artwork,
                             backdrop = artwork,
                             logo = null,
@@ -95,7 +92,8 @@ fun FreeboxVideosSection(
                     onClick = { onItemClick(entry) },
                     onLongPress = { optionsEntry = entry },
                     cardWidth = cardWidth,
-                    imageHeight = imageHeight
+                    imageHeight = imageHeight,
+                    showBadge = false
                 )
             }
         }

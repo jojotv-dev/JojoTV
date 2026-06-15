@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -139,6 +140,7 @@ fun IptvProviderListScreen(
                     syncState = syncState,
                     onSync = { viewModel.syncProvider(provider.id) },
                     onEdit = { onNavigateToProvider(provider.id, provider.name) },
+                    onVisibility = { onNavigateToVisibility(provider.id, provider.name) },
                     onEditSettings = { onNavigateToEdit(provider.id, provider.type.name.lowercase().let {
                         when { it.contains("xtream") -> "xtream"; it.contains("m3u") -> "m3u"; else -> "stalker" }
                     }) },
@@ -204,6 +206,7 @@ private fun ProviderCard(
     counts: ProviderCounts? = null,
     onSync: () -> Unit,
     onEdit: () -> Unit,
+    onVisibility: () -> Unit = {},
     onEditSettings: () -> Unit = {},
     onDelete: () -> Unit
 ) {
@@ -273,6 +276,7 @@ private fun ProviderCard(
             Spacer(Modifier.width(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 ActionIconButton(Icons.Default.Sync, "Sync", enabled = syncState !is SyncState.Syncing, onClick = onSync)
+                ActionIconButton(Icons.Default.Tune, "Visibilit\u00e9", onClick = onVisibility)
                 ActionIconButton(Icons.Default.Edit, "Modifier", onClick = onEditSettings)
                 ActionIconButton(Icons.Default.Delete, "Supprimer", tint = NuvioColors.Error, onClick = onDelete)
             }
