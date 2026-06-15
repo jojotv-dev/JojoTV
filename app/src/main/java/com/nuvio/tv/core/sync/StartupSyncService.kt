@@ -1,4 +1,4 @@
-package com.nuvio.tv.core.sync
+﻿package com.nuvio.tv.core.sync
 
 import android.os.SystemClock
 import android.util.Log
@@ -52,7 +52,6 @@ class StartupSyncService @Inject constructor(
     private val libraryPreferences: LibraryPreferences,
     private val profileManager: ProfileManager,
     private val startupSyncPreferences: StartupSyncPreferences
-) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startupPullJob: Job? = null
     private var lastPulledKey: String? = null
