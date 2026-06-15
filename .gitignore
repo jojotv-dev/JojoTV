@@ -64,3 +64,5 @@ status-page/
 node_modules/
 repomix-*.txt
 repomix-*.xml
+
+local.properties
