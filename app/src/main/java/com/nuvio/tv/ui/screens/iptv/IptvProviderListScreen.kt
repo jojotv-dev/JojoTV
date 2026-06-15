@@ -70,6 +70,7 @@ fun IptvProviderListScreen(
     onNavigateToSetup: () -> Unit,
     onNavigateToEdit: (Long, String) -> Unit = { _, _ -> },
     onNavigateToProvider: (Long, String) -> Unit,
+    onNavigateToVisibility: (Long, String) -> Unit = { _, _ -> },
     onBack: () -> Unit = {},
     viewModel: IptvHomeViewModel = hiltViewModel()
 ) {

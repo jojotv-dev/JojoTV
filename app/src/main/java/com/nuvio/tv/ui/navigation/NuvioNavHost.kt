@@ -45,6 +45,7 @@ import com.nuvio.tv.ui.screens.settings.FreeboxBrowserViewModel
 import com.nuvio.tv.ui.screens.settings.FreeboxPlaybackRequest
 import com.nuvio.tv.ui.screens.explorer.ExplorerScreen
 import com.nuvio.tv.ui.screens.iptv.IptvProviderListScreen
+import com.nuvio.tv.ui.screens.iptv.IptvProviderVisibilityScreen
 import com.nuvio.tv.ui.screens.iptv.IptvProviderTypeSelectScreen
 import com.nuvio.tv.ui.screens.iptv.IptvProviderSetupScreen
 import com.nuvio.tv.ui.screens.iptv.IptvChannelListScreen
@@ -1452,9 +1453,27 @@ fun NuvioNavHost(
                 },
                 onNavigateToProvider = { providerId, providerName ->
                     navController.navigate(Screen.IptvProviderHome.createRoute(providerId, providerName))
+                },
+                onNavigateToVisibility = { providerId, providerName ->
+                    navController.navigate(Screen.IptvProviderVisibility.createRoute(providerId, providerName))
                 }
             )
         }
+        composable(
+            route = Screen.IptvProviderVisibility.route,
+            arguments = listOf(
+                navArgument("providerId") { type = NavType.StringType },
+                navArgument("providerName") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val providerId = backStackEntry.arguments?.getString("providerId")?.toLongOrNull() ?: -1L
+            val providerName = backStackEntry.arguments?.getString("providerName") ?: ""
+            IptvProviderVisibilityScreen(
+                providerName = providerName,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
         composable(Screen.IptvEpg.route) {
             IptvEpgScreen(onBack = { navController.popBackStack() })
         }
