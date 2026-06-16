@@ -4,7 +4,6 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.data.local.IptvSettingsDataStore
-import com.nuvio.tv.data.local.IptvVisibilitySettings
 import com.streamvault.domain.repository.CategoryRepository
 import com.streamvault.domain.repository.ChannelRepository
 import com.streamvault.domain.repository.MovieRepository
@@ -66,7 +65,7 @@ class IptvProviderVisibilityViewModel @Inject constructor(
     private val seriesRepository: SeriesRepository,
 ) : ViewModel() {
 
-    private val providerId: Long = checkNotNull(savedStateHandle["providerId"])
+    private val providerId: Long = savedStateHandle.get<String>("providerId")?.toLongOrNull() ?: -1L
     private val _tab = MutableStateFlow(VisibilityTab.LIVE)
     private val _uiState = MutableStateFlow(VisibilityUiState())
     val uiState: StateFlow<VisibilityUiState> = _uiState.asStateFlow()

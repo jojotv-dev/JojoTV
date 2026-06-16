@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,11 +62,12 @@ fun FreeboxVideosSection(
             modifier = Modifier.padding(start = horizontalPadding, end = horizontalPadding, bottom = 16.dp)
         )
         LazyRow(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().border(2.dp, androidx.compose.ui.graphics.Color.Green),
             contentPadding = PaddingValues(horizontal = horizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             itemsIndexed(filteredEntries, key = { _, e -> e.path }) { _, entry ->
+                android.util.Log.d("NuvioDebug", "FreeboxVideo name=" + entry.name + " durationMs=" + entry.durationMs)
                 val contentId = "freebox:${entry.path}"
                 val artwork = artworkMap[contentId]
                 val cwItem = remember(entry, artwork) {

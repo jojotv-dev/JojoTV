@@ -2,8 +2,10 @@ package com.nuvio.tv.ui.screens.iptv
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.streamvault.data.sync.SyncProgressBus
 import com.streamvault.domain.model.Provider
 import com.streamvault.domain.repository.ProviderRepository
+import com.streamvault.domain.sync.Section
 import com.streamvault.domain.usecase.M3uProviderSetupCommand
 import com.streamvault.domain.usecase.StalkerProviderSetupCommand
 import com.streamvault.domain.usecase.ValidateAndAddProvider
@@ -20,45 +22,65 @@ import javax.inject.Inject
 @HiltViewModel
 class IptvProviderSetupViewModel @Inject constructor(
     private val validateAndAddProvider: ValidateAndAddProvider,
-    private val providerRepository: ProviderRepository
+    private val providerRepository: ProviderRepository,
+    private val syncProgressBus: SyncProgressBus
 ) : ViewModel() {
 
     private val _importProgress = MutableStateFlow(ImportProgressState())
     val importProgress: StateFlow<ImportProgressState> = _importProgress.asStateFlow()
 
+    // Collecte le SyncProgressBus en temps reel pour mettre a jour les compteurs
+    private var syncProgressJob: kotlinx.coroutines.Job? = null
+
     fun resetImportProgress() {
+        syncProgressJob?.cancel()
+        syncProgressJob = null
         _importProgress.value = ImportProgressState()
     }
 
     private fun startImport() {
+        syncProgressBus.reset()
         _importProgress.value = ImportProgressState(isImporting = true, currentStep = ImportStep.DOWNLOADING)
+        // Abonnement au bus de progression
+        syncProgressJob?.cancel()
+        syncProgressJob = viewModelScope.launch {
+            syncProgressBus.flow.collect { progress ->
+                progress ?: return@collect
+                _importProgress.update { state ->
+                    when (progress.section) {
+                        Section.LIVE -> state.copy(
+                            currentStep = ImportStep.PARSING,
+                            liveCount = progress.itemsIndexed.coerceAtLeast(state.liveCount)
+                        )
+                        Section.VOD -> state.copy(
+                            currentStep = ImportStep.PARSING,
+                            // itemsIndexed est cumulatif : VOD = total - live deja indexe
+                            movieCount = (progress.itemsIndexed - state.liveCount).coerceAtLeast(state.movieCount)
+                        )
+                        Section.SERIES -> state.copy(
+                            currentStep = ImportStep.PARSING,
+                            // SERIES = total - live - movies
+                            seriesCount = (progress.itemsIndexed - state.liveCount - state.movieCount).coerceAtLeast(state.seriesCount)
+                        )
+                    }
+                }
+            }
+        }
     }
 
-    // Parse les messages onProgress de StreamVault pour extraire les compteurs.
-    // Exemples emis : "Loaded 11919 channels", "Loaded 25952 movies", "Loaded 8170 series"
+    // Message onProgress => label de progression (pas de compteurs ici)
     private fun handleProgressMessage(raw: String) {
         val msg = raw.trim()
         _importProgress.update { it.copy(progressMessage = msg, currentStep = ImportStep.PARSING) }
-        val clean = msg.replace(",", "").replace(" ", "")
-        // Chaines live
-        Regex("(\\d+)(?:channels?|chaines?|live)", RegexOption.IGNORE_CASE)
-            .find(clean)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?.let { n -> _importProgress.update { it.copy(liveCount = n) } }
-        // Films
-        Regex("(\\d+)(?:movies?|films?|vod)", RegexOption.IGNORE_CASE)
-            .find(clean)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?.let { n -> _importProgress.update { it.copy(movieCount = n) } }
-        // Series
-        Regex("(\\d+)(?:series?|shows?)", RegexOption.IGNORE_CASE)
-            .find(clean)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?.let { n -> _importProgress.update { it.copy(seriesCount = n) } }
     }
 
     private fun handleResult(result: ValidateAndAddProviderResult) {
+        syncProgressJob?.cancel()
+        syncProgressJob = null
         when (result) {
             is ValidateAndAddProviderResult.Success,
             is ValidateAndAddProviderResult.SavedWithWarning ->
-                _importProgress.update { it.copy(isImporting = false, isDone = true, currentStep = ImportStep.DONE) }
+                _importProgress.update { it.copy(isImporting = false, isDone = true, currentStep = ImportStep.DONE, progressMessage = "") }
             is ValidateAndAddProviderResult.ValidationError ->
                 _importProgress.update { it.copy(isImporting = false, currentStep = ImportStep.ERROR, errorMessage = result.message) }
             is ValidateAndAddProviderResult.Error ->

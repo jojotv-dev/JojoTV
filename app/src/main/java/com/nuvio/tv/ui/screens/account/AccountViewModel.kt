@@ -64,7 +64,8 @@ class AccountViewModel @Inject constructor(
     private val traktAuthDataStore: TraktAuthDataStore,
     private val postgrest: Postgrest,
     private val profileManager: ProfileManager,
-    @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context,
+    private val iptvAutoSyncService: com.nuvio.tv.core.sync.IptvAutoSyncService
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AccountUiState())
@@ -138,6 +139,7 @@ class AccountViewModel @Inject constructor(
                     }
                     loadConnectedStats()
                     _uiState.update { it.copy(isLoading = false) }
+                    iptvAutoSyncService.requestAutoSync(force = true)
                 },
                 onFailure = { e ->
                     _uiState.update { it.copy(isLoading = false, error = userFriendlyError(e)) }
@@ -323,6 +325,7 @@ class AccountViewModel @Inject constructor(
                         Log.e("AccountViewModel", "exchangeQrLogin: pullRemoteData failed, continuing", e)
                     }
                     loadConnectedStats()
+                    iptvAutoSyncService.requestAutoSync(force = true)
                     _uiState.update { it.copy(isLoading = false, qrLoginStatus = context.getString(R.string.qr_login_success)) }
                 },
                 onFailure = { e ->

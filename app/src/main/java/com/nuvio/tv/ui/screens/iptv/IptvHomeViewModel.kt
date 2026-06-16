@@ -73,6 +73,22 @@ class IptvHomeViewModel @Inject constructor(
         }
     }
 
+    private val _deleteRequest = MutableStateFlow<Provider?>(null)
+    val deleteRequest: StateFlow<Provider?> = _deleteRequest.asStateFlow()
+
+    fun requestDeleteProvider(provider: Provider) {
+        _deleteRequest.value = provider
+    }
+
+    fun cancelDeleteProvider() {
+        _deleteRequest.value = null
+    }
+
+    fun confirmDeleteProvider(providerId: Long) {
+        _deleteRequest.value = null
+        deleteProvider(providerId)
+    }
+
     fun deleteProvider(providerId: Long) {
         viewModelScope.launch {
             val result = providerRepository.deleteProvider(providerId)

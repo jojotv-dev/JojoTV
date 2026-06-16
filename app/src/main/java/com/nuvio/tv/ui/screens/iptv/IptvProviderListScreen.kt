@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -78,6 +80,16 @@ fun IptvProviderListScreen(
     val providers by viewModel.providers.collectAsStateWithLifecycle()
     val syncStates by viewModel.syncStates.collectAsStateWithLifecycle()
     val providerCounts by viewModel.providerCounts.collectAsStateWithLifecycle()
+    val deleteRequest by viewModel.deleteRequest.collectAsStateWithLifecycle()
+
+    deleteRequest?.let { provider ->
+        DeleteProviderConfirmDialog(
+            providerName = provider.name,
+            onConfirm = { viewModel.confirmDeleteProvider(provider.id) },
+            onDismiss = { viewModel.cancelDeleteProvider() },
+        )
+    }
+
 
     BackHandler { onBack() }
     Box(
@@ -144,7 +156,7 @@ fun IptvProviderListScreen(
                     onEditSettings = { onNavigateToEdit(provider.id, provider.type.name.lowercase().let {
                         when { it.contains("xtream") -> "xtream"; it.contains("m3u") -> "m3u"; else -> "stalker" }
                     }) },
-                    onDelete = { viewModel.deleteProvider(provider.id) }
+                    onDelete = { viewModel.requestDeleteProvider(provider) },
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -322,20 +334,36 @@ private fun ActionIconButton(
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
-    val bgColor by animateColorAsState(
-        targetValue = if (isFocused) NuvioColors.FocusBackground else Color.Transparent,
-        animationSpec = tween(120), label = "actionBg"
-    )
     Card(
         onClick = onClick,
-        modifier = Modifier.size(36.dp).onFocusChanged { isFocused = it.hasFocus },
+        modifier = Modifier
+            .width(64.dp)
+            .height(64.dp)
+            .onFocusChanged { isFocused = it.hasFocus },
         shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
-        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
+        border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(8.dp))),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.9f),
     ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(icon, label, tint = if (enabled) tint else NuvioColors.TextTertiary, modifier = Modifier.size(18.dp))
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (enabled) tint else NuvioColors.TextTertiary,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                text = label,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (enabled) NuvioColors.TextSecondary else NuvioColors.TextTertiary,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
         }
     }
 }

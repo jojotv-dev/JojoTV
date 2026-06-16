@@ -2,7 +2,7 @@
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
+
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -109,17 +109,17 @@ fun IptvTiviScreen(
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            var channelListFocused by remember { mutableStateOf(false) }
-                            val channelWeight by animateFloatAsState(
-                                targetValue = if (channelListFocused) 0.25f else 0.45f,
-                                animationSpec = tween(300),
-                                label = "channelWeight"
-                            )
-                            val epgWeight by animateFloatAsState(
-                                targetValue = if (channelListFocused) 0.75f else 0.55f,
-                                animationSpec = tween(300),
-                                label = "epgWeight"
-                            )
+
+
+
+
+
+
+
+
+
+
+
                             Row(Modifier.weight(1f).fillMaxWidth()) {
                                 TiviChannelList(
                                     channels = c.channels,
@@ -140,13 +140,13 @@ fun IptvTiviScreen(
                                             miniPlayerVm.loadChannel(channel, channel.streamUrl)
                                         }
                                     },
-                                    onFocusChanged = { channelListFocused = it },
-                                    modifier = Modifier.weight(channelWeight).fillMaxHeight(),
+
+                                    modifier = Modifier.weight(0.35f).fillMaxHeight(),
                                 )
                                 TiviEpgGrid(
                                     epgRows = c.epgRows,
                                     focusedChannelId = c.focusedChannel?.id,
-                                    modifier = Modifier.weight(epgWeight).fillMaxHeight(),
+                                    modifier = Modifier.weight(0.65f).fillMaxHeight(),
                                 )
                             }
                         }
