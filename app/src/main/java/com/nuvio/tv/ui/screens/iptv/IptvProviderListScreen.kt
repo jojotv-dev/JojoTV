@@ -82,16 +82,23 @@ fun IptvProviderListScreen(
     val providerCounts by viewModel.providerCounts.collectAsStateWithLifecycle()
     val deleteRequest by viewModel.deleteRequest.collectAsStateWithLifecycle()
 
-    deleteRequest?.let { provider ->
-        DeleteProviderConfirmDialog(
-            providerName = provider.name,
-            onConfirm = { viewModel.confirmDeleteProvider(provider.id) },
-            onDismiss = { viewModel.cancelDeleteProvider() },
-        )
-    }
+
+
+
+
+
+
+
 
 
     BackHandler { onBack() }
+    if (deleteRequest != null) {
+        DeleteProviderConfirmDialog(
+            providerName = deleteRequest!!.name,
+            onConfirm = { viewModel.confirmDeleteProvider(deleteRequest!!.id) },
+            onDismiss = { viewModel.cancelDeleteProvider() },
+        )
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
