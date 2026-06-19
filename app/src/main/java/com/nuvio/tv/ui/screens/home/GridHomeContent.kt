@@ -389,10 +389,12 @@ fun GridHomeContent(
                     val gridCwCardWidth = if (continueWatchingPortraitMode) (126f * gridCwPortraitScale).dp else continueWatchingThumbnailSize.cardWidth
                     val gridCwImageHeight = if (continueWatchingPortraitMode) (189f * gridCwPortraitScale).dp else continueWatchingThumbnailSize.imageHeight
                     FreeboxVideosSection(
+                        modifier = Modifier.fillMaxWidth(),
                         entries = uiState.freeboxVideoEntries,
                         onItemClick = { entry -> onNavigateToFreebox(entry.path) },
                         continueWatchingIds = uiState.continueWatchingItems.filterIsInstance<com.nuvio.tv.ui.screens.home.ContinueWatchingItem.InProgress>().map { it.progress.contentId }.toSet(),
                         artworkMap = uiState.freeboxVideoArtwork,
+                        probedDurations = uiState.freeboxVideoProbedDurations,
                         cardWidth = gridCwCardWidth,
                         imageHeight = gridCwImageHeight,
                         horizontalPadding = com.nuvio.tv.ui.components.GridLayoutConstants.RowHorizontalPadding,

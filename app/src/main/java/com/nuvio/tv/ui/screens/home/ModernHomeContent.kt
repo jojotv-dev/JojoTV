@@ -1075,6 +1075,7 @@ fun ModernHomeContent(
                 continueWatchingContentIds = uiState.continueWatchingItems.filterIsInstance<ContinueWatchingItem.InProgress>().map { it.progress.contentId }.toSet(),
                 onNavigateToFreebox = onNavigateToFreebox,
                 freeboxVideoArtwork = uiState.freeboxVideoArtwork,
+                freeboxVideoProbedDurations = uiState.freeboxVideoProbedDurations,
                 onDeleteFreeboxVideo = { entry ->
                     onDeleteFreeboxProgress?.invoke(
                         ContinueWatchingItem.InProgress(

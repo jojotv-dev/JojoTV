@@ -84,6 +84,7 @@ class HomeViewModel @Inject constructor(
     internal val watchedItemsPreferences: WatchedItemsPreferences,
     internal val freeboxOsClient: FreeboxOsClient,
     internal val freeboxSettingsDataStore: FreeboxSettingsDataStore,
+    internal val freeboxDurationCacheDataStore: com.nuvio.tv.data.local.FreeboxDurationCacheDataStore,
     internal val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
     internal val cwEnrichmentCache: ContinueWatchingEnrichmentCache,
     internal val profileManager: com.nuvio.tv.core.profile.ProfileManager,
@@ -854,6 +855,31 @@ class HomeViewModel @Inject constructor(
         )
     }
 
+    private suspend fun probeMissingFreeboxDurations(
+        settings: com.nuvio.tv.data.local.FreeboxConnectionSettings,
+        videos: List<com.nuvio.tv.data.freebox.FreeboxFileEntry>
+    ) {
+        try {
+            val cached = freeboxDurationCacheDataStore.getAll()
+            val merged = cached.toMutableMap()
+            // Applique immediatement ce qui est deja en cache
+            if (cached.isNotEmpty()) {
+                _uiState.update { it.copy(freeboxVideoProbedDurations = it.freeboxVideoProbedDurations + cached) }
+            }
+            val toProbe = videos.filter { it.durationMs == null && cached[it.path] == null }
+            toProbe.forEach { entry ->
+                val probed = freeboxOsClient.probeDurationMs(settings, entry)
+                if (probed != null && probed > 0L) {
+                    merged[entry.path] = probed
+                    freeboxDurationCacheDataStore.put(entry.path, probed)
+                    _uiState.update { it.copy(freeboxVideoProbedDurations = it.freeboxVideoProbedDurations + (entry.path to probed)) }
+                }
+            }
+        } catch (_: Exception) {
+            // Echec silencieux : pas de duree probee, pas grave
+        }
+    }
+
     fun loadFreeboxVideos() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
@@ -866,6 +892,7 @@ class HomeViewModel @Inject constructor(
                         val videos = entries.filter { !it.isDirectory }
                         _uiState.update { it.copy(freeboxVideoEntries = videos) }
                         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { migrateFreeboxRenamedFiles(videos) }
+                        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { probeMissingFreeboxDurations(settingsWithToken, videos) }
                         // Charger les artworks TMDB en arriere-plan
                         val artworkMap = mutableMapOf<String, String>()
                         videos.forEach { entry ->

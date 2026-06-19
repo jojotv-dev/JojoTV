@@ -20,6 +20,7 @@ data class HomeUiState(
     val continueWatchingItems: List<ContinueWatchingItem> = emptyList(),
     val freeboxVideoEntries: List<FreeboxFileEntry> = emptyList(),
     val freeboxVideoArtwork: Map<String, String> = emptyMap(),
+    val freeboxVideoProbedDurations: Map<String, Long> = emptyMap(),
     val isLoading: Boolean = true,
     val layoutPreferencesReady: Boolean = false,
     val error: String? = null,

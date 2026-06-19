@@ -133,6 +133,7 @@ internal fun ModernHomeRowsList(
     continueWatchingContentIds: Set<String> = emptySet(),
     onNavigateToFreebox: (String) -> Unit = {},
     freeboxVideoArtwork: Map<String, String> = emptyMap(),
+    freeboxVideoProbedDurations: Map<String, Long> = emptyMap(),
     onDeleteFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -424,6 +425,7 @@ internal fun ModernHomeRowsList(
                 item(key = "freebox_videos", contentType = "freebox_videos") {
                     FreeboxVideosSection(
                         entries = freeboxVideoEntries,
+                        probedDurations = freeboxVideoProbedDurations,
                         onItemClick = { entry -> onNavigateToFreebox(entry.path) },
                         artworkMap = freeboxVideoArtwork,
                         continueWatchingIds = continueWatchingContentIds,

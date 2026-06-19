@@ -266,6 +266,25 @@ class FreeboxOsClient @Inject constructor(
 
 
 
+
+    suspend fun probeDurationMs(settings: FreeboxConnectionSettings, entry: FreeboxFileEntry): Long? = withContext(Dispatchers.IO) {
+        var retriever: android.media.MediaMetadataRetriever? = null
+        try {
+            val sessionToken = settings.sessionToken.ifBlank {
+                openSession(settings).getOrThrow().sessionToken
+            }
+            val url = downloadUrl(settings.copy(sessionToken = sessionToken), entry.path, entry.encodedPath)
+            retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(url, sessionHeaders(sessionToken))
+            val durationStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+            durationStr?.toLongOrNull()?.takeIf { it > 0L }
+        } catch (_: Exception) {
+            null
+        } finally {
+            try { retriever?.release() } catch (_: Exception) {}
+        }
+    }
+
     fun downloadUrl(settings: FreeboxConnectionSettings, path: String, encodedPath: String? = null): String =
 
         apiUrl(settings.address, "dl/${encodedPath?.let(::encodePathSegment) ?: encodeFreeboxPath(path)}")

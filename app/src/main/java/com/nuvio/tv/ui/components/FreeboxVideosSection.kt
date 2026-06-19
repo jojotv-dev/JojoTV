@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +38,7 @@ fun FreeboxVideosSection(
     entries: List<FreeboxFileEntry>,
     onItemClick: (FreeboxFileEntry) -> Unit,
     artworkMap: Map<String, String> = emptyMap(),
+    probedDurations: Map<String, Long> = emptyMap(),
     continueWatchingIds: Set<String> = emptySet(),
     cardWidth: Dp = 126.dp,
     imageHeight: Dp = 189.dp,
@@ -62,15 +62,14 @@ fun FreeboxVideosSection(
             modifier = Modifier.padding(start = horizontalPadding, end = horizontalPadding, bottom = 16.dp)
         )
         LazyRow(
-            modifier = Modifier.fillMaxWidth().border(2.dp, androidx.compose.ui.graphics.Color.Green),
+            modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = horizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             itemsIndexed(filteredEntries, key = { _, e -> e.path }) { _, entry ->
-                android.util.Log.d("NuvioDebug", "FreeboxVideo name=" + entry.name + " durationMs=" + entry.durationMs)
                 val contentId = "freebox:${entry.path}"
                 val artwork = artworkMap[contentId]
-                val cwItem = remember(entry, artwork) {
+                val cwItem = remember(entry, artwork, probedDurations[entry.path]) {
                     ContinueWatchingItem.InProgress(
                         progress = WatchProgress(
                             contentId = contentId,
@@ -84,7 +83,7 @@ fun FreeboxVideosSection(
                             episode = null,
                             episodeTitle = null,
                             position = 0L,
-                            duration = entry.durationMs ?: 0L,
+                            duration = entry.durationMs ?: probedDurations[entry.path] ?: 0L,
                             lastWatched = 0L
                         )
                     )

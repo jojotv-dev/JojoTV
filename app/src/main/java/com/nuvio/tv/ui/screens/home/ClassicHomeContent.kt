@@ -504,6 +504,7 @@ fun ClassicHomeContent(
             item(key = "freebox_videos", contentType = "freebox_videos") {
                 FreeboxVideosSection(
                     entries = uiState.freeboxVideoEntries,
+                    probedDurations = uiState.freeboxVideoProbedDurations,
                     onItemClick = { entry ->
                         onNavigateToFreebox(entry.path)
                     },

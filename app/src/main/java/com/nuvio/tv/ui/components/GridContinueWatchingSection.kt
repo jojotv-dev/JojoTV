@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -102,7 +101,6 @@ fun GridContinueWatchingSection(
                     else
                         Modifier.fillMaxWidth()
                 )
-                .border(2.dp, androidx.compose.ui.graphics.Color.Red)
                 .focusRestorer {
                     val idx = if (lastFocusedIndex.intValue >= 0 && lastFocusedIndex.intValue < focusRequesters.size)
                         lastFocusedIndex.intValue else 0
