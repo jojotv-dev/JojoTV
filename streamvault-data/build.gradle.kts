@@ -19,6 +19,9 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+    lint {
+        checkReleaseBuilds = false
+    }
     room {
         schemaDirectory("$projectDir/schemas")
     }

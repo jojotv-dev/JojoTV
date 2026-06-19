@@ -397,7 +397,8 @@ fun GridHomeContent(
                         probedDurations = uiState.freeboxVideoProbedDurations,
                         cardWidth = gridCwCardWidth,
                         imageHeight = gridCwImageHeight,
-                        horizontalPadding = com.nuvio.tv.ui.components.GridLayoutConstants.RowHorizontalPadding,
+                        horizontalPadding = 0.dp,
+                        itemSpacing = 12.dp,
                         onShowDetails = { entry ->
                             onNavigateToDetail("freebox:${entry.path}", "freebox", "")
                         },

@@ -43,6 +43,7 @@ fun FreeboxVideosSection(
     cardWidth: Dp = 126.dp,
     imageHeight: Dp = 189.dp,
     horizontalPadding: Dp = 48.dp,
+    itemSpacing: Dp = 16.dp,
     onShowDetails: (FreeboxFileEntry) -> Unit = {},
     onDeleteFromFreebox: (FreeboxFileEntry) -> Unit = {},
     modifier: Modifier = Modifier
@@ -64,7 +65,7 @@ fun FreeboxVideosSection(
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = horizontalPadding),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement = Arrangement.spacedBy(itemSpacing)
         ) {
             itemsIndexed(filteredEntries, key = { _, e -> e.path }) { _, entry ->
                 val contentId = "freebox:${entry.path}"

@@ -431,6 +431,8 @@ internal fun ModernHomeRowsList(
                         continueWatchingIds = continueWatchingContentIds,
                         cardWidth = continueWatchingCardWidth,
                         imageHeight = continueWatchingCardHeight,
+                        horizontalPadding = 52.dp,
+                        itemSpacing = 12.dp,
                         onShowDetails = { entry ->
                             onNavigateToDetail("freebox:${entry.path}", "freebox", "")
                         },

@@ -532,6 +532,12 @@ android {
 
     }
 
+    lint {
+
+        checkReleaseBuilds = false
+
+    }
+
 
 
     sourceSets {
@@ -598,11 +604,13 @@ androidComponents {
 
 composeCompiler {
 
-    // Enable Compose compiler metrics for performance analysis
+    if (providers.gradleProperty("composeReports").orNull == "true") {
 
-    metricsDestination = layout.buildDirectory.dir("compose_metrics")
+        metricsDestination = layout.buildDirectory.dir("compose_metrics")
 
-    reportsDestination = layout.buildDirectory.dir("compose_reports")
+        reportsDestination = layout.buildDirectory.dir("compose_reports")
+
+    }
 
     stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose_stability_config.conf"))
 

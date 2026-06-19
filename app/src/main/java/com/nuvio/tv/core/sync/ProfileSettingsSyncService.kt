@@ -235,7 +235,7 @@ class ProfileSettingsSyncService @Inject constructor(
                 }
                 put(feature, serialized)
             }
-            put(IPTV_PROVIDERS_FEATURE, exportIptvProvidersJson())
+            put(IPTV_PROVIDERS_FEATURE, buildIptvProvidersJson(providerDao.getAllSync()))
         }
 
         return buildJsonObject {
@@ -353,8 +353,12 @@ class ProfileSettingsSyncService @Inject constructor(
                                 "$feature={${buildFeatureSignature(prefs, feature)}}"
                             }
                     }
+                    val iptvProvidersFlow = providerDao.getAll()
+                        .map { providers ->
+                            "$IPTV_PROVIDERS_FEATURE={${buildFeatureSignature(buildIptvProvidersJson(providers))}}"
+                        }
 
-                    combine(featureFlows) { signatures ->
+                    combine(featureFlows + iptvProvidersFlow) { signatures ->
                         signatures.joinToString(separator = "||")
                     }
                 }
@@ -385,7 +389,7 @@ class ProfileSettingsSyncService @Inject constructor(
             val prefs = profileDataStoreFactory.get(profileId, feature).data.first()
             signatures += "$feature={${buildFeatureSignature(prefs, feature)}}"
         }
-                    //         signatures += "$IPTV_PROVIDERS_FEATURE={${buildIptvProvidersSignature(providerDao.getAllSync())}}"
+        signatures += "$IPTV_PROVIDERS_FEATURE={${buildFeatureSignature(buildIptvProvidersJson(providerDao.getAllSync()))}}"
         return signatures.joinToString(separator = "||")
     }
 
@@ -463,8 +467,7 @@ class ProfileSettingsSyncService @Inject constructor(
             .sortedBy { it.key }
             .joinToString(separator = "|") { (key, value) -> "$key=$value" }
     }
-    private suspend fun exportIptvProvidersJson(): JsonObject {
-        val providers = providerDao.getAllSync()
+    private fun buildIptvProvidersJson(providers: List<ProviderEntity>): JsonObject {
         return buildJsonObject {
             put("providers", kotlinx.serialization.json.JsonArray(providers.map { p ->
                 buildJsonObject {
@@ -548,8 +551,6 @@ class ProfileSettingsSyncService @Inject constructor(
             runCatching { providerDao.insert(entity) }
         }
     }
-
-    private fun buildIptvProvidersSignature(providers: List<*>): String = ""
     private fun decryptProviderPassword(password: String): String = password
     private suspend fun encryptSyncedProviderPassword(password: String): String = password
     private fun decryptSyncedProviderPassword(password: String): String = password

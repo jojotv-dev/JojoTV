@@ -922,6 +922,7 @@ class HomeViewModel @Inject constructor(
         val freeboxProgress = allProgress.filter { it.contentId.startsWith("freebox:") && it.position > 0L }
         if (freeboxProgress.isEmpty()) return
         val currentPaths = entries.filter { !it.isDirectory }.map { it.path.trim() }.toSet()
+        val checkedDirectories = freeboxCheckedDirectories(entries)
         val orphaned = freeboxProgress.filter { it.contentId.removePrefix("freebox:") !in currentPaths }
         if (orphaned.isEmpty()) return
         val byDir = entries.filter { !it.isDirectory }.groupBy { it.path.substringBeforeLast("/") }
@@ -929,16 +930,36 @@ class HomeViewModel @Inject constructor(
             val pp = progress.contentId.removePrefix("freebox:")
             val dir = pp.substringBeforeLast("/")
             val pname = pp.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()
-            val candidates = byDir[dir] ?: return@forEach
-            val best = candidates.maxByOrNull { nameSimilarityHome(pname, it.path.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()) } ?: return@forEach
-            val bname = best.path.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()
-            if (nameSimilarityHome(pname, bname) < 0.6) return@forEach
+            val candidates = byDir[dir].orEmpty()
+            val best = candidates.maxByOrNull { nameSimilarityHome(pname, it.path.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()) }
+            val bname = best?.path?.substringAfterLast("/")?.substringBeforeLast(".")?.lowercase()?.trim()
+            if (best == null || bname == null || nameSimilarityHome(pname, bname) < 0.6) {
+                if (progress.isStaleFreeboxProgress(currentPaths, checkedDirectories)) {
+                    watchProgressRepository.removeProgress(progress.contentId)
+                    pruneStaleFreeboxFromContinueWatchingCache(progress.contentId)
+                }
+                return@forEach
+            }
             val newId = freeboxContentIdForPath(best.path)
-            if (allProgress.any { it.contentId == newId && it.position > 0L }) return@forEach
+            if (allProgress.any { it.contentId == newId && it.position > 0L }) {
+                watchProgressRepository.removeProgress(progress.contentId)
+                pruneStaleFreeboxFromContinueWatchingCache(progress.contentId)
+                return@forEach
+            }
             val migrated = progress.copy(contentId = newId, videoId = newId, name = freeboxFileNameOnly(best.path))
             watchProgressRepository.saveProgress(migrated)
             watchProgressRepository.removeProgress(progress.contentId)
+            pruneStaleFreeboxFromContinueWatchingCache(progress.contentId)
         }
+    }
+
+    private suspend fun pruneStaleFreeboxFromContinueWatchingCache(contentId: String) {
+        val cached = runCatching { cwEnrichmentCache.getInProgressSnapshot() }.getOrDefault(emptyList())
+        if (cached.none { it.contentId == contentId }) return
+        cwEnrichmentCache.saveInProgressSnapshot(
+            items = cached.filterNot { it.contentId == contentId },
+            force = true
+        )
     }
 
     private fun nameSimilarityHome(a: String, b: String): Double {
@@ -961,4 +982,21 @@ class HomeViewModel @Inject constructor(
         movieWatchedObserverJobs.clear()
         super.onCleared()
     }
+}
+
+internal fun freeboxCheckedDirectories(entries: List<FreeboxFileEntry>): Set<String> =
+    entries
+        .filter { !it.isDirectory }
+        .mapTo(mutableSetOf()) { it.path.trim().substringBeforeLast("/", missingDelimiterValue = "") }
+        .filterTo(mutableSetOf()) { it.isNotBlank() }
+
+internal fun com.nuvio.tv.domain.model.WatchProgress.isStaleFreeboxProgress(
+    currentPaths: Set<String>,
+    checkedDirectories: Set<String>
+): Boolean {
+    if (!contentId.startsWith("freebox:")) return false
+    val path = contentId.removePrefix("freebox:").trim()
+    if (path.isBlank() || path in currentPaths) return false
+    val parent = path.substringBeforeLast("/", missingDelimiterValue = "")
+    return parent.isNotBlank() && parent in checkedDirectories
 }

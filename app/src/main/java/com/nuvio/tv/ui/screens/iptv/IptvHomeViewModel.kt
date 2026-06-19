@@ -1,6 +1,8 @@
 ﻿package com.nuvio.tv.ui.screens.iptv
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.core.sync.ProfileSettingsSyncService
 import com.streamvault.data.local.dao.ChannelDao
 import com.streamvault.data.local.dao.MovieDao
 import com.streamvault.data.local.dao.SeriesDao
@@ -19,6 +21,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+private const val TAG = "IptvHomeViewModel"
+
 data class ProviderCounts(
     val channels: Int = 0,
     val movies: Int = 0,
@@ -28,6 +32,7 @@ data class ProviderCounts(
 @HiltViewModel
 class IptvHomeViewModel @Inject constructor(
     private val providerRepository: ProviderRepository,
+    private val profileSettingsSyncService: ProfileSettingsSyncService,
     private val channelDao: ChannelDao,
     private val movieDao: MovieDao,
     private val seriesDao: SeriesDao
@@ -94,6 +99,11 @@ class IptvHomeViewModel @Inject constructor(
             val result = providerRepository.deleteProvider(providerId)
             if (result is com.streamvault.domain.model.Result.Error) {
                 _deleteError.value = result.message
+            } else {
+                profileSettingsSyncService.pushCurrentProfileToRemote()
+                    .onFailure { error ->
+                        Log.w(TAG, "Provider $providerId deleted locally but remote profile sync failed", error)
+                    }
             }
         }
     }
