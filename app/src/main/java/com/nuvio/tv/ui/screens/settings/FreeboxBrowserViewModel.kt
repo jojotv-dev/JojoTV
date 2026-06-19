@@ -8,9 +8,11 @@ import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.core.tmdb.FreeboxVideoMeta
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import com.nuvio.tv.data.freebox.FreeboxOsClient
+import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.data.freebox.freeboxContentIdForPath
 import com.nuvio.tv.data.freebox.freeboxDisplayName
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.data.freebox.freeboxTmdbSearchQuery
 import com.nuvio.tv.data.local.FreeboxConnectionSettings
 import com.nuvio.tv.data.local.FreeboxSettingsDataStore
@@ -243,13 +245,11 @@ class FreeboxBrowserViewModel @Inject constructor(
         durationMs: Long? = null,
         artworkUrl: String? = null
     ): FreeboxPlaybackRequest? {
-        val path = contentIdOrVideoId
-            .trim()
-            .removePrefix("freebox:")
-            .takeIf { it.isNotBlank() } ?: return null
+        val rawId = contentIdOrVideoId.trim()
+        val path = freeboxPathFromContentId(rawId).takeIf { it.isNotBlank() } ?: return null
         val settings = dataStore.settings.first()
         val token = getOrRefreshSession(settings) ?: return null
-        val videoId = freeboxContentIdForPath(path)
+        val videoId = rawId.takeIf { it.startsWith("freebox:") } ?: freeboxContentIdForPath(path)
         return FreeboxPlaybackRequest(
             streamUrl = freeboxClient.downloadUrl(
                 settings = settings.copy(sessionToken = token),
@@ -268,7 +268,7 @@ class FreeboxBrowserViewModel @Inject constructor(
         if (entry.isDirectory || !entry.isVideoFile()) return null
         val settings = dataStore.settings.first()
         val token = getOrRefreshSession(settings) ?: return null
-        val videoId = freeboxContentIdForPath(entry.path)
+        val videoId = freeboxContentIdForEntry(entry)
         // Artwork fetched in background - do not block playback startup
         viewModelScope.launch { artworkFor(settings, token, entry, videoId) }
         val artworkUrl = videoArtworkCache[videoId]?.takeIf { it.isNotBlank() }
@@ -435,7 +435,7 @@ class FreeboxBrowserViewModel @Inject constructor(
     ) {
         entries.forEach { entry ->
             val duration = entry.durationMs?.takeIf { it > 0L } ?: return@forEach
-            directVideoDurations[freeboxContentIdForPath(entry.path)] = duration
+            directVideoDurations[freeboxContentIdForEntry(entry)] = duration
         }
         viewModelScope.launch(Dispatchers.IO) { migrateRenamedFiles(entries) }
         _uiState.update { state ->
@@ -461,13 +461,13 @@ class FreeboxBrowserViewModel @Inject constructor(
             .asSequence()
             .filter { !it.isDirectory && it.isVideoFile() }
             .take(40)
-            .filter { metadataRequestsInFlight.add(freeboxContentIdForPath(it.path)) }
+            .filter { metadataRequestsInFlight.add(freeboxContentIdForEntry(it)) }
             .toList()
         if (videosToEnrich.isEmpty()) return
 
         viewModelScope.launch(Dispatchers.IO) {
             videosToEnrich.forEach { entry ->
-                val contentId = freeboxContentIdForPath(entry.path)
+                val contentId = freeboxContentIdForEntry(entry)
                 try {
                     if (knownDurationFor(contentId, entry) == null) {
                         readRemoteDurationMs(settings, sessionToken, entry)?.let { duration ->
@@ -640,18 +640,18 @@ class FreeboxBrowserViewModel @Inject constructor(
         val freeboxProgress = allProgress.filter { it.contentId.startsWith("freebox:") && it.position > 0L }
         if (freeboxProgress.isEmpty()) return
         val currentPaths = entries.filter { !it.isDirectory }.map { it.path.trim() }.toSet()
-        val orphaned = freeboxProgress.filter { it.contentId.removePrefix("freebox:") !in currentPaths }
+        val orphaned = freeboxProgress.filter { freeboxPathFromContentId(it.contentId) !in currentPaths }
         if (orphaned.isEmpty()) return
         val byDir = entries.filter { !it.isDirectory }.groupBy { it.path.substringBeforeLast("/") }
         orphaned.forEach { progress ->
-            val pp = progress.contentId.removePrefix("freebox:")
+            val pp = freeboxPathFromContentId(progress.contentId)
             val dir = pp.substringBeforeLast("/")
             val pname = pp.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()
             val candidates = byDir[dir] ?: return@forEach
             val best = candidates.maxByOrNull { nameSimilarity(pname, it.path.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()) } ?: return@forEach
             val bname = best.path.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()
             if (nameSimilarity(pname, bname) < 0.6) return@forEach
-            val newId = freeboxContentIdForPath(best.path)
+            val newId = freeboxContentIdForEntry(best)
             if (allProgress.any { it.contentId == newId && it.position > 0L }) return@forEach
             val migrated = progress.copy(contentId = newId, videoId = newId, name = freeboxFileNameOnly(best.path))
             watchProgressRepository.saveProgress(migrated)

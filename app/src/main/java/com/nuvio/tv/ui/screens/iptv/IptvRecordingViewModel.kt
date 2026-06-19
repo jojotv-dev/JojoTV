@@ -79,6 +79,46 @@ class IptvRecordingViewModel @Inject constructor(
         }
     }
 
+    fun startManualRecording(
+        providerId: Long,
+        channelId: Long,
+        channelName: String,
+        streamUrl: String,
+    ) {
+        val now = System.currentTimeMillis()
+        viewModelScope.launch {
+            val result = recordingManager.startManualRecording(
+                RecordingRequest(
+                    providerId = providerId,
+                    channelId = channelId,
+                    channelName = channelName,
+                    streamUrl = streamUrl,
+                    scheduledStartMs = now,
+                    scheduledEndMs = now + 12 * 60 * 60 * 1000L,
+                )
+            )
+            _feedback.value = when (result) {
+                is com.streamvault.domain.model.Result.Success -> "Enregistrement démarré ✓"
+                is com.streamvault.domain.model.Result.Error -> "Erreur : ${result.message}"
+                com.streamvault.domain.model.Result.Loading -> null
+            }
+        }
+    }
+
+    fun prepareSchedule(
+        providerId: Long,
+        channelId: Long,
+        channelName: String,
+        streamUrl: String,
+    ) {
+        _scheduleForm.value = ScheduleFormState(
+            providerId = providerId,
+            channelId = channelId,
+            channelName = channelName,
+            streamUrl = streamUrl,
+        )
+    }
+
     fun cancelRecording(id: String) {
         viewModelScope.launch {
             val r = recordingManager.cancelRecording(id)

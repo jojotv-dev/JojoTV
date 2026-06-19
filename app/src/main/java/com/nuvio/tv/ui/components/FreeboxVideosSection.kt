@@ -27,6 +27,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
+import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
@@ -44,12 +45,13 @@ fun FreeboxVideosSection(
     imageHeight: Dp = 189.dp,
     horizontalPadding: Dp = 48.dp,
     itemSpacing: Dp = 16.dp,
+    focusBorderPadding: Dp = 0.dp,
     onShowDetails: (FreeboxFileEntry) -> Unit = {},
     onDeleteFromFreebox: (FreeboxFileEntry) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val filteredEntries = remember(entries, continueWatchingIds) {
-        entries.filter { entry -> "freebox:${entry.path}" !in continueWatchingIds }
+        entries.filter { entry -> freeboxContentIdForEntry(entry) !in continueWatchingIds }
     }
     if (filteredEntries.isEmpty()) return
 
@@ -64,11 +66,16 @@ fun FreeboxVideosSection(
         )
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = horizontalPadding),
+            contentPadding = PaddingValues(
+                start = horizontalPadding + focusBorderPadding,
+                end = horizontalPadding + focusBorderPadding,
+                top = focusBorderPadding,
+                bottom = focusBorderPadding
+            ),
             horizontalArrangement = Arrangement.spacedBy(itemSpacing)
         ) {
             itemsIndexed(filteredEntries, key = { _, e -> e.path }) { _, entry ->
-                val contentId = "freebox:${entry.path}"
+                val contentId = freeboxContentIdForEntry(entry)
                 val artwork = artworkMap[contentId]
                 val cwItem = remember(entry, artwork, probedDurations[entry.path]) {
                     ContinueWatchingItem.InProgress(

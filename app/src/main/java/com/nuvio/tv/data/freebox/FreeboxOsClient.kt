@@ -3,6 +3,7 @@ package com.nuvio.tv.data.freebox
 
 
 import android.util.Base64
+import android.util.Log
 
 import com.nuvio.tv.data.local.FreeboxAuthUpdate
 
@@ -277,8 +278,13 @@ class FreeboxOsClient @Inject constructor(
             retriever = android.media.MediaMetadataRetriever()
             retriever.setDataSource(url, sessionHeaders(sessionToken))
             val durationStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
-            durationStr?.toLongOrNull()?.takeIf { it > 0L }
-        } catch (_: Exception) {
+            durationStr?.toLongOrNull()?.takeIf { it > 0L }.also { duration ->
+                if (duration == null) {
+                    Log.w(TAG, "Duree Freebox absente des metadonnees: ${entry.path}")
+                }
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Echec du sondage de duree Freebox: ${entry.path}", error)
             null
         } finally {
             try { retriever?.release() } catch (_: Exception) {}
@@ -732,6 +738,8 @@ class FreeboxOsClient @Inject constructor(
 
 
     companion object {
+
+        private const val TAG = "FreeboxOsClient"
 
         private const val API_VERSION = "v15"
 

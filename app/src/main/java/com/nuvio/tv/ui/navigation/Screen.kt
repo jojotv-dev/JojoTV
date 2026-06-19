@@ -64,7 +64,7 @@ sealed class Screen(val route: String) {
             return "stream/$encodedVideoId/$encodedContentTypePath/$encodedTitle?poster=$encodedPoster&backdrop=$encodedBackdrop&logo=$encodedLogo&season=${season ?: ""}&episode=${episode ?: ""}&episodeName=$encodedEpisodeName&genres=$encodedGenres&year=$encodedYear&contentId=$encodedContentId&contentName=$encodedContentName&runtime=${runtime ?: ""}&manualSelection=$manualSelection&returnToDetailOnBack=$returnToDetailOnBack&returnToHomeOnBack=$returnToHomeOnBack&startFromBeginning=$startFromBeginning&contentLanguage=$encodedContentLanguage"
         }
     }
-    data object Player : Screen("player/{streamUrl}/{title}?streamName={streamName}&year={year}&headers={headers}&contentId={contentId}&contentType={contentType}&contentName={contentName}&poster={poster}&backdrop={backdrop}&logo={logo}&videoId={videoId}&season={season}&episode={episode}&episodeTitle={episodeTitle}&bingeGroup={bingeGroup}&autoPlayNav={autoPlayNav}&returnToDetailOnBack={returnToDetailOnBack}&returnToHomeOnBack={returnToHomeOnBack}&filename={filename}&videoHash={videoHash}&videoSize={videoSize}&startFromBeginning={startFromBeginning}&addonName={addonName}&addonLogo={addonLogo}&streamDescription={streamDescription}&infoHash={infoHash}&fileIdx={fileIdx}&sources={sources}&contentLanguage={contentLanguage}") {
+    data object Player : Screen("player/{streamUrl}/{title}?streamName={streamName}&year={year}&headers={headers}&contentId={contentId}&contentType={contentType}&contentName={contentName}&poster={poster}&backdrop={backdrop}&logo={logo}&videoId={videoId}&season={season}&episode={episode}&episodeTitle={episodeTitle}&bingeGroup={bingeGroup}&autoPlayNav={autoPlayNav}&returnToDetailOnBack={returnToDetailOnBack}&returnToHomeOnBack={returnToHomeOnBack}&filename={filename}&videoHash={videoHash}&videoSize={videoSize}&startFromBeginning={startFromBeginning}&addonName={addonName}&addonLogo={addonLogo}&streamDescription={streamDescription}&infoHash={infoHash}&fileIdx={fileIdx}&sources={sources}&contentLanguage={contentLanguage}&iptvProviderId={iptvProviderId}&iptvChannelId={iptvChannelId}") {
         private fun encode(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
@@ -98,7 +98,9 @@ sealed class Screen(val route: String) {
             infoHash: String? = null,
             fileIdx: Int? = null,
             sources: List<String>? = null,
-            contentLanguage: String? = null
+            contentLanguage: String? = null,
+            iptvProviderId: Long? = null,
+            iptvChannelId: Long? = null,
         ): String {
             val encodedUrl = encode(streamUrl)
             val encodedTitle = encode(title)
@@ -124,7 +126,7 @@ sealed class Screen(val route: String) {
             val encodedInfoHash = infoHash ?: ""
             val encodedSources = sources?.let { encode(org.json.JSONArray(it).toString()) } ?: ""
             val encodedContentLanguage = contentLanguage?.let { encode(it) } ?: ""
-            return "player/$encodedUrl/$encodedTitle?streamName=$encodedStreamName&year=$encodedYear&headers=$encodedHeaders&contentId=$encodedContentId&contentType=$encodedContentType&contentName=$encodedContentName&poster=$encodedPoster&backdrop=$encodedBackdrop&logo=$encodedLogo&videoId=$encodedVideoId&season=${season ?: ""}&episode=${episode ?: ""}&episodeTitle=$encodedEpisodeTitle&bingeGroup=$encodedBingeGroup&autoPlayNav=$autoPlayNav&returnToDetailOnBack=$returnToDetailOnBack&returnToHomeOnBack=$returnToHomeOnBack&filename=$encodedFilename&videoHash=$encodedVideoHash&videoSize=${videoSize ?: ""}&startFromBeginning=$startFromBeginning&addonName=$encodedAddonName&addonLogo=$encodedAddonLogo&streamDescription=$encodedStreamDescription&infoHash=$encodedInfoHash&fileIdx=${fileIdx ?: ""}&sources=$encodedSources&contentLanguage=$encodedContentLanguage"
+            return "player/$encodedUrl/$encodedTitle?streamName=$encodedStreamName&year=$encodedYear&headers=$encodedHeaders&contentId=$encodedContentId&contentType=$encodedContentType&contentName=$encodedContentName&poster=$encodedPoster&backdrop=$encodedBackdrop&logo=$encodedLogo&videoId=$encodedVideoId&season=${season ?: ""}&episode=${episode ?: ""}&episodeTitle=$encodedEpisodeTitle&bingeGroup=$encodedBingeGroup&autoPlayNav=$autoPlayNav&returnToDetailOnBack=$returnToDetailOnBack&returnToHomeOnBack=$returnToHomeOnBack&filename=$encodedFilename&videoHash=$encodedVideoHash&videoSize=${videoSize ?: ""}&startFromBeginning=$startFromBeginning&addonName=$encodedAddonName&addonLogo=$encodedAddonLogo&streamDescription=$encodedStreamDescription&infoHash=$encodedInfoHash&fileIdx=${fileIdx ?: ""}&sources=$encodedSources&contentLanguage=$encodedContentLanguage&iptvProviderId=${iptvProviderId ?: ""}&iptvChannelId=${iptvChannelId ?: ""}"
         }
     }
     data object Search : Screen("search")
@@ -202,7 +204,22 @@ sealed class Screen(val route: String) {
     data object IptvProviderList : Screen("iptv_provider_list")
     data object IptvEpg : Screen("iptv_epg")
     data object IptvDns : Screen("iptv_dns")
-        data object IptvRecordingSchedule : Screen("iptv_recording_schedule")
+    data object IptvRecordingSchedule : Screen("iptv_recording_schedule?providerId={providerId}&channelId={channelId}&channelName={channelName}&streamUrl={streamUrl}") {
+        fun createRoute(
+            providerId: Long? = null,
+            channelId: Long? = null,
+            channelName: String? = null,
+            streamUrl: String? = null,
+        ): String {
+            if (providerId == null || channelId == null || channelName.isNullOrBlank() || streamUrl.isNullOrBlank()) {
+                return "iptv_recording_schedule"
+            }
+            return "iptv_recording_schedule?providerId=$providerId&channelId=$channelId&channelName=${encode(channelName)}&streamUrl=${encode(streamUrl)}"
+        }
+
+        private fun encode(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+    }
     data object IptvRecordingList : Screen("iptv_recording_list")
     data object IptvProviderTypeSelect : Screen("iptv_provider_type_select")
     data object IptvProviderSetup : Screen("iptv_provider_setup?type={type}&providerId={providerId}") {

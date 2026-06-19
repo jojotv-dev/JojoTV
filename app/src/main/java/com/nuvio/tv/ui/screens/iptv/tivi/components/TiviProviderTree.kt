@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +32,7 @@ fun TiviProviderTree(
     onProviderFocus: (Long) -> Unit,
     onGroupClick: (Long, Long) -> Unit,
     onGroupFocus: (Long, Long) -> Unit,
+    onManageProvider: ((Long) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -48,6 +50,7 @@ fun TiviProviderTree(
                     isSelected = node.provider.id == selectedProviderId,
                     onClick = { onProviderClick(node.provider.id) },
                     onFocus = { onProviderFocus(node.provider.id) },
+                    onManage = onManageProvider?.let { manage -> { manage(node.provider.id) } },
                 )
             }
             if (node.isExpanded) {
@@ -72,6 +75,7 @@ private fun TiviProviderHeader(
     isSelected: Boolean,
     onClick: () -> Unit,
     onFocus: () -> Unit,
+    onManage: (() -> Unit)?,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val rotation by animateFloatAsState(
@@ -108,14 +112,26 @@ private fun TiviProviderHeader(
                 color = if (isFocused || isSelected) NuvioColors.TextPrimary else NuvioColors.TextSecondary,
                 modifier = Modifier.weight(1f),
             )
-            androidx.compose.material3.Icon(
-                imageVector = Icons.Filled.ExpandMore,
-                contentDescription = null,
-                tint = if (isFocused || isSelected) NuvioColors.Secondary else NuvioColors.TextTertiary,
-                modifier = Modifier
-                    .size(16.dp)
-                    .rotate(rotation),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                onManage?.let {
+                    IconButton(onClick = it) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "Gérer les groupes et chaînes",
+                            tint = NuvioColors.TextSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    tint = if (isFocused || isSelected) NuvioColors.Secondary else NuvioColors.TextTertiary,
+                    modifier = Modifier
+                        .size(16.dp)
+                        .rotate(rotation),
+                )
+            }
         }
     }
 }

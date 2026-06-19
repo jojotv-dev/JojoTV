@@ -36,12 +36,32 @@ import java.util.*
 @Composable
 fun IptvRecordingScheduleScreen(
     onBackPress: () -> Unit,
+    initialProviderId: Long? = null,
+    initialChannelId: Long? = null,
+    initialChannelName: String? = null,
+    initialStreamUrl: String? = null,
     viewModel: IptvRecordingViewModel = hiltViewModel()
 ) {
     val onPickFolder = LocalPickFolderLauncher.current
     val form         by viewModel.scheduleForm.collectAsStateWithLifecycle()
     val storage      by viewModel.storageState.collectAsStateWithLifecycle()
     val feedback     by viewModel.feedback.collectAsStateWithLifecycle()
+
+    LaunchedEffect(initialProviderId, initialChannelId, initialChannelName, initialStreamUrl) {
+        if (
+            initialProviderId != null &&
+            initialChannelId != null &&
+            !initialChannelName.isNullOrBlank() &&
+            !initialStreamUrl.isNullOrBlank()
+        ) {
+            viewModel.prepareSchedule(
+                providerId = initialProviderId,
+                channelId = initialChannelId,
+                channelName = initialChannelName,
+                streamUrl = initialStreamUrl,
+            )
+        }
+    }
 
     LaunchedEffect(feedback) {
         if (feedback != null) kotlinx.coroutines.delay(3_000)

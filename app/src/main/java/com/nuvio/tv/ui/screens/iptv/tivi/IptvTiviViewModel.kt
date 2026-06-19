@@ -15,6 +15,8 @@ import com.streamvault.domain.repository.MovieRepository
 import com.streamvault.domain.repository.ProviderRepository
 import com.streamvault.domain.repository.SeriesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -82,6 +84,11 @@ class IptvTiviViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(TiviUiState())
     val uiState: StateFlow<TiviUiState> = _uiState.asStateFlow()
 
+    private var providerFocusJob: Job? = null
+    private var contentJob: Job? = null
+    private var focusedEpgJob: Job? = null
+    private var groupEpgJob: Job? = null
+
     init { loadProviders() }
 
     private fun loadProviders() {
@@ -101,6 +108,8 @@ class IptvTiviViewModel @Inject constructor(
 
     fun selectTab(tab: TiviTab) {
         if (_uiState.value.selectedTab == tab) return
+        providerFocusJob?.cancel()
+        cancelContentJobs()
         _uiState.update {
             it.copy(
                 selectedTab = tab,
@@ -148,33 +157,37 @@ class IptvTiviViewModel @Inject constructor(
 
     /** Survol provider sans clic : charge les groupes si besoin puis affiche le 1er groupe */
     fun focusProvider(providerId: Long) {
+        providerFocusJob?.cancel()
+        providerFocusJob = viewModelScope.launch {
+            delay(150)
+            focusProviderNow(providerId)
+        }
+    }
+
+    private suspend fun focusProviderNow(providerId: Long) {
         val node = _uiState.value.providerNodes.firstOrNull { it.provider.id == providerId } ?: return
         if (node.groups.isEmpty()) {
-            viewModelScope.launch {
-                val tab = _uiState.value.selectedTab
-                val categoriesFlow: Flow<List<Category>> = when (tab) {
-                    TiviTab.LIVE    -> channelRepository.getCategories(providerId)
-                    TiviTab.MOVIES  -> movieRepository.getCategories(providerId)
-                    TiviTab.SERIES  -> seriesRepository.getCategories(providerId)
+            val tab = _uiState.value.selectedTab
+            val categoriesFlow: Flow<List<Category>> = when (tab) {
+                TiviTab.LIVE    -> channelRepository.getCategories(providerId)
+                TiviTab.MOVIES  -> movieRepository.getCategories(providerId)
+                TiviTab.SERIES  -> seriesRepository.getCategories(providerId)
+            }
+            categoriesFlow.catch { }.first().let { cats ->
+                val groups = cats
+                    .filter { c -> when (tab) {
+                        TiviTab.LIVE   -> c.type == ContentType.LIVE
+                        TiviTab.MOVIES -> c.type == ContentType.MOVIE
+                        TiviTab.SERIES -> c.type == ContentType.SERIES
+                    }}
+                    .map { TiviGroup(it.id, it.name) }
+                _uiState.update { state ->
+                    state.copy(providerNodes = state.providerNodes.map { n ->
+                        if (n.provider.id == providerId) n.copy(groups = groups) else n
+                    })
                 }
-                categoriesFlow.catch { }.first().let { cats ->
-                    val groups = cats
-                        .filter { c -> when (tab) {
-                            TiviTab.LIVE   -> c.type == ContentType.LIVE
-                            TiviTab.MOVIES -> c.type == ContentType.MOVIE
-                            TiviTab.SERIES -> c.type == ContentType.SERIES
-                        }}
-                        .map { TiviGroup(it.id, it.name) }
-                    _uiState.update { state ->
-                        state.copy(providerNodes = state.providerNodes.map { n ->
-                            if (n.provider.id == providerId) n.copy(groups = groups) else n
-                        })
-                    }
-                    // Affiche le premier groupe au survol
-                    val firstGroup = _uiState.value.providerNodes
-                        .firstOrNull { it.provider.id == providerId }?.groups?.firstOrNull()
-                    if (firstGroup != null) selectGroup(providerId, firstGroup.id)
-                }
+                val firstGroup = groups.firstOrNull()
+                if (firstGroup != null) selectGroup(providerId, firstGroup.id)
             }
         } else {
             // Groupes déjà chargés : affiche le premier (ou le sélectionné s'il appartient à ce provider)
@@ -195,6 +208,8 @@ class IptvTiviViewModel @Inject constructor(
     }
 
     fun selectGroup(providerId: Long, groupId: Long) {
+        providerFocusJob?.cancel()
+        cancelContentJobs()
         _uiState.update {
             it.copy(
                 selectedGroupId = groupId,
@@ -216,10 +231,11 @@ class IptvTiviViewModel @Inject constructor(
     // ── Live ────────────────────────────────────────────────────────────────
 
     private fun loadChannels(providerId: Long, groupId: Long) {
-        viewModelScope.launch {
+        contentJob = viewModelScope.launch {
             channelRepository.getChannelsByCategory(providerId, groupId)
                 .catch { }
                 .collect { channels ->
+                    if (!isCurrentSelection(providerId, groupId)) return@collect
                     _uiState.update { state ->
                         val current = state.content as? TiviContent.LiveContent ?: TiviContent.LiveContent()
                         state.copy(content = current.copy(channels = channels, isLoading = false))
@@ -238,9 +254,14 @@ class IptvTiviViewModel @Inject constructor(
             val current = state.content as? TiviContent.LiveContent ?: return@update state
             state.copy(content = current.copy(focusedChannel = channel))
         }
-        viewModelScope.launch {
+        focusedEpgJob?.cancel()
+        focusedEpgJob = viewModelScope.launch {
+            delay(120)
             val epgId = channel.epgChannelId ?: channel.id.toString()
             epgRepository.getNowAndNext(providerId, epgId).catch { }.collect { (now, next) ->
+                if ((_uiState.value.content as? TiviContent.LiveContent)?.focusedChannel?.id != channel.id) {
+                    return@collect
+                }
                 _uiState.update { state ->
                     val current = state.content as? TiviContent.LiveContent ?: return@update state
                     state.copy(content = current.copy(currentProgram = now, nextProgram = next))
@@ -251,7 +272,8 @@ class IptvTiviViewModel @Inject constructor(
 
     private fun loadEpgForGroup(providerId: Long, channels: List<Channel>) {
         if (channels.isEmpty()) return
-        viewModelScope.launch {
+        groupEpgJob?.cancel()
+        groupEpgJob = viewModelScope.launch {
             val now = System.currentTimeMillis()
             val end = now + 4 * 60 * 60 * 1000L
             val epgIds = channels.map { it.epgChannelId ?: it.id.toString() }
@@ -270,8 +292,9 @@ class IptvTiviViewModel @Inject constructor(
     // ── Movies ───────────────────────────────────────────────────────────────
 
     private fun loadMovies(providerId: Long, groupId: Long) {
-        viewModelScope.launch {
+        contentJob = viewModelScope.launch {
             movieRepository.getMoviesByCategory(providerId, groupId).catch { }.collect { movies ->
+                if (!isCurrentSelection(providerId, groupId)) return@collect
                 _uiState.update { state ->
                     state.copy(content = TiviContent.MoviesContent(movies = movies, isLoading = false))
                 }
@@ -282,12 +305,25 @@ class IptvTiviViewModel @Inject constructor(
     // ── Series ───────────────────────────────────────────────────────────────
 
     private fun loadSeries(providerId: Long, groupId: Long) {
-        viewModelScope.launch {
+        contentJob = viewModelScope.launch {
             seriesRepository.getSeriesByCategory(providerId, groupId).catch { }.collect { series ->
+                if (!isCurrentSelection(providerId, groupId)) return@collect
                 _uiState.update { state ->
                     state.copy(content = TiviContent.SeriesContent(series = series, isLoading = false))
                 }
             }
         }
+    }
+
+    private fun isCurrentSelection(providerId: Long, groupId: Long): Boolean =
+        _uiState.value.selectedProviderId == providerId && _uiState.value.selectedGroupId == groupId
+
+    private fun cancelContentJobs() {
+        contentJob?.cancel()
+        focusedEpgJob?.cancel()
+        groupEpgJob?.cancel()
+        contentJob = null
+        focusedEpgJob = null
+        groupEpgJob = null
     }
 }

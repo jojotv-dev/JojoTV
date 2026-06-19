@@ -118,6 +118,7 @@ import com.nuvio.tv.data.local.StreamAutoPlayMode
 import com.nuvio.tv.domain.model.Subtitle
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.components.LoadingIndicator
+import com.nuvio.tv.ui.screens.iptv.IptvRecordingViewModel
 import com.nuvio.tv.ui.theme.NuvioColors
 import android.text.format.DateFormat
 import java.util.Date
@@ -135,11 +136,16 @@ import kotlin.math.abs
 @Composable
 fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
+    iptvProviderId: Long? = null,
+    iptvChannelId: Long? = null,
+    onScheduleRecording: ((Long, Long, String, String) -> Unit)? = null,
     onBackPress: (currentVideoId: String?, currentSeason: Int?, currentEpisode: Int?, autoPlayEnabled: Boolean, playbackCompleted: Boolean) -> Unit,
     onPlaybackErrorBack: () -> Unit = { onBackPress(null, null, null, false, false) },
     onPlaybackEnded: ((nextVideoId: String?, nextSeason: Int?, nextEpisode: Int?, exitReason: PlayerExitReason?) -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val recordingViewModel: IptvRecordingViewModel = hiltViewModel()
+    val recordingFeedback by recordingViewModel.feedback.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val containerFocusRequester = remember { FocusRequester() }
@@ -155,6 +161,14 @@ fun PlayerScreen(
     val nextEpisodeFocusRequester = remember { FocusRequester() }
     var subtitleDelayAutoSyncFocused by remember { mutableStateOf(false) }
     var subtitleTimingConsumeNextConfirmKeyUp by remember { mutableStateOf(false) }
+    var showRecordingChoice by remember { mutableStateOf(false) }
+
+    LaunchedEffect(recordingFeedback) {
+        recordingFeedback?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            recordingViewModel.clearFeedback()
+        }
+    }
 
     val exitPlayer: () -> Unit = {
         val timeline = viewModel.playbackTimeline.value
@@ -923,8 +937,10 @@ fun PlayerScreen(
                 onSeekTo = { viewModel.onEvent(PlayerEvent.OnSeekTo(it)) },
                 onShowEpisodesPanel = { viewModel.onEvent(PlayerEvent.OnShowEpisodesPanel) },
                 onShowSourcesPanel = { viewModel.onEvent(PlayerEvent.OnShowSourcesPanel) },
-                onRecord = {
-                    Toast.makeText(context, "Enregistrement disponible depuis IPTV", Toast.LENGTH_SHORT).show()
+                onRecord = if (iptvProviderId != null && iptvChannelId != null) {
+                    { showRecordingChoice = true }
+                } else {
+                    null
                 },
                 onShowAudioDialog = { viewModel.onEvent(PlayerEvent.OnShowAudioOverlay) },
                 onShowSubtitleDialog = { viewModel.onEvent(PlayerEvent.OnShowSubtitleOverlay) },
@@ -965,6 +981,30 @@ fun PlayerScreen(
                 onHideControls = { viewModel.hideControls() },
                 onBack = { exitPlayer() },
                 skipButtonVisible = skipButtonActuallyVisible
+            )
+        }
+
+        if (showRecordingChoice && iptvProviderId != null && iptvChannelId != null) {
+            RecordingChoiceDialog(
+                onDismiss = { showRecordingChoice = false },
+                onRecordNow = {
+                    showRecordingChoice = false
+                    recordingViewModel.startManualRecording(
+                        providerId = iptvProviderId,
+                        channelId = iptvChannelId,
+                        channelName = uiState.title,
+                        streamUrl = viewModel.getCurrentStreamUrl(),
+                    )
+                },
+                onSchedule = {
+                    showRecordingChoice = false
+                    onScheduleRecording?.invoke(
+                        iptvProviderId,
+                        iptvChannelId,
+                        uiState.title,
+                        viewModel.getCurrentStreamUrl(),
+                    )
+                },
             )
         }
 
@@ -1549,6 +1589,52 @@ private fun android.widget.FrameLayout.removeAssOverlayChildren() {
 }
 
 @Composable
+private fun RecordingChoiceDialog(
+    onDismiss: () -> Unit,
+    onRecordNow: () -> Unit,
+    onSchedule: () -> Unit,
+) {
+    val firstActionFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { firstActionFocusRequester.requestFocus() }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .width(420.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(NuvioColors.BackgroundElevated)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Enregistrer cette chaîne",
+                color = NuvioColors.TextPrimary,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Choisissez quand démarrer l'enregistrement.",
+                color = NuvioColors.TextSecondary,
+                fontSize = 14.sp,
+            )
+            Button(
+                onClick = onRecordNow,
+                modifier = Modifier.fillMaxWidth().focusRequester(firstActionFocusRequester),
+            ) {
+                Text("Enregistrer maintenant")
+            }
+            Button(
+                onClick = onSchedule,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.colors(containerColor = NuvioColors.BackgroundCard),
+            ) {
+                Text("Programmer une heure")
+            }
+        }
+    }
+}
+
+@Composable
 private fun PlayerControlsOverlay(
     uiState: PlayerUiState,
     viewModel: PlayerViewModel,
@@ -1563,7 +1649,7 @@ private fun PlayerControlsOverlay(
     onSeekTo: (Long) -> Unit,
     onShowEpisodesPanel: () -> Unit,
     onShowSourcesPanel: () -> Unit,
-    onRecord: () -> Unit,
+    onRecord: (() -> Unit)?,
     onShowAudioDialog: () -> Unit,
     onShowSubtitleDialog: () -> Unit,
     onShowSpeedDialog: () -> Unit,
@@ -1745,14 +1831,16 @@ private fun PlayerControlsOverlay(
                         onFocused = onResetHideTimer
                     )
 
-                    ControlButton(
-                        icon = Icons.Default.FiberManualRecord,
-                        contentDescription = "Enregistrer",
-                        onClick = onRecord,
-                        upFocusRequester = progressBarFocusRequester,
-                        onDownKey = onHideControls,
-                        onFocused = onResetHideTimer
-                    )
+                    onRecord?.let {
+                        ControlButton(
+                            icon = Icons.Default.FiberManualRecord,
+                            contentDescription = "Enregistrer",
+                            onClick = it,
+                            upFocusRequester = progressBarFocusRequester,
+                            onDownKey = onHideControls,
+                            onFocused = onResetHideTimer
+                        )
+                    }
 
                     if (showNextEpisodeButton) {
                         ControlButton(

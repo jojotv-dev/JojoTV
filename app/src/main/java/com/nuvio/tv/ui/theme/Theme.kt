@@ -6,6 +6,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.ColorScheme
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import com.nuvio.tv.domain.model.AppFont
@@ -40,6 +41,29 @@ val LocalNuvioExtendedColors = staticCompositionLocalOf {
 val LocalAppTheme = staticCompositionLocalOf { AppTheme.WHITE }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
+fun themeColorScheme(
+    theme: AppTheme,
+    amoledMode: Boolean = false,
+    amoledSurfacesMode: Boolean = false
+): ColorScheme {
+    val palette = ThemeColors.getColorPalette(theme)
+    val colors = NuvioColorScheme(palette, amoledMode, amoledSurfacesMode)
+    return darkColorScheme(
+        primary = palette.focusRing,
+        onPrimary = palette.onSecondary,
+        secondary = colors.Secondary,
+        onSecondary = colors.OnSecondary,
+        background = colors.Background,
+        surface = colors.Surface,
+        surfaceVariant = colors.SurfaceVariant,
+        onBackground = colors.TextPrimary,
+        onSurface = colors.TextPrimary,
+        onSurfaceVariant = colors.TextSecondary,
+        error = colors.Error
+    )
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun NuvioTheme(
     appTheme: AppTheme = AppTheme.WHITE,
@@ -51,18 +75,10 @@ fun NuvioTheme(
     val palette = ThemeColors.getColorPalette(appTheme)
     val colorScheme = NuvioColorScheme(palette, amoledMode, amoledSurfacesMode)
 
-    val materialColorScheme = darkColorScheme(
-        primary = colorScheme.Primary,
-        onPrimary = colorScheme.OnPrimary,
-        secondary = colorScheme.Secondary,
-        onSecondary = colorScheme.OnSecondary,
-        background = colorScheme.Background,
-        surface = colorScheme.Surface,
-        surfaceVariant = colorScheme.SurfaceVariant,
-        onBackground = colorScheme.TextPrimary,
-        onSurface = colorScheme.TextPrimary,
-        onSurfaceVariant = colorScheme.TextSecondary,
-        error = colorScheme.Error
+    val materialColorScheme = themeColorScheme(
+        theme = appTheme,
+        amoledMode = amoledMode,
+        amoledSurfacesMode = amoledSurfacesMode
     )
 
     val extendedColors = NuvioExtendedColors(

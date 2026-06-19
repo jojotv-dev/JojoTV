@@ -40,6 +40,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import coil3.imageLoader
 import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
+import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.ui.components.FreeboxVideosSection
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
@@ -426,7 +427,7 @@ internal fun ModernHomeRowsList(
                     FreeboxVideosSection(
                         entries = freeboxVideoEntries,
                         probedDurations = freeboxVideoProbedDurations,
-                        onItemClick = { entry -> onNavigateToFreebox(entry.path) },
+                        onItemClick = { entry -> onNavigateToFreebox(freeboxContentIdForEntry(entry)) },
                         artworkMap = freeboxVideoArtwork,
                         continueWatchingIds = continueWatchingContentIds,
                         cardWidth = continueWatchingCardWidth,
@@ -434,7 +435,7 @@ internal fun ModernHomeRowsList(
                         horizontalPadding = 52.dp,
                         itemSpacing = 12.dp,
                         onShowDetails = { entry ->
-                            onNavigateToDetail("freebox:${entry.path}", "freebox", "")
+                            onNavigateToDetail(freeboxContentIdForEntry(entry), "freebox", "")
                         },
                         onDeleteFromFreebox = { entry -> onDeleteFreeboxVideo(entry) },
                     )

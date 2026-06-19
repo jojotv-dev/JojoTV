@@ -61,7 +61,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
-import com.nuvio.tv.data.freebox.freeboxContentIdForPath
+import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.data.freebox.freeboxDisplayName
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
@@ -232,12 +232,13 @@ fun FreeboxBrowserScreen(
                                     }
 
                                     items(sortedEntries, key = { it.path }) { entry ->
+                                        val contentId = freeboxContentIdForEntry(entry)
                                         FreeboxEntryRow(
                                             entry = entry,
-                                            knownDuration = uiState.knownVideoDurations[freeboxContentIdForPath(entry.path)],
-                                            knownRemainingMs = uiState.knownPositions[freeboxContentIdForPath(entry.path)],
-                                            artworkUrl = uiState.videoArtwork[freeboxContentIdForPath(entry.path)],
-                                            meta = uiState.videoMetadata[freeboxContentIdForPath(entry.path)],
+                                            knownDuration = uiState.knownVideoDurations[contentId],
+                                            knownRemainingMs = uiState.knownPositions[contentId],
+                                            artworkUrl = uiState.videoArtwork[contentId],
+                                            meta = uiState.videoMetadata[contentId],
                                             showExtensions = showExtensions,
                                             onClick = {
                                                 handleFreeboxEntryClick(
@@ -771,8 +772,8 @@ private fun freeboxEntryComparator(
         FreeboxSortMode.NAME_DESC -> base.thenByDescending(String.CASE_INSENSITIVE_ORDER) { freeboxFileNameOnly(it.name) }
         FreeboxSortMode.SIZE_DESC -> base.thenByDescending { it.size ?: 0L }
         FreeboxSortMode.SIZE_ASC -> base.thenBy { it.size ?: 0L }
-        FreeboxSortMode.DURATION_DESC -> base.thenByDescending { durations[freeboxContentIdForPath(it.path)] ?: it.durationMs ?: 0L }
-        FreeboxSortMode.DURATION_ASC -> base.thenBy { durations[freeboxContentIdForPath(it.path)] ?: it.durationMs ?: 0L }
+        FreeboxSortMode.DURATION_DESC -> base.thenByDescending { durations[freeboxContentIdForEntry(it)] ?: it.durationMs ?: 0L }
+        FreeboxSortMode.DURATION_ASC -> base.thenBy { durations[freeboxContentIdForEntry(it)] ?: it.durationMs ?: 0L }
         FreeboxSortMode.DATE_DESC -> base.thenByDescending { it.modifiedMs ?: 0L }
         FreeboxSortMode.DATE_ASC -> base.thenBy { it.modifiedMs ?: 0L }
     }

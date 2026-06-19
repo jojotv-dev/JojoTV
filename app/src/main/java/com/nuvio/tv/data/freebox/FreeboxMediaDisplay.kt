@@ -10,7 +10,30 @@ private val SEASON_EPISODE_REGEX = Regex("\\b[sS]\\d{1,2}[eE]\\d{1,2}\\b")
 private val YEAR_REGEX = Regex("\\b(19\\d{2}|20\\d{2})\\b")
 private val DURATION_PREFIX_REGEX = Regex("^(?:\\d+h\\s*\\d{1,2}m?|\\d+h|\\d+min)\\s+", RegexOption.IGNORE_CASE)
 
-fun freeboxContentIdForPath(path: String): String = "freebox:${path.trim()}"
+private const val FREEBOX_CONTENT_PREFIX = "freebox:"
+private const val FREEBOX_FILE_FINGERPRINT_SEPARATOR = "#fb:"
+
+fun freeboxContentIdForPath(path: String): String = "$FREEBOX_CONTENT_PREFIX${path.trim()}"
+
+fun freeboxContentIdForEntry(entry: FreeboxFileEntry): String {
+    val base = freeboxContentIdForPath(entry.path)
+    val size = entry.size?.takeIf { it > 0L }
+    val modified = entry.modifiedMs?.takeIf { it > 0L }
+    if (size == null && modified == null) return base
+    return "$base$FREEBOX_FILE_FINGERPRINT_SEPARATOR${size ?: 0L}:${modified ?: 0L}"
+}
+
+fun freeboxPathFromContentId(contentIdOrPath: String): String {
+    val raw = contentIdOrPath.trim()
+    val withoutPrefix = raw.removePrefix(FREEBOX_CONTENT_PREFIX)
+    return withoutPrefix.substringBefore(FREEBOX_FILE_FINGERPRINT_SEPARATOR).trim()
+}
+
+fun freeboxLegacyContentIdFor(contentIdOrPath: String): String =
+    freeboxContentIdForPath(freeboxPathFromContentId(contentIdOrPath))
+
+fun freeboxHasFileFingerprint(contentId: String): Boolean =
+    contentId.contains(FREEBOX_FILE_FINGERPRINT_SEPARATOR)
 
 fun freeboxFileNameOnly(rawNameOrPath: String): String {
     return rawNameOrPath

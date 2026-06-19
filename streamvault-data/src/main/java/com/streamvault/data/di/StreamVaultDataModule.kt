@@ -19,7 +19,7 @@ object StreamVaultDataModule {
     @Singleton
     fun provideStreamVaultDatabase(@ApplicationContext context: Context): StreamVaultDatabase =
         Room.databaseBuilder(context, StreamVaultDatabase::class.java, "streamvault.db")
-            .fallbackToDestructiveMigration()
+            .addMigrations(*StreamVaultDatabase.ALL_MIGRATIONS)
             .build()
 
     @Provides @Singleton fun provideProviderDao(db: StreamVaultDatabase) = db.providerDao()

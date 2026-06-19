@@ -16,6 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.domain.model.ExperienceMode
 import com.nuvio.tv.ui.screens.CatalogSeeAllScreen
 import com.nuvio.tv.ui.screens.ExperienceModeSelectionScreen
@@ -301,9 +302,10 @@ fun NuvioNavHost(
                 },
                 onNavigateToFreebox = { path ->
                     coroutineScope.launch {
+                        val freeboxPath = freeboxPathFromContentId(path)
                         freeboxBrowserViewModel.playbackRequestForContent(
                             contentIdOrVideoId = path,
-                            title = path.substringAfterLast('/')
+                            title = freeboxPath.substringAfterLast('/')
                         )?.let { request ->
                             navigateToFreeboxPlayer(request)
                         }
@@ -792,10 +794,32 @@ fun NuvioNavHost(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                navArgument("iptvProviderId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("iptvChannelId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
             PlayerScreen(
+                iptvProviderId = backStackEntry.arguments?.getString("iptvProviderId")?.toLongOrNull(),
+                iptvChannelId = backStackEntry.arguments?.getString("iptvChannelId")?.toLongOrNull(),
+                onScheduleRecording = { providerId, channelId, channelName, streamUrl ->
+                    navController.navigate(
+                        Screen.IptvRecordingSchedule.createRoute(
+                            providerId = providerId,
+                            channelId = channelId,
+                            channelName = channelName,
+                            streamUrl = streamUrl,
+                        )
+                    )
+                },
                 onBackPress = { currentVideoId, currentSeason, currentEpisode, autoPlayEnabled, playbackCompleted ->
                     val args = backStackEntry.arguments
                     val initialSeason = args?.getString("season")?.toIntOrNull()
@@ -1215,7 +1239,7 @@ fun NuvioNavHost(
                 },
                 onNavigateToIptvProviderSetup = { navController.navigate(Screen.IptvProviderTypeSelect.route) },
                 onNavigateToIptvProviderList = { navController.navigate(Screen.IptvProviderList.route) },
-                onNavigateToIptvSchedule = { navController.navigate(Screen.IptvRecordingSchedule.route) },
+                onNavigateToIptvSchedule = { navController.navigate(Screen.IptvRecordingSchedule.createRoute()) },
                 onNavigateToIptvDns = { /* bientot disponible */ },
                 onNavigateToIptvEpg = { navController.navigate(Screen.IptvEpg.route) },
             )
@@ -1489,8 +1513,36 @@ fun NuvioNavHost(
         composable(Screen.IptvSeriesProviders.route) {
             IptvTiviScreen(navController = navController, initialTab = TiviTab.SERIES, onBack = { navController.popBackStack() })
         }
-        composable(Screen.IptvRecordingSchedule.route) {
+        composable(
+            route = Screen.IptvRecordingSchedule.route,
+            arguments = listOf(
+                navArgument("providerId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("channelId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("channelName") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("streamUrl") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { backStackEntry ->
             IptvRecordingScheduleScreen(
+                initialProviderId = backStackEntry.arguments?.getString("providerId")?.toLongOrNull(),
+                initialChannelId = backStackEntry.arguments?.getString("channelId")?.toLongOrNull(),
+                initialChannelName = backStackEntry.arguments?.getString("channelName"),
+                initialStreamUrl = backStackEntry.arguments?.getString("streamUrl"),
                 onBackPress = { navController.popBackStack() }
             )
         }

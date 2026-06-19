@@ -69,6 +69,7 @@ import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.WatchProgress
@@ -1077,16 +1078,17 @@ fun ModernHomeContent(
                 freeboxVideoArtwork = uiState.freeboxVideoArtwork,
                 freeboxVideoProbedDurations = uiState.freeboxVideoProbedDurations,
                 onDeleteFreeboxVideo = { entry ->
+                    val contentId = freeboxContentIdForEntry(entry)
                     onDeleteFreeboxProgress?.invoke(
                         ContinueWatchingItem.InProgress(
                             progress = WatchProgress(
-                                contentId = "freebox:${entry.path}",
+                                contentId = contentId,
                                 contentType = "freebox",
                                 name = entry.name,
-                                poster = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
-                                backdrop = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
+                                poster = uiState.freeboxVideoArtwork[contentId],
+                                backdrop = uiState.freeboxVideoArtwork[contentId],
                                 logo = null,
-                                videoId = "freebox:${entry.path}",
+                                videoId = contentId,
                                 season = null,
                                 episode = null,
                                 episodeTitle = null,

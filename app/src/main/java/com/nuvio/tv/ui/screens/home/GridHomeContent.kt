@@ -66,6 +66,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.domain.model.CollectionFolder
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.WatchProgress
@@ -391,7 +392,7 @@ fun GridHomeContent(
                     FreeboxVideosSection(
                         modifier = Modifier.fillMaxWidth(),
                         entries = uiState.freeboxVideoEntries,
-                        onItemClick = { entry -> onNavigateToFreebox(entry.path) },
+                        onItemClick = { entry -> onNavigateToFreebox(freeboxContentIdForEntry(entry)) },
                         continueWatchingIds = uiState.continueWatchingItems.filterIsInstance<com.nuvio.tv.ui.screens.home.ContinueWatchingItem.InProgress>().map { it.progress.contentId }.toSet(),
                         artworkMap = uiState.freeboxVideoArtwork,
                         probedDurations = uiState.freeboxVideoProbedDurations,
@@ -399,20 +400,22 @@ fun GridHomeContent(
                         imageHeight = gridCwImageHeight,
                         horizontalPadding = 0.dp,
                         itemSpacing = 12.dp,
+                        focusBorderPadding = 3.dp,
                         onShowDetails = { entry ->
-                            onNavigateToDetail("freebox:${entry.path}", "freebox", "")
+                            onNavigateToDetail(freeboxContentIdForEntry(entry), "freebox", "")
                         },
                         onDeleteFromFreebox = { entry ->
+                            val contentId = freeboxContentIdForEntry(entry)
                             onDeleteFromFreebox?.invoke(
                                 ContinueWatchingItem.InProgress(
                                     progress = WatchProgress(
-                                        contentId = "freebox:${entry.path}",
+                                        contentId = contentId,
                                         contentType = "freebox",
                                         name = entry.name,
-                                        poster = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
-                                        backdrop = uiState.freeboxVideoArtwork["freebox:${entry.path}"],
+                                        poster = uiState.freeboxVideoArtwork[contentId],
+                                        backdrop = uiState.freeboxVideoArtwork[contentId],
                                         logo = null,
-                                        videoId = "freebox:${entry.path}",
+                                        videoId = contentId,
                                         season = null,
                                         episode = null,
                                         episodeTitle = null,

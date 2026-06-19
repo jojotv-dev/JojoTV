@@ -2,6 +2,7 @@
 
 import android.content.Context
 import android.os.SystemClock
+import android.util.Log
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,8 +23,10 @@ import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import com.nuvio.tv.data.freebox.FreeboxOsClient
+import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
-import com.nuvio.tv.data.freebox.freeboxContentIdForPath
+import com.nuvio.tv.data.freebox.freeboxLegacyContentIdFor
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.data.local.FreeboxSettingsDataStore
 import com.nuvio.tv.data.trailer.TrailerService
 import com.nuvio.tv.domain.model.Addon
@@ -102,10 +105,15 @@ class HomeViewModel @Inject constructor(
         internal const val EXTERNAL_META_PREFETCH_FOCUS_DEBOUNCE_MS = 220L
         internal const val EXTERNAL_META_PREFETCH_ADJACENT_DEBOUNCE_MS = 120L
         internal const val MAX_POSTER_STATUS_OBSERVERS = 8
+        private const val MAX_FREEBOX_DURATION_PROBES = 2
+        private val FREEBOX_DURATION_RETRY_DELAYS_MS = longArrayOf(0L, 2_000L, 5_000L)
     }
 
     internal val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    private val freeboxDurationProbeSemaphore = Semaphore(MAX_FREEBOX_DURATION_PROBES)
+    private val freeboxDurationProbesInFlight = Collections.synchronizedSet(mutableSetOf<String>())
 
     internal val _movieWatchedStatus = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val movieWatchedStatus: StateFlow<Map<String, Boolean>> = _movieWatchedStatus.asStateFlow()
@@ -860,23 +868,44 @@ class HomeViewModel @Inject constructor(
         videos: List<com.nuvio.tv.data.freebox.FreeboxFileEntry>
     ) {
         try {
-            val cached = freeboxDurationCacheDataStore.getAll()
-            val merged = cached.toMutableMap()
+            val cached = freeboxDurationCacheDataStore.getAll().filterValues { it > 0L }
             // Applique immediatement ce qui est deja en cache
             if (cached.isNotEmpty()) {
                 _uiState.update { it.copy(freeboxVideoProbedDurations = it.freeboxVideoProbedDurations + cached) }
             }
-            val toProbe = videos.filter { it.durationMs == null && cached[it.path] == null }
+            val toProbe = videos.filter { entry ->
+                entry.durationMs?.takeIf { it > 0L } == null &&
+                    cached[entry.path]?.takeIf { it > 0L } == null
+            }
             toProbe.forEach { entry ->
-                val probed = freeboxOsClient.probeDurationMs(settings, entry)
-                if (probed != null && probed > 0L) {
-                    merged[entry.path] = probed
-                    freeboxDurationCacheDataStore.put(entry.path, probed)
-                    _uiState.update { it.copy(freeboxVideoProbedDurations = it.freeboxVideoProbedDurations + (entry.path to probed)) }
+                if (!freeboxDurationProbesInFlight.add(entry.path)) return@forEach
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    freeboxDurationProbeSemaphore.acquire()
+                    try {
+                        var duration: Long? = null
+                        FREEBOX_DURATION_RETRY_DELAYS_MS.forEach { retryDelayMs ->
+                            if (duration != null) return@forEach
+                            if (retryDelayMs > 0L) delay(retryDelayMs)
+                            duration = freeboxOsClient.probeDurationMs(settings, entry)
+                                ?.takeIf { it > 0L }
+                        }
+                        duration?.let { resolvedDuration ->
+                            freeboxDurationCacheDataStore.put(entry.path, resolvedDuration)
+                            _uiState.update { state ->
+                                state.copy(
+                                    freeboxVideoProbedDurations =
+                                        state.freeboxVideoProbedDurations + (entry.path to resolvedDuration)
+                                )
+                            }
+                        } ?: Log.w(TAG, "Duree Freebox introuvable apres relances: ${entry.path}")
+                    } finally {
+                        freeboxDurationProbeSemaphore.release()
+                        freeboxDurationProbesInFlight.remove(entry.path)
+                    }
                 }
             }
-        } catch (_: Exception) {
-            // Echec silencieux : pas de duree probee, pas grave
+        } catch (error: Exception) {
+            Log.w(TAG, "Impossible de preparer le sondage des durees Freebox", error)
         }
     }
 
@@ -897,7 +926,7 @@ class HomeViewModel @Inject constructor(
                         val artworkMap = mutableMapOf<String, String>()
                         videos.forEach { entry ->
                             try {
-                                val contentId = "freebox:${entry.path}"
+                                val contentId = freeboxContentIdForEntry(entry)
                                 val query = com.nuvio.tv.data.freebox.freeboxTmdbSearchQuery(entry.name)
                                 val meta = tmdbService.fetchMetadataForTitleQuery(query)
                                 val artwork = meta?.posterUrl ?: meta?.backdropUrl
@@ -921,13 +950,44 @@ class HomeViewModel @Inject constructor(
         val allProgress = watchProgressRepository.allProgress.first()
         val freeboxProgress = allProgress.filter { it.contentId.startsWith("freebox:") && it.position > 0L }
         if (freeboxProgress.isEmpty()) return
-        val currentPaths = entries.filter { !it.isDirectory }.map { it.path.trim() }.toSet()
+        val currentEntries = entries.filter { !it.isDirectory }
+        val currentByPath = currentEntries.associateBy { it.path.trim() }
+        val currentPaths = currentByPath.keys
         val checkedDirectories = freeboxCheckedDirectories(entries)
-        val orphaned = freeboxProgress.filter { it.contentId.removePrefix("freebox:") !in currentPaths }
+        val orphaned = freeboxProgress.filter { progress ->
+            val current = currentByPath[freeboxPathFromContentId(progress.contentId)]
+            if (current == null) {
+                true
+            } else {
+                progress.contentId != freeboxContentIdForEntry(current)
+            }
+        }
         if (orphaned.isEmpty()) return
-        val byDir = entries.filter { !it.isDirectory }.groupBy { it.path.substringBeforeLast("/") }
+        val byDir = currentEntries.groupBy { it.path.substringBeforeLast("/") }
         orphaned.forEach { progress ->
-            val pp = progress.contentId.removePrefix("freebox:")
+            val pp = freeboxPathFromContentId(progress.contentId)
+            currentByPath[pp]?.let { current ->
+                val newId = freeboxContentIdForEntry(current)
+                val legacyId = freeboxLegacyContentIdFor(progress.contentId)
+                if (progress.contentId == legacyId) {
+                    val currentDuration = current.durationMs?.takeIf { it > 0L }
+                    val durationChanged = progress.duration > 0L &&
+                        currentDuration != null &&
+                        kotlin.math.abs(progress.duration - currentDuration) > 5_000L
+                    if (!durationChanged) {
+                        val migrated = progress.copy(
+                            contentId = newId,
+                            videoId = newId,
+                            name = freeboxFileNameOnly(current.path),
+                            duration = progress.duration.takeIf { it > 0L } ?: currentDuration ?: 0L
+                        )
+                        watchProgressRepository.saveProgress(migrated)
+                    }
+                }
+                watchProgressRepository.removeProgress(progress.contentId)
+                pruneStaleFreeboxFromContinueWatchingCache(progress.contentId)
+                return@forEach
+            }
             val dir = pp.substringBeforeLast("/")
             val pname = pp.substringAfterLast("/").substringBeforeLast(".").lowercase().trim()
             val candidates = byDir[dir].orEmpty()
@@ -940,7 +1000,7 @@ class HomeViewModel @Inject constructor(
                 }
                 return@forEach
             }
-            val newId = freeboxContentIdForPath(best.path)
+            val newId = freeboxContentIdForEntry(best)
             if (allProgress.any { it.contentId == newId && it.position > 0L }) {
                 watchProgressRepository.removeProgress(progress.contentId)
                 pruneStaleFreeboxFromContinueWatchingCache(progress.contentId)
@@ -995,7 +1055,7 @@ internal fun com.nuvio.tv.domain.model.WatchProgress.isStaleFreeboxProgress(
     checkedDirectories: Set<String>
 ): Boolean {
     if (!contentId.startsWith("freebox:")) return false
-    val path = contentId.removePrefix("freebox:").trim()
+    val path = freeboxPathFromContentId(contentId)
     if (path.isBlank() || path in currentPaths) return false
     val parent = path.substringBeforeLast("/", missingDelimiterValue = "")
     return parent.isNotBlank() && parent in checkedDirectories

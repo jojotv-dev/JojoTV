@@ -1,12 +1,14 @@
 ﻿package com.nuvio.tv.ui.screens.iptv.tivi
 
 import androidx.activity.compose.BackHandler
+import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -22,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -29,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.tv.material3.*
+import kotlinx.coroutines.flow.distinctUntilChanged
 import coil3.compose.AsyncImage
 import com.nuvio.tv.ui.navigation.Screen
 import com.nuvio.tv.ui.theme.NuvioColors
@@ -47,7 +51,25 @@ fun IptvTiviScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val miniState by miniPlayerVm.state.collectAsState()
+    val context = LocalContext.current
+    val channelListState = rememberLazyListState()
+    val epgListState = rememberLazyListState()
     LaunchedEffect(initialTab) { viewModel.selectTab(initialTab) }
+    LaunchedEffect(channelListState, epgListState) {
+        snapshotFlow {
+            channelListState.firstVisibleItemIndex to
+                channelListState.firstVisibleItemScrollOffset
+        }
+            .distinctUntilChanged()
+            .collect { (index, offset) ->
+                epgListState.scrollToItem(index, offset)
+            }
+    }
+    LaunchedEffect(miniState.errorMessage) {
+        miniState.errorMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+        }
+    }
     BackHandler { onBack() }
 
     Row(
@@ -65,6 +87,17 @@ fun IptvTiviScreen(
             onProviderFocus = { viewModel.focusProvider(it) },
             onGroupClick = { providerId, groupId -> viewModel.selectGroup(providerId, groupId) },
             onGroupFocus = { providerId, groupId -> viewModel.focusGroup(providerId, groupId) },
+            onManageProvider = if (uiState.selectedTab == TiviTab.LIVE) {
+                { providerId ->
+                    uiState.providerNodes.firstOrNull { it.provider.id == providerId }?.let { node ->
+                        navController.navigate(
+                            Screen.IptvLiveTvGroup.createRoute(providerId, node.provider.name)
+                        )
+                    }
+                }
+            } else {
+                null
+            },
             modifier = Modifier.fillMaxHeight(),
         )
 
@@ -102,6 +135,9 @@ fun IptvTiviScreen(
                                                 Screen.Player.createRoute(
                                                     streamUrl = url,
                                                     title = ch.name,
+                                                    headers = miniState.headers,
+                                                    iptvProviderId = ch.providerId,
+                                                    iptvChannelId = ch.id,
                                                 )
                                             )
                                         }
@@ -131,21 +167,26 @@ fun IptvTiviScreen(
                                             miniPlayerVm.stop()
                                             navController.navigate(
                                                 Screen.Player.createRoute(
-                                                    streamUrl = channel.streamUrl,
+                                                    streamUrl = miniState.streamUrl ?: channel.streamUrl,
                                                     title = channel.name,
+                                                    headers = miniState.headers,
+                                                    iptvProviderId = channel.providerId,
+                                                    iptvChannelId = channel.id,
                                                 )
                                             )
                                         } else {
                                             // 1er clic -> mini lecteur
-                                            miniPlayerVm.loadChannel(channel, channel.streamUrl)
+                                            miniPlayerVm.loadChannel(channel)
                                         }
                                     },
+                                    listState = channelListState,
 
                                     modifier = Modifier.weight(0.35f).fillMaxHeight(),
                                 )
                                 TiviEpgGrid(
                                     epgRows = c.epgRows,
                                     focusedChannelId = c.focusedChannel?.id,
+                                    verticalListState = epgListState,
                                     modifier = Modifier.weight(0.65f).fillMaxHeight(),
                                 )
                             }

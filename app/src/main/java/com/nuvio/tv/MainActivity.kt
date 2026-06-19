@@ -161,7 +161,9 @@ import com.nuvio.tv.ui.util.LocalFastHorizontalNavigationEnabled
 import com.nuvio.tv.ui.util.LocalRecompositionHighlighterEnabled
 import com.nuvio.tv.ui.util.rememberDrawerItemFocusRequesters
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.provider.DocumentsContract
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import com.nuvio.tv.ui.screens.iptv.IptvRecordingViewModel
@@ -298,16 +300,43 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
-            contentResolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }.onFailure {
+                Toast.makeText(this, "Ce dossier ne permet pas un accès permanent.", Toast.LENGTH_LONG).show()
+                return@registerForActivityResult
+            }
             val displayName = uri.lastPathSegment
                 ?.substringAfterLast(":")
                 ?.substringAfterLast("/")
                 ?: uri.toString()
             recordingViewModel.updateStorageFolder(uri.toString(), displayName)
+        }
+    }
+
+    private fun launchRecordingFolderPicker() {
+        val contract = ActivityResultContracts.OpenDocumentTree()
+        val pickerIntent = contract.createIntent(this, null)
+        if (pickerIntent.resolveActivity(packageManager) == null) {
+            Toast.makeText(
+                this,
+                "Aucun gestionnaire de fichiers compatible n'est installé sur cette Android TV.",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        try {
+            folderPickerLauncher.launch(null)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(
+                this,
+                "Impossible d'ouvrir le sélecteur de dossier sur cet appareil.",
+                Toast.LENGTH_LONG,
+            ).show()
         }
     }
 
@@ -498,7 +527,7 @@ class MainActivity : ComponentActivity() {
                     LocalFastHorizontalNavigationEnabled provides mainUiPrefs.fastHorizontalNavigationEnabled,
                     LocalRecompositionHighlighterEnabled provides (BuildConfig.IS_DEBUG_BUILD && mainUiPrefs.composeHighlighterEnabled),
                     com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool,
-                    LocalPickFolderLauncher provides { folderPickerLauncher.launch(null) }
+                    LocalPickFolderLauncher provides ::launchRecordingFolderPicker
                 ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -1736,6 +1765,7 @@ private fun ModernSidebarScaffold(
             if (
                 !sidebarCollapsed &&
                 sidebarShowCollapsedPill &&
+                !showExpandedPanel &&
                 selectedDrawerRoute != Screen.Search.route
             ) {
                 CollapsedSidebarPill(

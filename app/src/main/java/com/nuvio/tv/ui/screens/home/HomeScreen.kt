@@ -40,6 +40,7 @@ import com.nuvio.tv.ui.screens.settings.FreeboxBrowserViewModel
 import com.nuvio.tv.ui.screens.settings.LayoutSettingsViewModel
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
@@ -389,7 +390,7 @@ fun HomeScreen(
                                 onCatalogItemLongPress = onCatalogItemLongPress,
                                 onDeleteFreeboxProgress = { item ->
                                     if (item is ContinueWatchingItem.InProgress) {
-                                        val freeboxPath = item.progress.contentId.removePrefix("freebox:")
+                                        val freeboxPath = freeboxPathFromContentId(item.progress.contentId)
                                         val entry = FreeboxFileEntry(
                                             name = item.progress.name,
                                             path = freeboxPath,
@@ -419,7 +420,7 @@ fun HomeScreen(
                                 onCatalogItemLongPress = onCatalogItemLongPress,
                                 onDeleteFreeboxProgress = { item ->
                                     if (item is ContinueWatchingItem.InProgress) {
-                                        val freeboxPath = item.progress.contentId.removePrefix("freebox:")
+                                        val freeboxPath = freeboxPathFromContentId(item.progress.contentId)
                                         val entry = FreeboxFileEntry(
                                             name = item.progress.name,
                                             path = freeboxPath,

@@ -37,7 +37,7 @@ internal class SyncCatalogStore(
 ) {
     companion object {
         private const val TAG = "SyncCatalogStore"
-        private const val STAGE_BATCH_SIZE = 500
+        private const val STAGE_BATCH_SIZE = 1000
     }
 
     data class StagedLiveImportState(
