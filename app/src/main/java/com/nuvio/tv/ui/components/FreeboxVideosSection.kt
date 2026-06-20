@@ -27,6 +27,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
+import com.nuvio.tv.data.freebox.formatFreeboxDurationCompact
 import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.domain.model.WatchProgress
@@ -77,7 +78,11 @@ fun FreeboxVideosSection(
             itemsIndexed(filteredEntries, key = { _, e -> e.path }) { _, entry ->
                 val contentId = freeboxContentIdForEntry(entry)
                 val artwork = artworkMap[contentId]
-                val cwItem = remember(entry, artwork, probedDurations[entry.path]) {
+                val resolvedDuration = entry.durationMs ?: probedDurations[entry.path] ?: 0L
+                val durationLabel = remember(resolvedDuration) {
+                    formatFreeboxDurationCompact(resolvedDuration)
+                }
+                val cwItem = remember(entry, artwork, resolvedDuration) {
                     ContinueWatchingItem.InProgress(
                         progress = WatchProgress(
                             contentId = contentId,
@@ -91,7 +96,7 @@ fun FreeboxVideosSection(
                             episode = null,
                             episodeTitle = null,
                             position = 0L,
-                            duration = entry.durationMs ?: probedDurations[entry.path] ?: 0L,
+                            duration = resolvedDuration,
                             lastWatched = 0L
                         )
                     )
@@ -102,7 +107,8 @@ fun FreeboxVideosSection(
                     onLongPress = { optionsEntry = entry },
                     cardWidth = cardWidth,
                     imageHeight = imageHeight,
-                    showBadge = false
+                    showBadge = false,
+                    fixedTrailingLabel = durationLabel
                 )
             }
         }

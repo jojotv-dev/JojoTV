@@ -63,6 +63,9 @@ import dev.chrisbanes.haze.hazeChild
 private val SidebarLeadingVisualSize = 34.dp
 private val SidebarContentGap = 12.dp
 private val SidebarProfileContentGap = 12.dp
+private val SidebarRowHeight = 48.dp
+private val SidebarHeaderHeight = 52.dp
+private val SidebarHeaderGap = 8.dp
 
 @Composable
 internal fun ModernSidebarBlurPanel(
@@ -139,6 +142,62 @@ internal fun ModernSidebarBlurPanel(
             .border(width = 1.dp, color = panelBorderColor, shape = panelShape)
             .padding(horizontal = 8.dp, vertical = 12.dp)
     ) {
+        if (showProfileSelector && activeProfileName.isNotEmpty()) {
+            val firstNavRequester = drawerItemFocusRequesters.values.firstOrNull()
+            val lastNavRequester = drawerItemFocusRequesters.values.lastOrNull()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(SidebarHeaderHeight),
+                contentAlignment = Alignment.Center
+            ) {
+                SidebarProfileItem(
+                    profileName = activeProfileName,
+                    profileColorHex = activeProfileColorHex,
+                    profileAvatarImageUrl = activeProfileAvatarImageUrl,
+                    focusEnabled = keepSidebarFocusDuringCollapse,
+                    labelAlpha = sidebarLabelAlpha,
+                    onFocusChanged = { focused ->
+                        if (focused) onDrawerItemFocused(0)
+                    },
+                    onClick = onSwitchProfile,
+                    modifier = Modifier
+                        .fillMaxWidth(0.96f)
+                        .height(SidebarRowHeight)
+                        .onKeyEvent { keyEvent ->
+                            if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
+                            when (keyEvent.key) {
+                                Key.DirectionDown -> {
+                                    firstNavRequester?.requestFocus(); true
+                                }
+                                Key.DirectionUp -> {
+                                    lastNavRequester?.requestFocus(); true
+                                }
+                                else -> false
+                            }
+                        }
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(SidebarHeaderHeight),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.app_logo_wordmark),
+                    contentDescription = stringResource(R.string.app_name),
+                    modifier = Modifier
+                        .fillMaxWidth(0.76f)
+                        .height(34.dp),
+                    alpha = sidebarLabelAlpha
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(SidebarHeaderGap))
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
@@ -167,53 +226,6 @@ internal fun ModernSidebarBlurPanel(
             verticalArrangement = Arrangement.spacedBy(3.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            item(key = "profile_header") {
-                if (showProfileSelector && activeProfileName.isNotEmpty()) {
-                    val firstNavRequester = drawerItemFocusRequesters.values.firstOrNull()
-                    val lastNavRequester = drawerItemFocusRequesters.values.lastOrNull()
-                    SidebarProfileItem(
-                        profileName = activeProfileName,
-                        profileColorHex = activeProfileColorHex,
-                        profileAvatarImageUrl = activeProfileAvatarImageUrl,
-                        focusEnabled = keepSidebarFocusDuringCollapse,
-                        labelAlpha = sidebarLabelAlpha,
-                        onFocusChanged = { focused ->
-                            if (focused) onDrawerItemFocused(0)
-                        },
-                        onClick = onSwitchProfile,
-                        modifier = Modifier
-                            .fillMaxWidth(0.96f)
-                            .onKeyEvent { keyEvent ->
-                                if (keyEvent.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onKeyEvent false
-                                when (keyEvent.key) {
-                                    androidx.compose.ui.input.key.Key.DirectionDown -> {
-                                        firstNavRequester?.requestFocus(); true
-                                    }
-                                    androidx.compose.ui.input.key.Key.DirectionUp -> {
-                                        lastNavRequester?.requestFocus(); true
-                                    }
-                                    else -> false
-                                }
-                            }
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(42.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.app_logo_wordmark),
-                            contentDescription = stringResource(R.string.app_name),
-                            modifier = Modifier
-                                .fillMaxWidth(0.76f)
-                                .height(34.dp),
-                            alpha = sidebarLabelAlpha
-                        )
-                    }
-                }
-            }
             itemsIndexed(
                 items = drawerItems,
                 key = { _, item -> item.route }
@@ -238,6 +250,7 @@ internal fun ModernSidebarBlurPanel(
                     onClick = { onDrawerItemClick(item.route) },
                     modifier = Modifier
                         .fillMaxWidth(0.96f)
+                        .height(SidebarRowHeight)
                         .focusRequester(drawerItemFocusRequesters.getValue(item.route))
                         .focusProperties {
                             if (isLast && firstRequester != null) down = firstRequester

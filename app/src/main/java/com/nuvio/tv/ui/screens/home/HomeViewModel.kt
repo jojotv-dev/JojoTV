@@ -959,7 +959,10 @@ class HomeViewModel @Inject constructor(
             if (current == null) {
                 true
             } else {
-                progress.contentId != freeboxContentIdForEntry(current)
+                val currentId = freeboxContentIdForEntry(current)
+                progress.contentId != currentId ||
+                    (progress.contentId == freeboxLegacyContentIdFor(progress.contentId) &&
+                        !progress.isCompatibleLegacyFreeboxProgress(current))
             }
         }
         if (orphaned.isEmpty()) return
@@ -969,20 +972,19 @@ class HomeViewModel @Inject constructor(
             currentByPath[pp]?.let { current ->
                 val newId = freeboxContentIdForEntry(current)
                 val legacyId = freeboxLegacyContentIdFor(progress.contentId)
-                if (progress.contentId == legacyId) {
-                    val currentDuration = current.durationMs?.takeIf { it > 0L }
-                    val durationChanged = progress.duration > 0L &&
-                        currentDuration != null &&
-                        kotlin.math.abs(progress.duration - currentDuration) > 5_000L
-                    if (!durationChanged) {
-                        val migrated = progress.copy(
-                            contentId = newId,
-                            videoId = newId,
-                            name = freeboxFileNameOnly(current.path),
-                            duration = progress.duration.takeIf { it > 0L } ?: currentDuration ?: 0L
-                        )
-                        watchProgressRepository.saveProgress(migrated)
-                    }
+                if (progress.contentId == legacyId &&
+                    newId != progress.contentId &&
+                    progress.isCompatibleLegacyFreeboxProgress(current)
+                ) {
+                    val migrated = progress.copy(
+                        contentId = newId,
+                        videoId = newId,
+                        name = freeboxFileNameOnly(current.path),
+                        duration = progress.duration.takeIf { it > 0L }
+                            ?: current.durationMs?.takeIf { it > 0L }
+                            ?: 0L
+                    )
+                    watchProgressRepository.saveProgress(migrated)
                 }
                 watchProgressRepository.removeProgress(progress.contentId)
                 pruneStaleFreeboxFromContinueWatchingCache(progress.contentId)
@@ -1014,6 +1016,14 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun pruneStaleFreeboxFromContinueWatchingCache(contentId: String) {
+        cwEnrichedInProgressOverlay.remove(contentId)
+        _uiState.update { state ->
+            state.copy(
+                continueWatchingItems = state.continueWatchingItems.filterNot { item ->
+                    item is ContinueWatchingItem.InProgress && item.progress.contentId == contentId
+                }
+            )
+        }
         val cached = runCatching { cwEnrichmentCache.getInProgressSnapshot() }.getOrDefault(emptyList())
         if (cached.none { it.contentId == contentId }) return
         cwEnrichmentCache.saveInProgressSnapshot(
@@ -1059,4 +1069,22 @@ internal fun com.nuvio.tv.domain.model.WatchProgress.isStaleFreeboxProgress(
     if (path.isBlank() || path in currentPaths) return false
     val parent = path.substringBeforeLast("/", missingDelimiterValue = "")
     return parent.isNotBlank() && parent in checkedDirectories
+}
+
+internal fun com.nuvio.tv.domain.model.WatchProgress.isCompatibleLegacyFreeboxProgress(
+    current: FreeboxFileEntry
+): Boolean {
+    val currentDuration = current.durationMs?.takeIf { it > 0L }
+    if (duration > 0L && currentDuration != null &&
+        kotlin.math.abs(duration - currentDuration) > 5_000L
+    ) {
+        return false
+    }
+
+    val currentModifiedMs = current.modifiedMs?.takeIf { it > 0L }
+    if (lastWatched > 0L && currentModifiedMs != null) {
+        return currentModifiedMs <= lastWatched + 60_000L
+    }
+
+    return duration > 0L && currentDuration != null
 }

@@ -59,10 +59,57 @@ class FreeboxContinueWatchingInvalidationTest {
         assertFalse(remote.isStaleFreeboxProgress(currentPaths, checkedDirectories))
     }
 
-    private fun freeboxFile(path: String) = FreeboxFileEntry(
+    @Test
+    fun legacyProgressIsRejectedWhenFileWasModifiedAfterPlayback() {
+        val progress = progress("freebox:/Freebox/Videos/Replaced.mkv")
+        val replacement = freeboxFile(
+            path = "/Freebox/Videos/Replaced.mkv",
+            modifiedMs = progress.lastWatched + 120_000L
+        )
+
+        assertFalse(progress.isCompatibleLegacyFreeboxProgress(replacement))
+    }
+
+    @Test
+    fun legacyProgressIsKeptWhenFilePredatesPlayback() {
+        val progress = progress("freebox:/Freebox/Videos/Existing.mkv")
+        val existing = freeboxFile(
+            path = "/Freebox/Videos/Existing.mkv",
+            modifiedMs = progress.lastWatched - 120_000L
+        )
+
+        assertTrue(progress.isCompatibleLegacyFreeboxProgress(existing))
+    }
+
+    @Test
+    fun legacyProgressWithoutIdentityEvidenceIsRejected() {
+        val progress = progress("freebox:/Freebox/Videos/Unknown.mkv")
+
+        assertFalse(progress.isCompatibleLegacyFreeboxProgress(freeboxFile("/Freebox/Videos/Unknown.mkv")))
+    }
+
+    @Test
+    fun legacyProgressWithDifferentDurationIsRejected() {
+        val progress = progress("freebox:/Freebox/Videos/Replaced.mkv")
+        val replacement = freeboxFile(
+            path = "/Freebox/Videos/Replaced.mkv",
+            durationMs = progress.duration + 60_000L,
+            modifiedMs = progress.lastWatched - 120_000L
+        )
+
+        assertFalse(progress.isCompatibleLegacyFreeboxProgress(replacement))
+    }
+
+    private fun freeboxFile(
+        path: String,
+        durationMs: Long? = null,
+        modifiedMs: Long? = null
+    ) = FreeboxFileEntry(
         name = path.substringAfterLast("/"),
         path = path,
-        isDirectory = false
+        isDirectory = false,
+        durationMs = durationMs,
+        modifiedMs = modifiedMs
     )
 
     private fun progress(contentId: String) = WatchProgress(

@@ -68,6 +68,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Text
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
+import com.nuvio.tv.data.freebox.freeboxDisplayName
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.theme.NuvioTheme
@@ -303,7 +304,8 @@ fun ContinueWatchingCard(
     imageHeight: Dp = 162.dp,
     blurUnwatchedEpisodes: Boolean = false,
     useEpisodeThumbnails: Boolean = true,
-    showBadge: Boolean = true
+    showBadge: Boolean = true,
+    fixedTrailingLabel: String? = null
 ) {
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
@@ -403,9 +405,14 @@ fun ContinueWatchingCard(
     LaunchedEffect(imageModel) { usesFallbackImage = false }
 
     val effectiveImageModel = if (usesFallbackImage) fallbackImageModel else imageModel
-    val titleText = remember(progress, nextUp) {
+    val titleText = remember(progress, nextUp, fixedTrailingLabel) {
         if (progress != null && progress.isFreeboxProgressForDisplay()) {
-            freeboxVideoDisplayTitle(progress.name.ifBlank { progress.videoId }, progress.duration)
+            val rawName = progress.name.ifBlank { progress.videoId }
+            if (fixedTrailingLabel != null) {
+                freeboxDisplayName(rawName)
+            } else {
+                freeboxVideoDisplayTitle(rawName, progress.duration)
+            }
         } else {
             progress?.name ?: nextUp?.name.orEmpty()
         }
@@ -621,14 +628,30 @@ fun ContinueWatchingCard(
                     )
                 }
 
-                Text(
-                    text = titleText,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = NuvioColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = titleText,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = NuvioColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .basicMarquee(iterations = Int.MAX_VALUE)
+                    )
+                    fixedTrailingLabel?.let { label ->
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = NuvioColors.TextPrimary,
+                            maxLines = 1,
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
+                    }
+                }
 
                 // Episode title if available (not for Freebox items)
                 val isFreebox = progress?.isFreeboxProgressForDisplay() == true

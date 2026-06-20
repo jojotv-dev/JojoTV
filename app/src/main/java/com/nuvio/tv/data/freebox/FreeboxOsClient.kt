@@ -552,7 +552,7 @@ class FreeboxOsClient @Inject constructor(
 
                         isDirectory = isDirectory,
 
-                        size = item.optLong("size").takeIf { it > 0L },
+                        size = parseFileSize(item),
 
                         durationMs = parseDurationMs(item),
 
@@ -569,6 +569,17 @@ class FreeboxOsClient @Inject constructor(
     }
 
 
+
+    private fun parseFileSize(item: JSONObject): Long? {
+        val sizeKeys = listOf("size", "file_size", "filesize", "bytes")
+        sizeKeys.firstNotNullOfOrNull { key ->
+            item.optLong(key).takeIf { it > 0L }
+        }?.let { return it }
+        val nested = listOf("stat", "metadata", "file").mapNotNull { item.optJSONObject(it) }
+        return nested.firstNotNullOfOrNull { obj ->
+            sizeKeys.firstNotNullOfOrNull { key -> obj.optLong(key).takeIf { it > 0L } }
+        }
+    }
 
     private fun parseModifiedMs(item: JSONObject): Long? {
         val secondsKeys = listOf("mtime", "modification", "modified", "created")
