@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.home
+package com.nuvio.tv.ui.screens.home
 
 import com.nuvio.tv.domain.model.ThumbnailSize
 
@@ -20,6 +20,7 @@ data class HomeUiState(
     val continueWatchingItems: List<ContinueWatchingItem> = emptyList(),
     val freeboxVideoEntries: List<FreeboxFileEntry> = emptyList(),
     val freeboxVideoArtwork: Map<String, String> = emptyMap(),
+    val freeboxVideoBackdrops: Map<String, String> = emptyMap(),
     val freeboxVideoProbedDurations: Map<String, Long> = emptyMap(),
     val isLoading: Boolean = true,
     val layoutPreferencesReady: Boolean = false,

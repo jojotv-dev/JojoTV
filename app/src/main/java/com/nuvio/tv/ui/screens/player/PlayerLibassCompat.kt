@@ -14,6 +14,7 @@ import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.text.SubtitleParser
+import com.nuvio.tv.core.player.LegacyAacMatroskaExtractorsFactory
 import com.nuvio.tv.core.player.dvmkv.MatroskaExtractor as DvMatroskaExtractor
 import io.github.peerless2012.ass.media.AssHandler
 import io.github.peerless2012.ass.media.extractor.AssMatroskaExtractor
@@ -36,9 +37,12 @@ internal fun ExoPlayer.Builder.buildWithAssSupportCompat(
 ): ExoPlayer {
     val assHandler = AssHandler(renderType)
     val assSubtitleParserFactory = CompatAssSubtitleParserFactory(assHandler)
-    val assExtractorsFactory = extractorsFactory.withAssMkvSupportCompat(
-        subtitleParserFactory = assSubtitleParserFactory,
-        assHandler = assHandler
+    val assExtractorsFactory = LegacyAacMatroskaExtractorsFactory(
+        delegate = extractorsFactory.withAssMkvSupportCompat(
+            subtitleParserFactory = assSubtitleParserFactory,
+            assHandler = assHandler
+        ),
+        subtitleParserFactory = assSubtitleParserFactory
     )
     playerMediaSourceFactory?.configureSubtitleParsing(
         extractorsFactory = assExtractorsFactory,

@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.iptv
+package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -84,6 +84,7 @@ fun IptvSeriesListScreen(
 ) {
     val series by viewModel.series.collectAsStateWithLifecycle()
     var viewMode by remember { mutableStateOf(IptvViewMode.GRID) }
+    var focusedSeries by remember(series) { mutableStateOf(series.firstOrNull()) }
 
     Column(modifier = Modifier.fillMaxSize().background(NuvioColors.Background)) {
         Row(
@@ -111,26 +112,42 @@ fun IptvSeriesListScreen(
                     Text("Aucune serie", color = NuvioColors.TextSecondary, fontSize = 15.sp)
                 }
             }
-        } else if (viewMode == IptvViewMode.GRID) {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(6),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(series, key = { it.id }) { s ->
-                    SeriesCard(series = s, onClick = { onOpenSeries(s.id) })
-                }
-            }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(series, key = { it.id }) { s ->
-                    SeriesListRow(series = s, onClick = { onOpenSeries(s.id) })
+            focusedSeries?.let { item ->
+                IptvFocusedMediaPanel(
+                    details = item.toFocusedDetails(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (viewMode == IptvViewMode.GRID) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(IptvVodPosterWidth),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(series, key = { it.id }) { s ->
+                        SeriesCard(
+                            series = s,
+                            onFocused = { focusedSeries = s },
+                            onClick = { onOpenSeries(s.id) },
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(series, key = { it.id }) { s ->
+                        SeriesListRow(
+                            series = s,
+                            onFocused = { focusedSeries = s },
+                            onClick = { onOpenSeries(s.id) },
+                        )
+                    }
                 }
             }
         }
@@ -138,12 +155,15 @@ fun IptvSeriesListScreen(
 }
 
 @Composable
-private fun SeriesListRow(series: Series, onClick: () -> Unit) {
+private fun SeriesListRow(series: Series, onFocused: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(72.dp).onFocusChanged { isFocused = it.hasFocus },
+        modifier = Modifier.fillMaxWidth().height(72.dp).onFocusChanged {
+            isFocused = it.hasFocus
+            if (it.hasFocus) onFocused()
+        },
         shape = CardDefaults.shape(shape),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
         border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
@@ -204,12 +224,15 @@ private fun SeriesListRow(series: Series, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SeriesCard(series: Series, onClick: () -> Unit) {
+private fun SeriesCard(series: Series, onFocused: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().onFocusChanged { isFocused = it.hasFocus },
+        modifier = Modifier.width(IptvVodPosterWidth).onFocusChanged {
+            isFocused = it.hasFocus
+            if (it.hasFocus) onFocused()
+        },
         shape = CardDefaults.shape(shape),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
         border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
@@ -247,9 +270,9 @@ private fun SeriesCard(series: Series, onClick: () -> Unit) {
                     color = NuvioColors.TextPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
+                    maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 16.sp,
                     modifier = if (isFocused) Modifier.basicMarquee() else Modifier
                 )
                 series.releaseDate?.let { releaseDate ->
@@ -261,3 +284,14 @@ private fun SeriesCard(series: Series, onClick: () -> Unit) {
     }
 }
 
+
+private fun Series.toFocusedDetails(): IptvFocusedMediaDetails = IptvFocusedMediaDetails(
+    title = name,
+    year = releaseDate?.take(4),
+    rating = rating,
+    duration = episodeRunTime,
+    genre = genre,
+    cast = cast,
+    director = director,
+    plot = plot,
+)

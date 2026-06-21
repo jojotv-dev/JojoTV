@@ -68,7 +68,10 @@ fun TiviChannelList(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = TIVI_EPG_VERTICAL_PADDING),
+                contentPadding = PaddingValues(
+                    horizontal = 6.dp,
+                    vertical = TIVI_EPG_VERTICAL_PADDING,
+                ),
             ) {
                 items(channels, key = { it.id }) { channel ->
                     TiviChannelRow(
@@ -121,6 +124,7 @@ private fun TiviChannelRow(
             pressedContainerColor = accent.copy(alpha = 0.12f),
         ),
         shape = ClickableSurfaceDefaults.shape(shape),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -157,16 +161,22 @@ private fun TiviChannelRow(
 
                 label.quality?.let { quality ->
                     Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = quality,
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
+                    Box(
                         modifier = Modifier
+                            .height(20.dp)
                             .background(accent.copy(alpha = 0.22f), RoundedCornerShape(4.dp))
                             .border(1.dp, accent, RoundedCornerShape(4.dp))
-                            .padding(horizontal = 5.dp, vertical = 2.dp),
-                    )
+                            .padding(horizontal = 5.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = quality,
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                    }
                 }
 
                 Spacer(Modifier.width(8.dp))

@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.home
+package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
@@ -575,7 +575,7 @@ internal fun catalogRowTitle(
     strTypeSeries: String = ""
 ): String {
     val catalogName = row.catalogName.replaceFirstChar { it.uppercase() }
-    if (!showCatalogTypeSuffix) return catalogName
+    if (!showCatalogTypeSuffix || row.addonId == "iptv_favorites") return catalogName
     val typeLabel = when (row.apiType.lowercase()) {
         "movie" -> strTypeMovie.ifBlank { row.apiType.replaceFirstChar { it.uppercase() } }
         "series" -> strTypeSeries.ifBlank { row.apiType.replaceFirstChar { it.uppercase() } }

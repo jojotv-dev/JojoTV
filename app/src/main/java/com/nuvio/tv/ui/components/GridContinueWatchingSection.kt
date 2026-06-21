@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.components
+package com.nuvio.tv.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +32,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
+import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.ui.theme.NuvioColors
 
@@ -43,6 +44,8 @@ fun GridContinueWatchingSection(
     onDetailsClick: (ContinueWatchingItem) -> Unit = onItemClick,
     onRemoveItem: (ContinueWatchingItem) -> Unit,
     onDeleteFromFreebox: ((ContinueWatchingItem) -> Unit)? = null,
+    onRenameFreebox: ((ContinueWatchingItem, String) -> Unit)? = null,
+    onMarkAsUnwatched: ((ContinueWatchingItem) -> Unit)? = null,
     thumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
     continueWatchingPortraitMode: Boolean = false,
     onStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
@@ -56,6 +59,7 @@ fun GridContinueWatchingSection(
 ) {
     if (items.isEmpty()) return
     var optionsItem by remember { mutableStateOf<ContinueWatchingItem?>(null) }
+    var renameItem by remember { mutableStateOf<ContinueWatchingItem?>(null) }
     val focusRequesters = remember(items.size) { List(items.size) { FocusRequester() } }
     val lastFocusedIndex = remember { mutableIntStateOf(-1) }
     var lastRequestedFocusIndex by remember { mutableIntStateOf(-1) }
@@ -147,10 +151,33 @@ fun GridContinueWatchingSection(
 
     val menuItem = optionsItem
     if (menuItem != null) {
+        val menuContentId = when (menuItem) {
+            is ContinueWatchingItem.InProgress -> menuItem.progress.contentId
+            is ContinueWatchingItem.NextUp -> menuItem.info.contentId
+        }
+        val isFreeboxItem = menuContentId.startsWith("freebox:")
+        val isIptvItem = menuContentId.startsWith("iptv_")
+
         ContinueWatchingOptionsDialog(
             item = menuItem,
             onDismiss = { optionsItem = null },
-            onDeleteFromFreebox = onDeleteFromFreebox?.let { cb -> { cb(menuItem) } },
+            onDeleteFromFreebox = if (isFreeboxItem) onDeleteFromFreebox?.let { cb -> { cb(menuItem) } } else null,
+            onRenameFreebox = if (onRenameFreebox != null && menuItem is ContinueWatchingItem.InProgress && menuItem.progress.contentId.startsWith("freebox:")) {
+                {
+                    renameItem = menuItem
+                    optionsItem = null
+                }
+            } else null,
+            onMarkAsUnwatched = onMarkAsUnwatched?.let { cb ->
+                if (menuItem is ContinueWatchingItem.InProgress) {
+                    {
+                        val targetIndex = if (items.size <= 1) null else minOf(lastFocusedIndex.intValue, items.size - 2)
+                        pendingFocusIndex = targetIndex
+                        cb(menuItem)
+                        optionsItem = null
+                    }
+                } else null
+            },
             onRemove = {
                 val targetIndex = if (items.size <= 1) null else minOf(lastFocusedIndex.intValue, items.size - 2)
                 pendingFocusIndex = targetIndex
@@ -165,10 +192,22 @@ fun GridContinueWatchingSection(
                 onStartFromBeginning(menuItem)
                 optionsItem = null
             },
-            showPlayManually = showManualPlayOption,
+            showPlayManually = showManualPlayOption && !isIptvItem,
             onPlayManually = {
                 onPlayManually(menuItem)
                 optionsItem = null
+            }
+        )
+    }
+
+    val selectedRenameItem = renameItem
+    if (selectedRenameItem is ContinueWatchingItem.InProgress && onRenameFreebox != null) {
+        FreeboxRenameDialog(
+            initialName = freeboxFileNameOnly(selectedRenameItem.progress.name.ifBlank { selectedRenameItem.progress.videoId }),
+            onDismiss = { renameItem = null },
+            onConfirm = { newName ->
+                onRenameFreebox(selectedRenameItem, newName)
+                renameItem = null
             }
         )
     }

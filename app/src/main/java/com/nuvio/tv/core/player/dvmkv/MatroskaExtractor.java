@@ -248,6 +248,7 @@ public class MatroskaExtractor implements Extractor {
   private static final String CODEC_ID_VORBIS = "A_VORBIS";
   private static final String CODEC_ID_OPUS = "A_OPUS";
   private static final String CODEC_ID_AAC = "A_AAC";
+  private static final String CODEC_ID_AAC_MPEG2_LC_SBR = "A_AAC/MPEG2/LC/SBR";
   private static final String CODEC_ID_MP2 = "A_MPEG/L2";
   private static final String CODEC_ID_MP3 = "A_MPEG/L3";
   private static final String CODEC_ID_AC3 = "A_AC3";
@@ -324,6 +325,7 @@ public class MatroskaExtractor implements Extractor {
   private static final int ID_CHANNELS = 0x9F;
   private static final int ID_AUDIO_BIT_DEPTH = 0x6264;
   private static final int ID_SAMPLING_FREQUENCY = 0xB5;
+  private static final int ID_OUTPUT_SAMPLING_FREQUENCY = 0x78B5;
   private static final int ID_CONTENT_ENCODINGS = 0x6D80;
   private static final int ID_CONTENT_ENCODING = 0x6240;
   private static final int ID_CONTENT_ENCODING_ORDER = 0x5031;
@@ -874,6 +876,7 @@ public class MatroskaExtractor implements Extractor {
         return EbmlProcessor.ELEMENT_TYPE_BINARY;
       case ID_DURATION:
       case ID_SAMPLING_FREQUENCY:
+      case ID_OUTPUT_SAMPLING_FREQUENCY:
       case ID_PRIMARY_R_CHROMATICITY_X:
       case ID_PRIMARY_R_CHROMATICITY_Y:
       case ID_PRIMARY_G_CHROMATICITY_X:
@@ -1467,6 +1470,9 @@ public class MatroskaExtractor implements Extractor {
         break;
       case ID_SAMPLING_FREQUENCY:
         getCurrentTrack(id).sampleRate = (int) value;
+        break;
+      case ID_OUTPUT_SAMPLING_FREQUENCY:
+        getCurrentTrack(id).outputSampleRate = (int) value;
         break;
       case ID_PRIMARY_R_CHROMATICITY_X:
         getCurrentTrack(id).primaryRChromaticityX = (float) value;
@@ -2448,6 +2454,7 @@ public class MatroskaExtractor implements Extractor {
       case CODEC_ID_OPUS:
       case CODEC_ID_VORBIS:
       case CODEC_ID_AAC:
+      case CODEC_ID_AAC_MPEG2_LC_SBR:
       case CODEC_ID_MP2:
       case CODEC_ID_MP3:
       case CODEC_ID_AC3:
@@ -2615,6 +2622,7 @@ public class MatroskaExtractor implements Extractor {
     public int channelCount = 1;
     public int audioBitDepth = Format.NO_VALUE;
     public int sampleRate = 8000;
+    public int outputSampleRate = Format.NO_VALUE;
     public long codecDelayNs = 0;
     public long seekPreRollNs = 0;
     public @MonotonicNonNull TrueHdSampleRechunker trueHdSampleRechunker;
@@ -2713,6 +2721,23 @@ public class MatroskaExtractor implements Extractor {
           sampleRate = aacConfig.sampleRateHz;
           channelCount = aacConfig.channelCount;
           codecs = aacConfig.codecs;
+          break;
+        case CODEC_ID_AAC_MPEG2_LC_SBR:
+          mimeType = MimeTypes.AUDIO_AAC;
+          byte[] legacyHeAacConfig =
+              maybeBuildLegacyHeAacConfig(sampleRate, outputSampleRate, channelCount);
+          if (legacyHeAacConfig != null) {
+            initializationData = Collections.singletonList(legacyHeAacConfig);
+            try {
+              AacUtil.Config legacyAacConfig = AacUtil.parseAudioSpecificConfig(legacyHeAacConfig);
+              sampleRate = legacyAacConfig.sampleRateHz;
+              channelCount = legacyAacConfig.channelCount;
+              codecs = legacyAacConfig.codecs;
+            } catch (ParserException e) {
+              Log.w(TAG, "Ignoring invalid legacy HE-AAC AudioSpecificConfig", e);
+              initializationData = null;
+            }
+          }
           break;
         case CODEC_ID_MP2:
           mimeType = MimeTypes.AUDIO_MPEG_L2;
@@ -3266,6 +3291,52 @@ public class MatroskaExtractor implements Extractor {
     @EnsuresNonNull("output")
     private void assertOutputInitialized() {
       checkNotNull(output);
+    }
+
+    @Nullable
+    private static byte[] maybeBuildLegacyHeAacConfig(
+        int coreSampleRate, int outputSampleRate, int channelCount) {
+      int coreFrequencyIndex = aacFrequencyIndex(coreSampleRate);
+      if (coreFrequencyIndex == Format.NO_VALUE
+          || channelCount < 1
+          || channelCount > 7) {
+        Log.w(
+            TAG,
+            "Skipping invalid legacy AAC configuration: core="
+                + coreSampleRate
+                + ", output="
+                + outputSampleRate
+                + ", channels="
+                + channelCount);
+        return null;
+      }
+      int outputFrequencyIndex = aacFrequencyIndex(outputSampleRate);
+      if (outputFrequencyIndex != Format.NO_VALUE && outputFrequencyIndex != coreFrequencyIndex) {
+        // Signal HE-AAC/SBR explicitly when Matroska exposes both core and output rates.
+        int heAacConfig =
+            (5 << 19)
+                | (coreFrequencyIndex << 15)
+                | (channelCount << 11)
+                | (outputFrequencyIndex << 7)
+                | (2 << 2);
+        return new byte[] {
+          (byte) (heAacConfig >> 16), (byte) (heAacConfig >> 8), (byte) heAacConfig
+        };
+      }
+      int config = (2 << 11) | (coreFrequencyIndex << 7) | (channelCount << 3);
+      return new byte[] {(byte) (config >> 8), (byte) config};
+    }
+    private static int aacFrequencyIndex(int sampleRate) {
+      int[] frequencies = {
+        96000, 88200, 64000, 48000, 44100, 32000, 24000,
+        22050, 16000, 12000, 11025, 8000, 7350
+      };
+      for (int i = 0; i < frequencies.length; i++) {
+        if (frequencies[i] == sampleRate) {
+          return i;
+        }
+      }
+      return Format.NO_VALUE;
     }
 
     @EnsuresNonNull("codecPrivate")

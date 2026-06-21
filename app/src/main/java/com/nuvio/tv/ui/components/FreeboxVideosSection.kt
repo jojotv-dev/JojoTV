@@ -20,19 +20,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.LocalSidebarFocusHandler
 import com.nuvio.tv.R
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
-import com.nuvio.tv.data.freebox.formatFreeboxDurationCompact
 import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
+import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.domain.model.WatchProgress
+import com.nuvio.tv.ui.navigation.Screen
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.ui.theme.NuvioColors
+import com.nuvio.tv.ui.components.freeboxposter.FreeboxPosterPickerDialog
+import com.nuvio.tv.ui.components.freeboxposter.FreeboxPosterPickerViewModel
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -40,6 +46,7 @@ fun FreeboxVideosSection(
     entries: List<FreeboxFileEntry>,
     onItemClick: (FreeboxFileEntry) -> Unit,
     artworkMap: Map<String, String> = emptyMap(),
+    backdropMap: Map<String, String> = emptyMap(),
     probedDurations: Map<String, Long> = emptyMap(),
     continueWatchingIds: Set<String> = emptySet(),
     cardWidth: Dp = 126.dp,
@@ -48,15 +55,26 @@ fun FreeboxVideosSection(
     itemSpacing: Dp = 16.dp,
     focusBorderPadding: Dp = 0.dp,
     onShowDetails: (FreeboxFileEntry) -> Unit = {},
+    onRenameFreebox: (FreeboxFileEntry, String) -> Unit = { _, _ -> },
     onDeleteFromFreebox: (FreeboxFileEntry) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    posterPickerViewModel: FreeboxPosterPickerViewModel = hiltViewModel()
 ) {
-    val filteredEntries = remember(entries, continueWatchingIds) {
-        entries.filter { entry -> freeboxContentIdForEntry(entry) !in continueWatchingIds }
+    val requestSidebarFocus = LocalSidebarFocusHandler.current
+    val posterPickerState by posterPickerViewModel.state.collectAsStateWithLifecycle()
+    val filteredEntries = remember(entries, continueWatchingIds, probedDurations) {
+        entries
+            .filter { entry -> freeboxContentIdForEntry(entry) !in continueWatchingIds }
+            .sortedWith(
+                compareBy<FreeboxFileEntry> { entry ->
+                    entry.durationMs ?: probedDurations[entry.path] ?: Long.MAX_VALUE
+                }.thenBy { entry -> entry.name.lowercase() }
+            )
     }
     if (filteredEntries.isEmpty()) return
 
     var optionsEntry by remember { mutableStateOf<FreeboxFileEntry?>(null) }
+    var renameEntry by remember { mutableStateOf<FreeboxFileEntry?>(null) }
 
     Column(modifier = modifier) {
         Text(
@@ -75,28 +93,25 @@ fun FreeboxVideosSection(
             ),
             horizontalArrangement = Arrangement.spacedBy(itemSpacing)
         ) {
-            itemsIndexed(filteredEntries, key = { _, e -> e.path }) { _, entry ->
+            itemsIndexed(filteredEntries, key = { _, e -> e.path }) { index, entry ->
                 val contentId = freeboxContentIdForEntry(entry)
                 val artwork = artworkMap[contentId]
-                val resolvedDuration = entry.durationMs ?: probedDurations[entry.path] ?: 0L
-                val durationLabel = remember(resolvedDuration) {
-                    formatFreeboxDurationCompact(resolvedDuration)
-                }
-                val cwItem = remember(entry, artwork, resolvedDuration) {
+                val backdrop = backdropMap[contentId] ?: artwork
+                val cwItem = remember(entry, artwork, backdrop, probedDurations[entry.path]) {
                     ContinueWatchingItem.InProgress(
                         progress = WatchProgress(
                             contentId = contentId,
                             contentType = "freebox",
                             name = entry.name,
                             poster = artwork,
-                            backdrop = artwork,
+                            backdrop = backdrop,
                             logo = null,
                             videoId = contentId,
                             season = null,
                             episode = null,
                             episodeTitle = null,
                             position = 0L,
-                            duration = resolvedDuration,
+                            duration = entry.durationMs ?: probedDurations[entry.path] ?: 0L,
                             lastWatched = 0L
                         )
                     )
@@ -105,10 +120,17 @@ fun FreeboxVideosSection(
                     item = cwItem,
                     onClick = { onItemClick(entry) },
                     onLongPress = { optionsEntry = entry },
+                    modifier = Modifier,
                     cardWidth = cardWidth,
                     imageHeight = imageHeight,
                     showBadge = false,
-                    fixedTrailingLabel = durationLabel
+                    showProgressBar = false,
+                    cardSizeMultiplier = 1.5f,
+                    onDirectionLeft = if (index == 0) {
+                        { requestSidebarFocus(Screen.Freebox.route) }
+                    } else {
+                        null
+                    }
                 )
             }
         }
@@ -123,12 +145,40 @@ fun FreeboxVideosSection(
                 onShowDetails(menuEntry)
                 optionsEntry = null
             },
+            onChoosePoster = {
+                posterPickerViewModel.open(
+                    entry = menuEntry,
+                    currentPosterUrl = artworkMap[freeboxContentIdForEntry(menuEntry)]
+                )
+                optionsEntry = null
+            },
+            onRenameFreebox = {
+                renameEntry = menuEntry
+                optionsEntry = null
+            },
             onDeleteFromFreebox = {
                 onDeleteFromFreebox(menuEntry)
                 optionsEntry = null
             }
         )
     }
+
+    val selectedRenameEntry = renameEntry
+    if (selectedRenameEntry != null) {
+        FreeboxRenameDialog(
+            initialName = freeboxFileNameOnly(selectedRenameEntry.name),
+            onDismiss = { renameEntry = null },
+            onConfirm = { newName ->
+                onRenameFreebox(selectedRenameEntry, newName)
+                renameEntry = null
+            }
+        )
+    }
+    FreeboxPosterPickerDialog(
+        state = posterPickerState,
+        onSelect = posterPickerViewModel::select,
+        onDismiss = posterPickerViewModel::dismiss
+    )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -137,6 +187,8 @@ private fun FreeboxVideoOptionsDialog(
     entry: FreeboxFileEntry,
     onDismiss: () -> Unit,
     onShowDetails: () -> Unit,
+    onChoosePoster: () -> Unit,
+    onRenameFreebox: () -> Unit,
     onDeleteFromFreebox: () -> Unit
 ) {
     val title = remember(entry) {
@@ -165,6 +217,28 @@ private fun FreeboxVideoOptionsDialog(
             )
         ) {
             Text(stringResource(R.string.cw_action_go_to_details))
+        }
+
+        Button(
+            onClick = onChoosePoster,
+            colors = ButtonDefaults.colors(
+                containerColor = NuvioColors.BackgroundCard,
+                contentColor = NuvioColors.TextPrimary
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(stringResource(R.string.freebox_choose_poster))
+        }
+
+        Button(
+            onClick = onRenameFreebox,
+            colors = ButtonDefaults.colors(
+                containerColor = NuvioColors.BackgroundCard,
+                contentColor = NuvioColors.TextPrimary
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(stringResource(R.string.cw_action_rename))
         }
 
         Button(

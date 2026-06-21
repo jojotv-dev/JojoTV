@@ -86,6 +86,9 @@ class ChannelRepositoryImpl @Inject constructor(
     override fun getChannelsByCategory(providerId: Long, categoryId: Long): Flow<List<Channel>> =
         observeChannels(channelFlow(providerId, categoryId), providerId)
 
+    override fun getChannelsByCategoryForVisibility(providerId: Long, categoryId: Long): Flow<List<Channel>> =
+        observeChannelsForVisibility(channelFlow(providerId, categoryId), providerId)
+
     override fun getChannelsByCategoryPage(providerId: Long, categoryId: Long, limit: Int): Flow<List<Channel>> =
         observeChannels(channelFlowPage(providerId, categoryId, limit), providerId)
 
@@ -330,6 +333,19 @@ class ChannelRepositoryImpl @Inject constructor(
     ) { entities, level, unlockedCats, settings, hiddenIds ->
         val filtered = applyVisibilityFilter(entities, level, unlockedCats)
             .filterNot { it.id in hiddenIds }
+        applyNumbering(buildPresentedChannels(filtered, settings, unlockedCats), settings.numberingMode)
+    }.flowOn(Dispatchers.Default)
+
+    private fun observeChannelsForVisibility(
+        source: Flow<List<ChannelBrowseEntity>>,
+        providerId: Long
+    ): Flow<List<Channel>> = combine(
+        source,
+        preferencesRepository.parentalControlLevel,
+        parentalControlManager.unlockedCategoriesForProvider(providerId),
+        currentPresentationSettingsFlow()
+    ) { entities, level, unlockedCats, settings ->
+        val filtered = applyVisibilityFilter(entities, level, unlockedCats)
         applyNumbering(buildPresentedChannels(filtered, settings, unlockedCats), settings.numberingMode)
     }.flowOn(Dispatchers.Default)
 

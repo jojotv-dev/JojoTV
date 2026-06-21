@@ -58,6 +58,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+import com.nuvio.tv.domain.model.ThumbnailOrientation
 import com.nuvio.tv.domain.model.ThumbnailSize
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
@@ -580,13 +581,45 @@ fun LayoutSettingsContent(
                         onFocused = { focusedSection = LayoutSettingsSection.CONTINUE_WATCHING }
                     )
 
-                    CompactToggleRow(
-                        title = stringResource(R.string.layout_cw_portrait_mode),
-                        subtitle = stringResource(R.string.layout_cw_portrait_mode_sub),
-                        checked = uiState.continueWatchingPortraitMode,
-                        onToggle = {
+                    ThumbnailOrientationSettingRow(
+                        title = stringResource(R.string.layout_thumbnail_orientation_cw),
+                        orientation = uiState.continueWatchingThumbnailOrientation,
+                        onOrientationSelected = { orientation ->
                             viewModel.onEvent(
-                                LayoutSettingsEvent.SetContinueWatchingPortraitMode(!uiState.continueWatchingPortraitMode)
+                                LayoutSettingsEvent.SetContinueWatchingThumbnailOrientation(orientation)
+                            )
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.CONTINUE_WATCHING }
+                    )
+
+                    ThumbnailOrientationSettingRow(
+                        title = stringResource(R.string.layout_thumbnail_orientation_videos),
+                        orientation = uiState.videoThumbnailOrientation,
+                        onOrientationSelected = { orientation ->
+                            viewModel.onEvent(
+                                LayoutSettingsEvent.SetVideoThumbnailOrientation(orientation)
+                            )
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.CONTINUE_WATCHING }
+                    )
+
+                    ThumbnailOrientationSettingRow(
+                        title = stringResource(R.string.layout_thumbnail_orientation_movies),
+                        orientation = uiState.movieFavoritesThumbnailOrientation,
+                        onOrientationSelected = { orientation ->
+                            viewModel.onEvent(
+                                LayoutSettingsEvent.SetMovieFavoritesThumbnailOrientation(orientation)
+                            )
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.CONTINUE_WATCHING }
+                    )
+
+                    ThumbnailOrientationSettingRow(
+                        title = stringResource(R.string.layout_thumbnail_orientation_series),
+                        orientation = uiState.seriesFavoritesThumbnailOrientation,
+                        onOrientationSelected = { orientation ->
+                            viewModel.onEvent(
+                                LayoutSettingsEvent.SetSeriesFavoritesThumbnailOrientation(orientation)
                             )
                         },
                         onFocused = { focusedSection = LayoutSettingsSection.CONTINUE_WATCHING }
@@ -1247,6 +1280,44 @@ private data class PresetOption(
     val value: Int
 )
 
+@Composable
+private fun ThumbnailOrientationSettingRow(
+    title: String,
+    orientation: ThumbnailOrientation,
+    onOrientationSelected: (ThumbnailOrientation) -> Unit,
+    onFocused: () -> Unit
+) {
+    androidx.compose.foundation.layout.Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = NuvioColors.TextSecondary
+        )
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding = PaddingValues(end = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                items = ThumbnailOrientation.entries,
+                key = { it.name }
+            ) { option ->
+                SettingsChoiceChip(
+                    label = when (option) {
+                        ThumbnailOrientation.PORTRAIT ->
+                            stringResource(R.string.layout_thumbnail_orientation_portrait)
+                        ThumbnailOrientation.LANDSCAPE ->
+                            stringResource(R.string.layout_thumbnail_orientation_landscape)
+                    },
+                    selected = option == orientation,
+                    onClick = { onOrientationSelected(option) },
+                    onFocused = onFocused
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun ThumbnailSizeSettingRow(
@@ -1258,7 +1329,7 @@ private fun ThumbnailSizeSettingRow(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
-            text = "Taille des vignettes",
+            text = stringResource(R.string.layout_thumbnail_size),
             style = MaterialTheme.typography.labelLarge,
             color = NuvioColors.TextSecondary
         )
@@ -1271,9 +1342,11 @@ private fun ThumbnailSizeSettingRow(
                 key = { it.name }
             ) { size ->
                 val label = when (size) {
-                    ThumbnailSize.SMALL -> "Petite"
-                    ThumbnailSize.MEDIUM -> "Moyenne"
-                    ThumbnailSize.LARGE -> "Grande"
+                    ThumbnailSize.VERY_SMALL -> stringResource(R.string.layout_thumbnail_size_very_small)
+                    ThumbnailSize.SMALL -> stringResource(R.string.layout_thumbnail_size_small)
+                    ThumbnailSize.MEDIUM -> stringResource(R.string.layout_thumbnail_size_medium)
+                    ThumbnailSize.LARGE -> stringResource(R.string.layout_thumbnail_size_large)
+                    ThumbnailSize.VERY_LARGE -> stringResource(R.string.layout_thumbnail_size_very_large)
                 }
                 SettingsChoiceChip(
                     label = label,

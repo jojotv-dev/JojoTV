@@ -179,6 +179,7 @@ import kotlinx.coroutines.launch
 
 val LocalSidebarExpanded = compositionLocalOf { false }
 val LocalContentFocusRequester = compositionLocalOf { FocusRequester.Default }
+val LocalSidebarFocusHandler = compositionLocalOf<(String) -> Boolean> { { false } }
 val LocalPickFolderLauncher = compositionLocalOf<(() -> Unit)> { {} }
 
 private const val SIDEBAR_AUTO_COLLAPSE_DELAY_MS = 4_000L
@@ -1399,6 +1400,7 @@ private fun ModernSidebarScaffold(
     var sidebarCollapsePending by remember { mutableStateOf(false) }
     var pendingContentFocusTransfer by remember { mutableStateOf(false) }
     var pendingSidebarFocusRequest by remember { mutableStateOf(false) }
+    var pendingSidebarFocusRoute by remember { mutableStateOf<String?>(null) }
     var focusedDrawerIndex by remember { mutableStateOf(-1) }
     var sidebarHasFocus by remember { mutableStateOf(false) }
     var isFloatingPillIconOnly by remember { mutableStateOf(false) }
@@ -1414,6 +1416,7 @@ private fun ModernSidebarScaffold(
             sidebarCollapsePending = false
             pendingContentFocusTransfer = false
             pendingSidebarFocusRequest = false
+            pendingSidebarFocusRoute = null
             isFloatingPillIconOnly = false
         }
     }
@@ -1581,21 +1584,33 @@ private fun ModernSidebarScaffold(
         pendingContentFocusTransfer = false
     }
 
-    LaunchedEffect(isSidebarExpanded, pendingSidebarFocusRequest, showSidebar, selectedDrawerRoute) {
+    LaunchedEffect(
+        isSidebarExpanded,
+        pendingSidebarFocusRequest,
+        pendingSidebarFocusRoute,
+        showSidebar,
+        selectedDrawerRoute
+    ) {
         if (!showSidebar || !pendingSidebarFocusRequest || !isSidebarExpanded) {
             return@LaunchedEffect
         }
-        val targetRoute = selectedDrawerRoute ?: drawerItems.firstOrNull()?.route ?: run {
-            pendingSidebarFocusRequest = false
-            return@LaunchedEffect
-        }
+        val targetRoute = pendingSidebarFocusRoute
+            ?: selectedDrawerRoute
+            ?: drawerItems.firstOrNull()?.route
+            ?: run {
+                pendingSidebarFocusRequest = false
+                pendingSidebarFocusRoute = null
+                return@LaunchedEffect
+            }
         val requester = drawerItemFocusRequesters[targetRoute] ?: run {
             pendingSidebarFocusRequest = false
+            pendingSidebarFocusRoute = null
             return@LaunchedEffect
         }
         repeat(2) { withFrameNanos { } }
         runCatching { requester.requestFocus() }
         pendingSidebarFocusRequest = false
+        pendingSidebarFocusRoute = null
     }
 
     SidebarFocusRecoveryEffect(
@@ -1636,6 +1651,7 @@ private fun ModernSidebarScaffold(
                             if (focusManager.moveFocus(if (isRtl) FocusDirection.Right else FocusDirection.Left)) {
                                 true
                             } else {
+                                pendingSidebarFocusRoute = null
                                 isSidebarExpanded = true
                                 sidebarCollapsePending = false
                                 pendingSidebarFocusRequest = true
@@ -1651,7 +1667,20 @@ private fun ModernSidebarScaffold(
         ) {
             CompositionLocalProvider(
                 LocalSidebarExpanded provides isSidebarExpanded,
-                LocalContentFocusRequester provides contentFocusRequester
+                LocalContentFocusRequester provides contentFocusRequester,
+                LocalSidebarFocusHandler provides { targetRoute ->
+                    if (!showSidebar || isSidebarExpanded) {
+                        false
+                    } else {
+                        pendingSidebarFocusRoute = targetRoute.takeIf {
+                            it in drawerItemFocusRequesters
+                        }
+                        isSidebarExpanded = true
+                        sidebarCollapsePending = false
+                        pendingSidebarFocusRequest = true
+                        true
+                    }
+                }
             ) {
                 NuvioNavHost(
                     navController = navController,

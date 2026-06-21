@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.components
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawBehind
@@ -486,6 +487,18 @@ fun ContentCard(
                     }
                 }
 
+                if (item.rawType == "iptv_movie" || item.rawType == "iptv_series") {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        tint = Color(0xFFFFD700),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(end = 8.dp, top = 8.dp)
+                            .zIndex(2f)
+                            .size(22.dp)
+                    )
+                }
                 if (isWatched) {
                     Box(
                         modifier = Modifier

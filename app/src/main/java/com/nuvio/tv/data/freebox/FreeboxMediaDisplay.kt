@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.data.freebox
+package com.nuvio.tv.data.freebox
 
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -9,6 +9,7 @@ private val RELEASE_QUALITY_REGEX = Regex("\\b(2160p|1080p|720p|480p|4k|uhd|hdr1
 private val SEASON_EPISODE_REGEX = Regex("\\b[sS]\\d{1,2}[eE]\\d{1,2}\\b")
 private val YEAR_REGEX = Regex("\\b(19\\d{2}|20\\d{2})\\b")
 private val DURATION_PREFIX_REGEX = Regex("^(?:\\d+h\\s*\\d{1,2}m?|\\d+h|\\d+min)\\s+", RegexOption.IGNORE_CASE)
+private val DURATION_VALUE_REGEX = Regex("^(\\d+)h\\s*(\\d{1,2})m?|^(\\d+)min", RegexOption.IGNORE_CASE)
 
 private const val FREEBOX_CONTENT_PREFIX = "freebox:"
 private const val FREEBOX_FILE_FINGERPRINT_SEPARATOR = "#fb:"
@@ -64,15 +65,25 @@ fun formatFreeboxDurationCompact(durationMs: Long?): String? {
     val hours = totalMinutes / 60L
     val minutes = totalMinutes % 60L
     return if (hours > 0L) {
-        if (minutes > 0L) "${hours}h${minutes.toString().padStart(2, '0')}" else "${hours}h00m"
+        "${hours}h${minutes.toString().padStart(2, '0')}"
     } else {
-        "0h${minutes.toString().padStart(2, '0')}m"
+        "0h${minutes.toString().padStart(2, '0')}"
     }
 }
 
+private fun extractDurationFromName(rawNameOrPath: String): String? {
+    val match = DURATION_VALUE_REGEX.find(freeboxFileNameOnly(rawNameOrPath)) ?: return null
+    val hours = match.groups[1]?.value?.toLongOrNull()
+    val minutes = match.groups[2]?.value?.toLongOrNull() ?: match.groups[3]?.value?.toLongOrNull()
+    return when {
+        hours != null -> "${hours}h${(minutes ?: 0L).toString().padStart(2, '0')}"
+        minutes != null -> "${minutes / 60L}h${(minutes % 60L).toString().padStart(2, '0')}"
+        else -> null
+    }
+}
 fun freeboxVideoDisplayTitle(rawNameOrPath: String, durationMs: Long? = null, showExtensions: Boolean = false): String {
     val fileName = freeboxDisplayName(rawNameOrPath, showExtensions)
-    val duration = formatFreeboxDurationCompact(durationMs)
+    val duration = formatFreeboxDurationCompact(durationMs) ?: extractDurationFromName(rawNameOrPath)
     return if (duration.isNullOrBlank()) fileName else "$duration $fileName"
 }
 

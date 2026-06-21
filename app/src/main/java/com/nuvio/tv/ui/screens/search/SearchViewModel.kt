@@ -22,6 +22,19 @@ import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.repository.CatalogRepository
+import com.streamvault.domain.model.Channel
+import com.streamvault.domain.model.Movie
+import com.streamvault.domain.model.Provider
+import com.streamvault.domain.repository.ChannelRepository
+import com.streamvault.domain.repository.CombinedM3uRepository
+import com.streamvault.domain.repository.MovieRepository
+import com.streamvault.domain.repository.ProviderRepository
+import com.streamvault.domain.usecase.SearchContent
+import com.streamvault.domain.usecase.SearchContentScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -41,6 +54,11 @@ import javax.inject.Inject
 class SearchViewModel @Inject constructor(
     private val addonRepository: AddonRepository,
     private val catalogRepository: CatalogRepository,
+    private val searchContent: SearchContent,
+    private val providerRepository: ProviderRepository,
+    private val combinedM3uRepository: CombinedM3uRepository,
+    private val channelRepository: ChannelRepository,
+    private val movieRepository: MovieRepository,
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
     private val searchHistoryDataStore: SearchHistoryDataStore,
     private val watchProgressRepository: com.nuvio.tv.domain.repository.WatchProgressRepository,
@@ -64,6 +82,8 @@ class SearchViewModel @Inject constructor(
 
     private val catalogsMap = linkedMapOf<String, CatalogRow>()
     private val catalogOrder = mutableListOf<String>()
+    private val iptvChannelsByItemId = mutableMapOf<String, Channel>()
+    private val iptvMoviesByItemId = mutableMapOf<String, Movie>()
 
     private var activeSearchJobs: List<Job> = emptyList()
     private var discoverJob: Job? = null
@@ -314,6 +334,8 @@ class SearchViewModel @Inject constructor(
 
         catalogsMap.clear()
         catalogOrder.clear()
+        iptvChannelsByItemId.clear()
+        iptvMoviesByItemId.clear()
         hasRenderedFirstCatalog = false
         pendingCatalogResponses = 0
 
@@ -321,6 +343,7 @@ class SearchViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     isSearching = false,
+                    isPartialIptvResult = false,
                     error = null,
                     catalogRows = emptyList()
                 )
@@ -330,20 +353,23 @@ class SearchViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isSearching = true, error = null, catalogRows = emptyList()) }
+            _uiState.update { it.copy(isSearching = true, isPartialIptvResult = false, error = null, catalogRows = emptyList()) }
 
-            val addons = try {
+            val addons = runCatching {
                 addonRepository.getInstalledAddons().first().enabledAddons()
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isSearching = false, error = e.message ?: context.getString(com.nuvio.tv.R.string.search_error_load_addons_failed)) }
-                return@launch
-            }
+            }.getOrDefault(emptyList())
+            val activeProviders = runCatching {
+                providerRepository.getProviders().first().filter { it.isActive }
+            }.getOrDefault(emptyList())
+            val combinedProfiles = runCatching {
+                combinedM3uRepository.getProfiles().first().filter { it.enabled }
+            }.getOrDefault(emptyList())
 
             _uiState.update { it.copy(installedAddons = addons) }
 
             val searchTargets = buildSearchTargets(addons)
 
-            if (searchTargets.isEmpty()) {
+            if (searchTargets.isEmpty() && activeProviders.isEmpty() && combinedProfiles.isEmpty()) {
                 _uiState.update {
                     it.copy(
                         isSearching = false,
@@ -360,6 +386,20 @@ class SearchViewModel @Inject constructor(
                 if (key !in catalogOrder) {
                     catalogOrder.add(key)
                 }
+            }
+            activeProviders.forEach { provider ->
+                catalogOrder.add(catalogKey("iptv_provider_${provider.id}", IPTV_LIVE_SEARCH_TYPE, "iptv_live_${provider.id}"))
+                catalogOrder.add(catalogKey("iptv_provider_${provider.id}", IPTV_MOVIE_SEARCH_TYPE, "iptv_movies_${provider.id}"))
+                catalogOrder.add(catalogKey("iptv_provider_${provider.id}", IPTV_SERIES_SEARCH_TYPE, "iptv_series_${provider.id}"))
+            }
+            combinedProfiles.forEach { profile ->
+                catalogOrder.add(
+                    catalogKey(
+                        "iptv_combined_${profile.id}",
+                        IPTV_LIVE_SEARCH_TYPE,
+                        "iptv_combined_live_${profile.id}"
+                    )
+                )
             }
 
             // Emit placeholder rows with shimmer items so the UI shows
@@ -401,12 +441,19 @@ class SearchViewModel @Inject constructor(
             }
             _uiState.update { it.copy(catalogRows = placeholderRows) }
 
-            val jobs = searchTargets.map { (addon, catalog) ->
+            pendingCatalogResponses = searchTargets.size + activeProviders.size + combinedProfiles.size
+            val addonJobs = searchTargets.map { (addon, catalog) ->
                 viewModelScope.launch {
                     loadCatalog(addon, catalog, query)
                 }
             }
-            pendingCatalogResponses = jobs.size
+            val providerJobs = activeProviders.map { provider ->
+                viewModelScope.launch { loadIptvProvider(provider, query) }
+            }
+            val combinedProfileJobs = combinedProfiles.map { profile ->
+                viewModelScope.launch { loadCombinedM3uProfile(profile.id, profile.name, query) }
+            }
+            val jobs = addonJobs + providerJobs + combinedProfileJobs
             activeSearchJobs = jobs
 
             // Wait for all jobs to complete so we can stop showing the global loading state.
@@ -421,6 +468,110 @@ class SearchViewModel @Inject constructor(
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun loadIptvProvider(provider: Provider, query: String) {
+        try {
+            val result = searchContent(
+                providerId = provider.id,
+                query = query,
+                scope = SearchContentScope.ALL
+            ).first()
+            if (_uiState.value.submittedQuery.trim() != query) return
+
+            result.channels.forEach { channel ->
+                iptvChannelsByItemId[
+                    iptvSearchItemId(IPTV_LIVE_SEARCH_TYPE, channel.providerId, channel.id)
+                ] = channel
+            }
+            result.movies.forEach { movie ->
+                iptvMoviesByItemId[
+                    iptvSearchItemId(IPTV_MOVIE_SEARCH_TYPE, movie.providerId, movie.id)
+                ] = movie
+            }
+            result.toCatalogRows(provider.id, provider.name).forEach { row ->
+                catalogsMap[catalogKey(row.addonId, row.rawType, row.catalogId)] = row
+            }
+            if (result.isPartialResult) {
+                _uiState.update { it.copy(isPartialIptvResult = true) }
+            }
+        } catch (_: Exception) {
+            if (_uiState.value.submittedQuery.trim() == query) {
+                _uiState.update { it.copy(isPartialIptvResult = true) }
+            }
+        } finally {
+            if (_uiState.value.submittedQuery.trim() == query) {
+                pendingCatalogResponses = (pendingCatalogResponses - 1).coerceAtLeast(0)
+                scheduleCatalogRowsUpdate()
+            }
+        }
+    }
+
+    private suspend fun loadCombinedM3uProfile(profileId: Long, profileName: String, query: String) {
+        try {
+            val channels = withTimeoutOrNull(2_500L) {
+                val categories = combinedM3uRepository.getCombinedCategories(profileId).first()
+                coroutineScope {
+                    categories.map { category ->
+                        async {
+                            combinedM3uRepository
+                                .searchCombinedChannels(profileId, category, query)
+                                .first()
+                        }
+                    }.awaitAll().flatten()
+                }
+            }
+            if (_uiState.value.submittedQuery.trim() != query) return
+            if (channels == null) {
+                _uiState.update { it.copy(isPartialIptvResult = true) }
+                return
+            }
+
+            val distinctChannels = channels.distinctBy { it.providerId to it.id }
+            distinctChannels.forEach { channel ->
+                iptvChannelsByItemId[
+                    iptvSearchItemId(IPTV_LIVE_SEARCH_TYPE, channel.providerId, channel.id)
+                ] = channel
+            }
+            distinctChannels.toCombinedLiveCatalogRow(profileId, profileName)?.let { row ->
+                catalogsMap[catalogKey(row.addonId, row.rawType, row.catalogId)] = row
+            }
+        } catch (_: Exception) {
+            if (_uiState.value.submittedQuery.trim() == query) {
+                _uiState.update { it.copy(isPartialIptvResult = true) }
+            }
+        } finally {
+            if (_uiState.value.submittedQuery.trim() == query) {
+                pendingCatalogResponses = (pendingCatalogResponses - 1).coerceAtLeast(0)
+                scheduleCatalogRowsUpdate()
+            }
+        }
+    }
+
+    internal suspend fun resolveIptvPlayback(itemId: String, itemType: String): IptvSearchPlaybackRequest? {
+        return when (itemType) {
+            IPTV_LIVE_SEARCH_TYPE -> {
+                val channel = iptvChannelsByItemId[itemId] ?: return null
+                val streamInfo = channelRepository.getStreamInfo(channel).getOrNull() ?: return null
+                IptvSearchPlaybackRequest(
+                    streamUrl = streamInfo.url,
+                    title = channel.name,
+                    headers = streamInfo.headers,
+                    posterUrl = channel.logoUrl
+                )
+            }
+            IPTV_MOVIE_SEARCH_TYPE -> {
+                val movie = iptvMoviesByItemId[itemId] ?: return null
+                val streamInfo = movieRepository.getStreamInfo(movie).getOrNull() ?: return null
+                IptvSearchPlaybackRequest(
+                    streamUrl = streamInfo.url,
+                    title = movie.name,
+                    headers = streamInfo.headers,
+                    posterUrl = movie.posterUrl
+                )
+            }
+            else -> null
         }
     }
 

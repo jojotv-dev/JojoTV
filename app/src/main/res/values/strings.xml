@@ -192,6 +192,12 @@
     <string name="episodes_open_comments">Open episode comments</string>
     <string name="play_manually">Play manually</string>
     <string name="cw_action_delete_freebox">Delete from Freebox</string>
+    <string name="freebox_rename_dialog_subtitle">Enter the new file name to apply on the Freebox.</string>
+    <string name="cw_action_mark_unwatched">Mark as unwatched</string>
+    <string name="cw_action_rename">Rename</string>
+    <string name="freebox_choose_poster">Choose thumbnail</string>
+    <string name="freebox_poster_none">No TMDB thumbnail is available for this title.</string>
+    <string name="freebox_poster_save_error">Unable to save this thumbnail. Please try again.</string>
     <string name="episodes_season_actions">Season actions</string>
 
     <string name="detail_added_to_library">Added to library</string>
@@ -2591,4 +2597,21 @@
     <!-- Subtitle selection: unknown language fallback -->
     <string name="subtitle_language_unknown">Unknown</string>
 
+    <string name="layout_thumbnail_orientation_cw">CW</string>
+    <string name="layout_thumbnail_orientation_videos">Videos</string>
+    <string name="layout_thumbnail_orientation_movies">Movies</string>
+    <string name="layout_thumbnail_orientation_series">Series</string>
+    <string name="home_iptv_favorite_movies">Movies</string>
+    <string name="home_iptv_favorite_series">Series</string>
+    <string name="home_remove_from_favorites">Remove from favorites</string>
+    <string name="layout_thumbnail_orientation_portrait">Portrait</string>
+    <string name="layout_thumbnail_orientation_landscape">Landscape</string>
+    <string name="layout_thumbnail_size">Thumbnail size</string>
+    <string name="layout_thumbnail_size_very_small">Very small</string>
+    <string name="layout_thumbnail_size_small">Small</string>
+    <string name="layout_thumbnail_size_medium">Medium</string>
+    <string name="layout_thumbnail_size_large">Large</string>
+    <string name="layout_thumbnail_size_very_large">Very large</string>
+
+    <string name="search_iptv_partial_results">Partial IPTV results: synchronization is in progress.</string>
 </resources>

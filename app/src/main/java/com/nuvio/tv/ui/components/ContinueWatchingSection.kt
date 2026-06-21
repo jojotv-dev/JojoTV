@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.components
+package com.nuvio.tv.ui.components
 
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.BorderStroke
@@ -68,6 +68,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Text
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
+import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.data.freebox.freeboxDisplayName
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.ui.theme.NuvioColors
@@ -102,6 +103,8 @@ fun ContinueWatchingSection(
     onDetailsClick: (ContinueWatchingItem) -> Unit = onItemClick,
     onRemoveItem: (ContinueWatchingItem) -> Unit,
     onDeleteFromFreebox: ((ContinueWatchingItem) -> Unit)? = null,
+    onRenameFreebox: ((ContinueWatchingItem, String) -> Unit)? = null,
+    onMarkAsUnwatched: ((ContinueWatchingItem) -> Unit)? = null,
     onStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
     showManualPlayOption: Boolean = false,
     onPlayManually: (ContinueWatchingItem) -> Unit = {},
@@ -121,7 +124,8 @@ fun ContinueWatchingSection(
     var lastRequestedFocusIndex by remember { mutableIntStateOf(-1) }
     var pendingFocusIndex by remember { mutableStateOf<Int?>(null) }
     var optionsItem by remember { mutableStateOf<ContinueWatchingItem?>(null) }
-    
+    var renameItem by remember { mutableStateOf<ContinueWatchingItem?>(null) }
+
     val listState = rememberLazyListState()
 
     // Restore focus to specific item if requested
@@ -250,10 +254,33 @@ fun ContinueWatchingSection(
 
     val menuItem = optionsItem
     if (menuItem != null) {
+        val menuContentId = when (menuItem) {
+            is ContinueWatchingItem.InProgress -> menuItem.progress.contentId
+            is ContinueWatchingItem.NextUp -> menuItem.info.contentId
+        }
+        val isFreeboxItem = menuContentId.startsWith("freebox:")
+        val isIptvItem = menuContentId.startsWith("iptv_")
+
         ContinueWatchingOptionsDialog(
             item = menuItem,
             onDismiss = { optionsItem = null },
-            onDeleteFromFreebox = onDeleteFromFreebox?.let { cb -> { cb(menuItem) } },
+            onDeleteFromFreebox = if (isFreeboxItem) onDeleteFromFreebox?.let { cb -> { cb(menuItem) } } else null,
+            onRenameFreebox = if (onRenameFreebox != null && menuItem is ContinueWatchingItem.InProgress && menuItem.progress.contentId.startsWith("freebox:")) {
+                {
+                    renameItem = menuItem
+                    optionsItem = null
+                }
+            } else null,
+            onMarkAsUnwatched = onMarkAsUnwatched?.let { cb ->
+                if (menuItem is ContinueWatchingItem.InProgress) {
+                    {
+                        val targetIndex = if (items.size <= 1) null else minOf(lastFocusedIndex, items.size - 2)
+                        pendingFocusIndex = targetIndex
+                        cb(menuItem)
+                        optionsItem = null
+                    }
+                } else null
+            },
             onRemove = {
                 val targetIndex = if (items.size <= 1) null else minOf(lastFocusedIndex, items.size - 2)
                 pendingFocusIndex = targetIndex
@@ -268,10 +295,22 @@ fun ContinueWatchingSection(
                 onStartFromBeginning(menuItem)
                 optionsItem = null
             },
-            showPlayManually = showManualPlayOption,
+            showPlayManually = showManualPlayOption && !isIptvItem,
             onPlayManually = {
                 onPlayManually(menuItem)
                 optionsItem = null
+            }
+        )
+    }
+
+    val selectedRenameItem = renameItem
+    if (selectedRenameItem is ContinueWatchingItem.InProgress && onRenameFreebox != null) {
+        FreeboxRenameDialog(
+            initialName = freeboxFileNameOnly(selectedRenameItem.progress.name.ifBlank { selectedRenameItem.progress.videoId }),
+            onDismiss = { renameItem = null },
+            onConfirm = { newName ->
+                onRenameFreebox(selectedRenameItem, newName)
+                renameItem = null
             }
         )
     }
@@ -305,7 +344,9 @@ fun ContinueWatchingCard(
     blurUnwatchedEpisodes: Boolean = false,
     useEpisodeThumbnails: Boolean = true,
     showBadge: Boolean = true,
-    fixedTrailingLabel: String? = null
+    showProgressBar: Boolean = true,
+    cardSizeMultiplier: Float = 1.5f,
+    onDirectionLeft: (() -> Boolean)? = null
 ) {
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
@@ -356,7 +397,8 @@ fun ContinueWatchingCard(
         else remainingText ?: nextUpBadgeText ?: strNextUp
     }
     val progressFraction = remember(progress) { progress?.progressPercentage ?: 0f }
-    val imageModel = remember(nextUp, progress, item, useEpisodeThumbnails) {
+    val preferLandscapeArtwork = cardWidth > imageHeight
+    val imageModel = remember(nextUp, progress, item, useEpisodeThumbnails, preferLandscapeArtwork) {
         fun firstNonBroken(vararg candidates: String?): String? {
             return candidates.firstOrNull { !it.isNullOrBlank() && it !in brokenImageUrls }?.trim()
         }
@@ -378,25 +420,25 @@ fun ContinueWatchingCard(
             )
             useEpisodeThumbnails -> firstNonBroken(
                 (item as? ContinueWatchingItem.InProgress)?.episodeThumbnail,
-                if (isFreeboxProgress) progress?.poster else progress?.backdrop,
-                if (isFreeboxProgress) progress?.backdrop else progress?.poster
+                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.poster else progress?.backdrop,
+                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.backdrop else progress?.poster
             )
             else -> firstNonBroken(
-                if (isFreeboxProgress) progress?.poster else progress?.backdrop,
-                if (isFreeboxProgress) progress?.backdrop else progress?.poster,
+                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.poster else progress?.backdrop,
+                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.backdrop else progress?.poster,
                 (item as? ContinueWatchingItem.InProgress)?.episodeThumbnail
             )
         }
     }
-    val fallbackImageModel = remember(nextUp, progress, item) {
+    val fallbackImageModel = remember(nextUp, progress, item, preferLandscapeArtwork) {
         when {
             nextUp != null -> firstNonBlank(
                 nextUp.backdrop,
                 nextUp.poster
             )
             else -> firstNonBlank(
-                if (isFreeboxProgress) progress?.poster else progress?.backdrop,
-                if (isFreeboxProgress) progress?.backdrop else progress?.poster
+                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.poster else progress?.backdrop,
+                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.backdrop else progress?.poster
             )
         }
     }
@@ -405,14 +447,12 @@ fun ContinueWatchingCard(
     LaunchedEffect(imageModel) { usesFallbackImage = false }
 
     val effectiveImageModel = if (usesFallbackImage) fallbackImageModel else imageModel
-    val titleText = remember(progress, nextUp, fixedTrailingLabel) {
+    val titleText = remember(progress, nextUp) {
         if (progress != null && progress.isFreeboxProgressForDisplay()) {
-            val rawName = progress.name.ifBlank { progress.videoId }
-            if (fixedTrailingLabel != null) {
-                freeboxDisplayName(rawName)
-            } else {
-                freeboxVideoDisplayTitle(rawName, progress.duration)
-            }
+            freeboxVideoDisplayTitle(
+                progress.name.ifBlank { progress.videoId },
+                progress.duration
+            )
         } else {
             progress?.name ?: nextUp?.name.orEmpty()
         }
@@ -426,12 +466,18 @@ fun ContinueWatchingCard(
             else -> nextUp?.episodeTitle?.localizeEpisodeTitle(context)
         }
     }
-    val density = LocalDensity.current
-    val requestWidthPx = remember(cardWidth, density) {
-        with(density) { cardWidth.roundToPx() }.coerceAtLeast(1)
+    val effectiveCardWidth = remember(cardWidth, cardSizeMultiplier) {
+        (cardWidth.value * cardSizeMultiplier).roundToInt().dp
     }
-    val requestHeightPx = remember(imageHeight, density) {
-        with(density) { imageHeight.roundToPx() }.coerceAtLeast(1)
+    val effectiveImageHeight = remember(imageHeight, cardSizeMultiplier) {
+        (imageHeight.value * cardSizeMultiplier).roundToInt().dp
+    }
+    val density = LocalDensity.current
+    val requestWidthPx = remember(effectiveCardWidth, density) {
+        with(density) { effectiveCardWidth.roundToPx() }.coerceAtLeast(1)
+    }
+    val requestHeightPx = remember(effectiveImageHeight, density) {
+        with(density) { effectiveImageHeight.roundToPx() }.coerceAtLeast(1)
     }
     val shouldBlur = blurUnwatchedEpisodes && useEpisodeThumbnails && nextUp != null
     val imageRequest = remember(effectiveImageModel, requestWidthPx, requestHeightPx, shouldBlur) {
@@ -454,7 +500,7 @@ fun ContinueWatchingCard(
             else -> bgColor.copy(alpha = 0.8f)
         }
     }
-    
+
     val bgCardColor = NuvioColors.BackgroundCard
     val backgroundPainter = remember(bgCardColor) { androidx.compose.ui.graphics.painter.ColorPainter(bgCardColor) }
 
@@ -467,11 +513,14 @@ fun ContinueWatchingCard(
             }
         },
         modifier = modifier
-            .width(cardWidth)
+            .width(effectiveCardWidth)
             .recompositionHighlighter()
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
                 if (native.action == AndroidKeyEvent.ACTION_DOWN) {
+                    if (native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT && onDirectionLeft?.invoke() == true) {
+                        return@onPreviewKeyEvent true
+                    }
                     if (native.keyCode == AndroidKeyEvent.KEYCODE_MENU) {
                         longPressTriggered = true
                         onLongPress()
@@ -515,7 +564,7 @@ fun ContinueWatchingCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(imageHeight)
+                    .height(effectiveImageHeight)
                     .clip(CwClipShape)
             ) {
                 // Background image with size hints for efficient decoding
@@ -586,7 +635,7 @@ fun ContinueWatchingCard(
                     }
                 }
 
-                if (progress != null && progress.duration > 0L) {
+                if (showProgressBar && progress != null && progress.duration > 0L) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
@@ -628,30 +677,14 @@ fun ContinueWatchingCard(
                     )
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = titleText,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = NuvioColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f)
-                            .basicMarquee(iterations = Int.MAX_VALUE)
-                    )
-                    fixedTrailingLabel?.let { label ->
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = NuvioColors.TextPrimary,
-                            maxLines = 1,
-                            modifier = Modifier.padding(start = 6.dp)
-                        )
-                    }
-                }
+                Text(
+                    text = titleText,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = NuvioColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                )
 
                 // Episode title if available (not for Freebox items)
                 val isFreebox = progress?.isFreeboxProgressForDisplay() == true
@@ -681,6 +714,8 @@ fun ContinueWatchingOptionsDialog(
     onStartFromBeginning: () -> Unit = {},
     showPlayManually: Boolean = false,
     onPlayManually: () -> Unit = {},
+    onRenameFreebox: (() -> Unit)? = null,
+    onMarkAsUnwatched: (() -> Unit)? = null,
     onDeleteFromFreebox: (() -> Unit)? = null
 ) {
     val title = when (item) {
@@ -742,6 +777,32 @@ fun ContinueWatchingOptionsDialog(
             }
         }
 
+        onMarkAsUnwatched?.let { markAction ->
+            Button(
+                onClick = markAction,
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.BackgroundCard,
+                    contentColor = NuvioColors.TextPrimary
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.cw_action_mark_unwatched))
+            }
+        }
+
+        onRenameFreebox?.let { renameAction ->
+            Button(
+                onClick = renameAction,
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.BackgroundCard,
+                    contentColor = NuvioColors.TextPrimary
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.cw_action_rename))
+            }
+        }
+
         Button(
             onClick = onRemove,
             colors = ButtonDefaults.colors(
@@ -766,6 +827,22 @@ fun ContinueWatchingOptionsDialog(
             }
         }
     }
+}
+
+@Composable
+fun FreeboxRenameDialog(
+    initialName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    NuvioInputDialog(
+        title = stringResource(R.string.cw_action_rename),
+        subtitle = stringResource(R.string.freebox_rename_dialog_subtitle),
+        initialValue = initialName,
+        placeholder = initialName,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm
+    )
 }
 
 private fun isSelectKey(keyCode: Int): Boolean {
@@ -800,6 +877,3 @@ private fun String.compactHoursMinutes(): String =
 private fun com.nuvio.tv.domain.model.WatchProgress.isFreeboxProgressForDisplay(): Boolean {
     return contentId.startsWith("freebox:") || videoId.startsWith("freebox:") || contentType.equals("freebox", ignoreCase = true)
 }
-
-
-

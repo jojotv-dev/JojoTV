@@ -197,6 +197,12 @@
     <string name="episodes_open_comments">Ouvrir les commentaires de l’épisode</string>
     <string name="play_manually">Regarder manuellement</string>
     <string name="cw_action_delete_freebox">Supprimer de la Freebox</string>
+    <string name="freebox_rename_dialog_subtitle">Saisis le nouveau nom du fichier à appliquer sur la Freebox.</string>
+    <string name="cw_action_mark_unwatched">Marquer comme non vu</string>
+    <string name="cw_action_rename">Renommer</string>
+    <string name="freebox_choose_poster">Choisir la vignette</string>
+    <string name="freebox_poster_none">Aucune vignette TMDB n’est disponible pour ce titre.</string>
+    <string name="freebox_poster_save_error">Impossible d’enregistrer cette vignette. Réessaie.</string>
     <string name="episodes_season_actions">Actions sur la saison</string>
 
     <!-- MetaDetailsViewModel -->
@@ -2665,4 +2671,22 @@
     <string name="freebox_browser_connected_subtitle">Dossiers Freebox sélectionnés pour l\'affichage.</string>
     <string name="freebox_browser_not_connected_subtitle">Autorisez et chargez les dossiers depuis les paramètres Freebox.</string>
     <string name="freebox_browser_empty">Aucun dossier Freebox sélectionné pour le moment.</string>
-    <string name="freebox_folder_extension_hint">dossier</string></resources>
+    <string name="freebox_folder_extension_hint">dossier</string>
+    <string name="layout_thumbnail_orientation_cw">CW</string>
+    <string name="layout_thumbnail_orientation_videos">Vidéos</string>
+    <string name="layout_thumbnail_orientation_movies">Films</string>
+    <string name="layout_thumbnail_orientation_series">Séries</string>
+    <string name="home_iptv_favorite_movies">Films</string>
+    <string name="home_iptv_favorite_series">Séries</string>
+    <string name="home_remove_from_favorites">Retirer des favoris</string>
+    <string name="layout_thumbnail_orientation_portrait">Portrait</string>
+    <string name="layout_thumbnail_orientation_landscape">Paysage</string>
+    <string name="layout_thumbnail_size">Taille des vignettes</string>
+    <string name="layout_thumbnail_size_very_small">Très petit</string>
+    <string name="layout_thumbnail_size_small">Petit</string>
+    <string name="layout_thumbnail_size_medium">Moyen</string>
+    <string name="layout_thumbnail_size_large">Grand</string>
+    <string name="layout_thumbnail_size_very_large">Très grand</string>
+
+    <string name="search_iptv_partial_results">Résultats IPTV partiels : une synchronisation est en cours.</string>
+</resources>

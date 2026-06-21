@@ -22,6 +22,7 @@ import com.nuvio.tv.domain.model.ThumbnailSize
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
+import com.nuvio.tv.domain.model.ThumbnailOrientation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -41,6 +42,7 @@ class LayoutPreferenceDataStore @Inject constructor(
         private const val DEFAULT_POSTER_CARD_CORNER_RADIUS_DP = 12
         private const val DEFAULT_FOCUSED_POSTER_BACKDROP_EXPAND_DELAY_SECONDS = 3
         private const val MIN_FOCUSED_POSTER_BACKDROP_EXPAND_DELAY_SECONDS = 0
+        private const val THUMBNAIL_SIZE_SCALE_VERSION = 2
     }
 
     private fun store(profileId: Int = profileManager.activeProfileId.value) =
@@ -81,7 +83,17 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val blurContinueWatchingNextUpKey = booleanPreferencesKey("blur_continue_watching_next_up")
     private val continueWatchingSortModeKey = stringPreferencesKey("continue_watching_sort_mode")
     private val continueWatchingPortraitModeKey = booleanPreferencesKey("continue_watching_portrait_mode")
+    private val continueWatchingThumbnailOrientationKey =
+        stringPreferencesKey("continue_watching_thumbnail_orientation")
+    private val videoThumbnailOrientationKey =
+        stringPreferencesKey("freebox_video_thumbnail_orientation")
+    private val movieFavoritesThumbnailOrientationKey =
+        stringPreferencesKey("iptv_movie_favorites_thumbnail_orientation")
+    private val seriesFavoritesThumbnailOrientationKey =
+        stringPreferencesKey("iptv_series_favorites_thumbnail_orientation")
     private val continueWatchingThumbnailSizeKey = stringPreferencesKey("continue_watching_thumbnail_size")
+    private val continueWatchingThumbnailSizeScaleVersionKey =
+        intPreferencesKey("continue_watching_thumbnail_size_scale_version")
     private val detailPageTrailerButtonEnabledKey = booleanPreferencesKey("detail_page_trailer_button_enabled")
     private val preferExternalMetaAddonDetailKey = booleanPreferencesKey("prefer_external_meta_addon_detail")
     private val modernHeroFullScreenBackdropKey = booleanPreferencesKey("modern_hero_full_screen_backdrop")
@@ -275,13 +287,80 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[blurContinueWatchingNextUpKey] ?: false
     }
 
-    val continueWatchingPortraitMode: Flow<Boolean> = profileFlow { prefs ->
-        prefs[continueWatchingPortraitModeKey] ?: false
+    val continueWatchingThumbnailOrientation: Flow<ThumbnailOrientation> =
+        profileManager.activeProfileId.flatMapLatest { profileId ->
+            val profileStore = factory.get(profileId, FEATURE)
+            profileStore.data.map { prefs ->
+                val storedOrientation = prefs[continueWatchingThumbnailOrientationKey]
+                if (storedOrientation != null) {
+                    ThumbnailOrientation.fromName(storedOrientation)
+                } else {
+                    val migratedOrientation = if (prefs[continueWatchingPortraitModeKey] == true) {
+                        ThumbnailOrientation.PORTRAIT
+                    } else {
+                        ThumbnailOrientation.LANDSCAPE
+                    }
+                    profileStore.edit { mutablePrefs ->
+                        if (mutablePrefs[continueWatchingThumbnailOrientationKey] == null) {
+                            mutablePrefs[continueWatchingThumbnailOrientationKey] =
+                                migratedOrientation.name
+                        }
+                    }
+                    migratedOrientation
+                }
+            }
+        }
+
+    val videoThumbnailOrientation: Flow<ThumbnailOrientation> = profileFlow { prefs ->
+        ThumbnailOrientation.fromName(
+            prefs[videoThumbnailOrientationKey] ?: ThumbnailOrientation.DEFAULT.name
+        )
     }
 
-    val continueWatchingThumbnailSize: Flow<ThumbnailSize> = profileFlow { prefs ->
-        ThumbnailSize.fromName(prefs[continueWatchingThumbnailSizeKey] ?: ThumbnailSize.DEFAULT.name)
+    val movieFavoritesThumbnailOrientation: Flow<ThumbnailOrientation> = profileFlow { prefs ->
+        ThumbnailOrientation.fromName(
+            prefs[movieFavoritesThumbnailOrientationKey] ?: ThumbnailOrientation.PORTRAIT.name
+        )
     }
+
+    val seriesFavoritesThumbnailOrientation: Flow<ThumbnailOrientation> = profileFlow { prefs ->
+        ThumbnailOrientation.fromName(
+            prefs[seriesFavoritesThumbnailOrientationKey] ?: ThumbnailOrientation.PORTRAIT.name
+        )
+    }
+
+    val continueWatchingThumbnailSize: Flow<ThumbnailSize> =
+        profileManager.activeProfileId.flatMapLatest { profileId ->
+            val profileStore = factory.get(profileId, FEATURE)
+            profileStore.data.map { prefs ->
+                val storedName = prefs[continueWatchingThumbnailSizeKey]
+                val requiresMigration =
+                    (prefs[continueWatchingThumbnailSizeScaleVersionKey] ?: 1) <
+                        THUMBNAIL_SIZE_SCALE_VERSION
+                val size = if (requiresMigration && storedName != null) {
+                    ThumbnailSize.fromLegacyName(storedName)
+                } else {
+                    ThumbnailSize.fromName(storedName ?: ThumbnailSize.DEFAULT.name)
+                }
+
+                if (requiresMigration) {
+                    profileStore.edit { mutablePrefs ->
+                        val currentVersion =
+                            mutablePrefs[continueWatchingThumbnailSizeScaleVersionKey] ?: 1
+                        if (currentVersion < THUMBNAIL_SIZE_SCALE_VERSION) {
+                            val currentName = mutablePrefs[continueWatchingThumbnailSizeKey]
+                            if (currentName != null) {
+                                mutablePrefs[continueWatchingThumbnailSizeKey] =
+                                    ThumbnailSize.fromLegacyName(currentName).name
+                            }
+                            mutablePrefs[continueWatchingThumbnailSizeScaleVersionKey] =
+                                THUMBNAIL_SIZE_SCALE_VERSION
+                        }
+                    }
+                }
+                size
+            }
+        }
 
         val continueWatchingSortMode: Flow<ContinueWatchingSortMode> = profileFlow { prefs ->
         val stored = prefs[continueWatchingSortModeKey] ?: ContinueWatchingSortMode.DEFAULT.name
@@ -574,15 +653,36 @@ class LayoutPreferenceDataStore @Inject constructor(
         }
     }
 
-    suspend fun setContinueWatchingPortraitMode(enabled: Boolean) {
+    suspend fun setContinueWatchingThumbnailOrientation(orientation: ThumbnailOrientation) {
         store().edit { prefs ->
-            prefs[continueWatchingPortraitModeKey] = enabled
+            prefs[continueWatchingThumbnailOrientationKey] = orientation.name
+            prefs[continueWatchingPortraitModeKey] =
+                orientation == ThumbnailOrientation.PORTRAIT
+        }
+    }
+
+    suspend fun setVideoThumbnailOrientation(orientation: ThumbnailOrientation) {
+        store().edit { prefs ->
+            prefs[videoThumbnailOrientationKey] = orientation.name
+        }
+    }
+
+    suspend fun setMovieFavoritesThumbnailOrientation(orientation: ThumbnailOrientation) {
+        store().edit { prefs ->
+            prefs[movieFavoritesThumbnailOrientationKey] = orientation.name
+        }
+    }
+
+    suspend fun setSeriesFavoritesThumbnailOrientation(orientation: ThumbnailOrientation) {
+        store().edit { prefs ->
+            prefs[seriesFavoritesThumbnailOrientationKey] = orientation.name
         }
     }
 
     suspend fun setContinueWatchingThumbnailSize(size: ThumbnailSize) {
         store().edit { prefs ->
             prefs[continueWatchingThumbnailSizeKey] = size.name
+            prefs[continueWatchingThumbnailSizeScaleVersionKey] = THUMBNAIL_SIZE_SCALE_VERSION
         }
     }
 

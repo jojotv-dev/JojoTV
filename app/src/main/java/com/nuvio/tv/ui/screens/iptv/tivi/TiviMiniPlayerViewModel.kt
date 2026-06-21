@@ -17,6 +17,7 @@ import com.streamvault.domain.model.Result
 import com.streamvault.domain.repository.ChannelRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,11 +41,12 @@ class TiviMiniPlayerViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(MiniPlayerState())
     val state: StateFlow<MiniPlayerState> = _state.asStateFlow()
+    private var loadChannelJob: Job? = null
 
     @OptIn(UnstableApi::class)
     val exoPlayer: ExoPlayer = ExoPlayer.Builder(context).build().also {
         it.playWhenReady = true
-        it.volume = 0f  // mute dans le mini lecteur
+        it.volume = 1f
         it.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
@@ -65,8 +67,9 @@ class TiviMiniPlayerViewModel @Inject constructor(
     /** Résout l'URL et les en-têtes provider avant de lancer le mini lecteur. */
     @OptIn(UnstableApi::class)
     fun loadChannel(channel: Channel) {
+        loadChannelJob?.cancel()
         _state.value = MiniPlayerState(channel = channel, isLoading = true)
-        viewModelScope.launch {
+        loadChannelJob = viewModelScope.launch {
             when (val result = channelRepository.getStreamInfo(channel)) {
                 is Result.Success -> {
                     val streamInfo = result.data
@@ -99,11 +102,15 @@ class TiviMiniPlayerViewModel @Inject constructor(
     }
 
     fun stop() {
+        loadChannelJob?.cancel()
+        loadChannelJob = null
         exoPlayer.stop()
+        exoPlayer.clearMediaItems()
         _state.value = MiniPlayerState()
     }
 
     override fun onCleared() {
+        loadChannelJob?.cancel()
         exoPlayer.release()
         super.onCleared()
     }

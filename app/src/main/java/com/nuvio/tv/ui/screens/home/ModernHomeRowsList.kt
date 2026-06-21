@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.home
+package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -112,6 +112,10 @@ internal fun ModernHomeRowsList(
     landscapeCatalogCardHeight: Dp,
     continueWatchingCardWidth: Dp,
     continueWatchingCardHeight: Dp,
+    videoCardWidth: Dp,
+    videoCardHeight: Dp,
+    movieFavoritesPortraitMode: Boolean,
+    seriesFavoritesPortraitMode: Boolean,
     blurUnwatchedEpisodes: Boolean,
     useEpisodeThumbnails: Boolean,
     pendingRowFocusKey: State<String?>,
@@ -132,10 +136,12 @@ internal fun ModernHomeRowsList(
     onExpansionInteractionNonceChange: (Int) -> Unit,
     freeboxVideoEntries: List<com.nuvio.tv.data.freebox.FreeboxFileEntry> = emptyList(),
     continueWatchingContentIds: Set<String> = emptySet(),
-    onNavigateToFreebox: (String) -> Unit = {},
+    onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     freeboxVideoArtwork: Map<String, String> = emptyMap(),
+    freeboxVideoBackdrops: Map<String, String> = emptyMap(),
     freeboxVideoProbedDurations: Map<String, Long> = emptyMap(),
     onDeleteFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry) -> Unit = {},
+    onRenameFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     // Unwrap StableRef wrappers for internal use (not passed to child composables)
@@ -152,6 +158,25 @@ internal fun ModernHomeRowsList(
     val density = LocalDensity.current
     val context = LocalContext.current
     val verticalPrefetchImageLoader = context.imageLoader
+    val movieFavoritesRowSuffix = "_${HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID}"
+    val seriesFavoritesRowSuffix = "_${HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID}"
+    val orderedRows = remember(carouselRows, freeboxVideoEntries) {
+        val rows = carouselRows.list
+        val continueWatchingRows = rows.filter { it.key == MODERN_CONTINUE_WATCHING_ROW_KEY }
+        val movieFavoriteRows = rows.filter { it.key.endsWith(movieFavoritesRowSuffix) }
+        val seriesFavoriteRows = rows.filter { it.key.endsWith(seriesFavoritesRowSuffix) }
+        val prioritizedKeys = (continueWatchingRows + movieFavoriteRows + seriesFavoriteRows)
+            .mapTo(mutableSetOf()) { it.key }
+
+        buildList<Pair<String, HeroCarouselRow?>> {
+            continueWatchingRows.forEach { add(it.key to it) }
+            if (freeboxVideoEntries.isNotEmpty()) add("freebox_videos" to null)
+            movieFavoriteRows.forEach { add(it.key to it) }
+            seriesFavoriteRows.forEach { add(it.key to it) }
+            rows.filterNot { it.key in prioritizedKeys }.forEach { add(it.key to it) }
+        }
+    }
+    val latestOrderedRowsForLazy = rememberUpdatedState(orderedRows)
 
     LaunchedEffect(verticalPrefetchImageLoader, density) {
         val prefetchAheadRows = 1
@@ -164,12 +189,16 @@ internal fun ModernHomeRowsList(
             .collect { lastVisibleRowIndex ->
                 withContext(Dispatchers.IO) {
                     for (rowOffset in 1..prefetchAheadRows) {
-                        val row = carouselRows.list.getOrNull(lastVisibleRowIndex + rowOffset) ?: continue
+                        val row = latestOrderedRowsForLazy.value.getOrNull(lastVisibleRowIndex + rowOffset)?.second ?: continue
                         for (i in 0 until minOf(prefetchItemsPerRow, row.items.list.size)) {
                             val item = row.items.list[i]
                             val url = item.imageUrl ?: continue
                             val metrics = item.catalogCardRequestMetrics(
-                                useLandscapePosters = useLandscapePosters,
+                                useLandscapePosters = when {
+                                    row.key.endsWith(movieFavoritesRowSuffix) -> !movieFavoritesPortraitMode
+                                    row.key.endsWith(seriesFavoritesRowSuffix) -> !seriesFavoritesPortraitMode
+                                    else -> useLandscapePosters
+                                },
                                 portraitCardWidth = portraitCatalogCardWidth,
                                 portraitCardHeight = portraitCatalogCardHeight,
                                 landscapeCardWidth = landscapeCatalogCardWidth,
@@ -194,7 +223,6 @@ internal fun ModernHomeRowsList(
     }
 
     val latestOnRequestLazyCatalogLoad = rememberUpdatedState(onRequestLazyCatalogLoad)
-    val latestCarouselRowsForLazy = rememberUpdatedState(carouselRows)
     LaunchedEffect(verticalRowListState) {
         val prefetchAheadForLazy = 1
         snapshotFlow {
@@ -207,9 +235,9 @@ internal fun ModernHomeRowsList(
             if (scrolling || lastVisible < 0) return@collect
             delay(150)
             if (verticalRowListState.isScrollInProgress) return@collect
-            val rows = latestCarouselRowsForLazy.value
+            val rows = latestOrderedRowsForLazy.value
             for (idx in firstVisible.coerceAtLeast(0)..(lastVisible + prefetchAheadForLazy)) {
-                val row = rows.list.getOrNull(idx) ?: continue
+                val row = rows.getOrNull(idx)?.second ?: continue
                 if (row.isLoading && row.items.list.firstOrNull()?.imageUrl == "placeholder://empty") {
                     latestOnRequestLazyCatalogLoad.value(row.key)
                 }
@@ -226,12 +254,12 @@ internal fun ModernHomeRowsList(
                 if (scrolling) return@collect
                 delay(200)
                 if (verticalRowListState.isScrollInProgress) return@collect
-                val rows = latestCarouselRowsForLazy.value
+                val rows = latestOrderedRowsForLazy.value
                 val info = verticalRowListState.layoutInfo
                 val firstVisible = info.visibleItemsInfo.firstOrNull()?.index ?: return@collect
                 val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: return@collect
                 for (idx in firstVisible.coerceAtLeast(0)..(lastVisible + 1)) {
-                    val row = rows.list.getOrNull(idx) ?: continue
+                    val row = rows.getOrNull(idx)?.second ?: continue
                     if (row.isLoading && row.items.list.firstOrNull()?.imageUrl == "placeholder://empty") {
                         latestOnRequestLazyCatalogLoad.value(row.key)
                     }
@@ -268,7 +296,7 @@ internal fun ModernHomeRowsList(
                     onFastScrollingChanged = onFastScrollingChanged,
                     shouldHaltForward = {
                         val info = verticalRowListState.layoutInfo
-                        val lastIdx = carouselRows.list.size - 1
+                        val lastIdx = orderedRows.size - 1
                         val lastVisible = info.visibleItemsInfo.lastOrNull { it.index == lastIdx }
                         lastIdx >= 0 && lastVisible != null &&
                             lastVisible.offset + lastVisible.size <= info.viewportEndOffset
@@ -276,7 +304,7 @@ internal fun ModernHomeRowsList(
                     resolveVerticalLanding = { sign ->
                         val layoutInfo = verticalRowListState.layoutInfo
                         val visibleItems = layoutInfo.visibleItemsInfo
-                        val lastIdx = carouselRows.list.size - 1
+                        val lastIdx = orderedRows.size - 1
                         val viewportEnd = layoutInfo.viewportEndOffset
                         val lastRowAtBottom = lastIdx >= 0 &&
                             visibleItems.lastOrNull { it.index == lastIdx }?.let {
@@ -295,7 +323,7 @@ internal fun ModernHomeRowsList(
                                     ?: visibleItems.firstOrNull()?.index
                                     ?: verticalRowListState.firstVisibleItemIndex
                         }
-                        val targetRow = carouselRows.list.getOrNull(targetRowIndex)
+                        val targetRow = orderedRows.getOrNull(targetRowIndex)?.second
                         if (targetRow == null) null
                         else {
                             val savedIdx = (focusedItemByRowMap[targetRow.key] ?: 0)
@@ -313,10 +341,34 @@ internal fun ModernHomeRowsList(
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             itemsIndexed(
-                items = carouselRows.list,
-                key = { _, row -> row.key },
-                contentType = { _, row -> row.apiType ?: "modern_home_row" }
-            ) { _, row ->
+                items = orderedRows,
+                key = { _, entry -> entry.first },
+                contentType = { _, entry -> entry.second?.apiType ?: "freebox_videos" }
+            ) { _, entry ->
+                val row = entry.second
+                if (row == null) {
+                    FreeboxVideosSection(
+                        entries = freeboxVideoEntries,
+                        probedDurations = freeboxVideoProbedDurations,
+                        onItemClick = { video ->
+                            val contentId = freeboxContentIdForEntry(video)
+                            onNavigateToFreebox(contentId, freeboxVideoArtwork[contentId])
+                        },
+                        artworkMap = freeboxVideoArtwork,
+                        backdropMap = freeboxVideoBackdrops,
+                        continueWatchingIds = continueWatchingContentIds,
+                        cardWidth = videoCardWidth,
+                        imageHeight = videoCardHeight,
+                        horizontalPadding = 52.dp,
+                        itemSpacing = 12.dp,
+                        onShowDetails = { video ->
+                            onNavigateToDetail(freeboxContentIdForEntry(video), "freebox", "")
+                        },
+                        onDeleteFromFreebox = { video -> onDeleteFreeboxVideo(video) },
+                        onRenameFreebox = onRenameFreeboxVideo,
+                    )
+                    return@itemsIndexed
+                }
                 val stableOnContinueWatchingOptions = remember(onContinueWatchingOptions) {
                     { item: ContinueWatchingItem -> onContinueWatchingOptions(item) }
                 }
@@ -384,7 +436,11 @@ internal fun ModernHomeRowsList(
                     pendingRowFocusNonce = pendingRowFocusNonce,
                     onPendingRowFocusCleared = onPendingRowFocusCleared,
                     onRowItemFocused = stableOnRowItemFocused,
-                    useLandscapePosters = useLandscapePosters,
+                    useLandscapePosters = when {
+                        row.key.endsWith(movieFavoritesRowSuffix) -> !movieFavoritesPortraitMode
+                        row.key.endsWith(seriesFavoritesRowSuffix) -> !seriesFavoritesPortraitMode
+                        else -> useLandscapePosters
+                    },
                     showLabels = showLabels,
                     posterCardCornerRadius = posterCardCornerRadius,
                     focusedPosterBackdropTrailerMuted = focusedPosterBackdropTrailerMuted,
@@ -422,25 +478,6 @@ internal fun ModernHomeRowsList(
                 )
             }
 
-            if (freeboxVideoEntries.isNotEmpty()) {
-                item(key = "freebox_videos", contentType = "freebox_videos") {
-                    FreeboxVideosSection(
-                        entries = freeboxVideoEntries,
-                        probedDurations = freeboxVideoProbedDurations,
-                        onItemClick = { entry -> onNavigateToFreebox(freeboxContentIdForEntry(entry)) },
-                        artworkMap = freeboxVideoArtwork,
-                        continueWatchingIds = continueWatchingContentIds,
-                        cardWidth = continueWatchingCardWidth,
-                        imageHeight = continueWatchingCardHeight,
-                        horizontalPadding = 52.dp,
-                        itemSpacing = 12.dp,
-                        onShowDetails = { entry ->
-                            onNavigateToDetail(freeboxContentIdForEntry(entry), "freebox", "")
-                        },
-                        onDeleteFromFreebox = { entry -> onDeleteFreeboxVideo(entry) },
-                    )
-                }
-            }
         }
     }
 }

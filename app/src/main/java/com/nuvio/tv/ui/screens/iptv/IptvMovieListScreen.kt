@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.iptv
+package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -112,6 +112,7 @@ fun IptvMovieListScreen(
     val loadingMovieId by viewModel.loadingMovieId.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var viewMode by remember { mutableStateOf(IptvViewMode.GRID) }
+    var focusedMovie by remember(movies) { mutableStateOf(movies.firstOrNull()) }
 
     Column(modifier = Modifier.fillMaxSize().background(NuvioColors.Background)) {
         Row(
@@ -139,50 +140,60 @@ fun IptvMovieListScreen(
                     Text("Aucun film", color = NuvioColors.TextSecondary, fontSize = 15.sp)
                 }
             }
-        } else if (viewMode == IptvViewMode.GRID) {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(6),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(movies, key = { it.id }) { movie ->
-                    MovieCard(
-                        movie = movie,
-                        isLoading = loadingMovieId == movie.id,
-                        onClick = {
-                            scope.launch {
-                                val result = viewModel.resolveStream(movie)
-                                if (result is Result.Success) {
-                                    val (url, headers) = result.data
-                                    onPlayMovie(url, movie.name, headers, movie.posterUrl)
-                                }
-                            }
-                        }
-                    )
-                }
-            }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(movies, key = { it.id }) { movie ->
-                    MovieListRow(
-                        movie = movie,
-                        isLoading = loadingMovieId == movie.id,
-                        onClick = {
-                            scope.launch {
-                                val result = viewModel.resolveStream(movie)
-                                if (result is Result.Success) {
-                                    val (url, headers) = result.data
-                                    onPlayMovie(url, movie.name, headers, movie.posterUrl)
+            focusedMovie?.let { movie ->
+                IptvFocusedMediaPanel(
+                    details = movie.toFocusedDetails(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (viewMode == IptvViewMode.GRID) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(IptvVodPosterWidth),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(movies, key = { it.id }) { movie ->
+                        MovieCard(
+                            movie = movie,
+                            isLoading = loadingMovieId == movie.id,
+                            onFocused = { focusedMovie = movie },
+                            onClick = {
+                                scope.launch {
+                                    val result = viewModel.resolveStream(movie)
+                                    if (result is Result.Success) {
+                                        val (url, headers) = result.data
+                                        onPlayMovie(url, movie.name, headers, movie.posterUrl)
+                                    }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(movies, key = { it.id }) { movie ->
+                        MovieListRow(
+                            movie = movie,
+                            isLoading = loadingMovieId == movie.id,
+                            onFocused = { focusedMovie = movie },
+                            onClick = {
+                                scope.launch {
+                                    val result = viewModel.resolveStream(movie)
+                                    if (result is Result.Success) {
+                                        val (url, headers) = result.data
+                                        onPlayMovie(url, movie.name, headers, movie.posterUrl)
+                                    }
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -190,12 +201,15 @@ fun IptvMovieListScreen(
 }
 
 @Composable
-private fun MovieListRow(movie: Movie, isLoading: Boolean, onClick: () -> Unit) {
+private fun MovieListRow(movie: Movie, isLoading: Boolean, onFocused: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(72.dp).onFocusChanged { isFocused = it.hasFocus },
+        modifier = Modifier.fillMaxWidth().height(72.dp).onFocusChanged {
+            isFocused = it.hasFocus
+            if (it.hasFocus) onFocused()
+        },
         shape = CardDefaults.shape(shape),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
         border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
@@ -257,12 +271,15 @@ private fun MovieListRow(movie: Movie, isLoading: Boolean, onClick: () -> Unit) 
 }
 
 @Composable
-private fun MovieCard(movie: Movie, isLoading: Boolean, onClick: () -> Unit) {
+private fun MovieCard(movie: Movie, isLoading: Boolean, onFocused: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().onFocusChanged { isFocused = it.hasFocus },
+        modifier = Modifier.width(IptvVodPosterWidth).onFocusChanged {
+            isFocused = it.hasFocus
+            if (it.hasFocus) onFocused()
+        },
         shape = CardDefaults.shape(shape),
         colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
         border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
@@ -293,12 +310,7 @@ private fun MovieCard(movie: Movie, isLoading: Boolean, onClick: () -> Unit) {
                         Text("%.1f".format(movie.rating), color = Color(0xFFFFD700), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                if (movie.watchProgress > 0L && movie.durationSeconds > 0) {
-                    val progress = (movie.watchProgress / 1000f / movie.durationSeconds).coerceIn(0f, 1f)
-                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.White.copy(0.2f))) {
-                        Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(NuvioColors.Primary))
-                    }
-                }
+
             }
             Column(Modifier.padding(8.dp)) {
                 Text(
@@ -306,9 +318,9 @@ private fun MovieCard(movie: Movie, isLoading: Boolean, onClick: () -> Unit) {
                     color = NuvioColors.TextPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
+                    maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 16.sp,
                     modifier = if (isFocused) Modifier.basicMarquee() else Modifier
                 )
                 movie.year?.let { movieYear ->
@@ -320,3 +332,20 @@ private fun MovieCard(movie: Movie, isLoading: Boolean, onClick: () -> Unit) {
     }
 }
 
+
+private fun Movie.toFocusedDetails(): IptvFocusedMediaDetails = IptvFocusedMediaDetails(
+    title = name,
+    year = year ?: releaseDate?.take(4),
+    rating = rating,
+    duration = duration ?: durationSeconds.takeIf { it > 0 }?.let(::formatDurationSeconds),
+    genre = genre,
+    cast = cast,
+    director = director,
+    plot = plot,
+)
+
+private fun formatDurationSeconds(seconds: Int): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    return if (hours > 0) "${hours}h ${minutes}min" else "${minutes}min"
+}

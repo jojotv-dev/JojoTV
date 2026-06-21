@@ -20,10 +20,10 @@ data class TmdbIdMapping(
 
 @Dao
 abstract class ProviderDao {
-    @Query("SELECT * FROM providers ORDER BY created_at DESC")
+    @Query("SELECT * FROM providers ORDER BY created_at ASC, id ASC")
     abstract fun getAll(): Flow<List<ProviderEntity>>
 
-    @Query("SELECT * FROM providers ORDER BY created_at DESC")
+    @Query("SELECT * FROM providers ORDER BY created_at ASC, id ASC")
     abstract suspend fun getAllSync(): List<ProviderEntity>
 
     @Query("SELECT * FROM providers WHERE is_active = 1 LIMIT 1")
@@ -1921,7 +1921,7 @@ interface SeriesDao {
         limit: Int
     ): List<SeriesBrowseEntity>
 
-    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY last_modified DESC, name ASC, id ASC")
+    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY id ASC")
     fun getByCategory(providerId: Long, categoryId: Long): Flow<List<SeriesBrowseEntity>>
 
     @Query(
@@ -2107,7 +2107,7 @@ interface SeriesDao {
     )
     fun getByWatchCountCategoryPage(providerId: Long, categoryId: Long, limit: Int, offset: Int): Flow<List<SeriesBrowseEntity>>
 
-    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY last_modified DESC, name ASC, id ASC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY id ASC LIMIT :limit OFFSET :offset")
     fun getByCategoryPage(providerId: Long, categoryId: Long, limit: Int, offset: Int): Flow<List<SeriesBrowseEntity>>
 
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY name ASC, id ASC LIMIT :limit")
@@ -2131,7 +2131,7 @@ interface SeriesDao {
         limit: Int
     ): List<SeriesBrowseEntity>
 
-    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY last_modified DESC, name ASC, id ASC LIMIT :limit")
+    @Query("SELECT * FROM series WHERE provider_id = :providerId AND category_id = :categoryId ORDER BY id ASC LIMIT :limit")
     fun getByCategoryPreview(providerId: Long, categoryId: Long, limit: Int): Flow<List<SeriesBrowseEntity>>
 
     @Query("SELECT * FROM series WHERE provider_id = :providerId ORDER BY rating DESC, name ASC LIMIT :limit")

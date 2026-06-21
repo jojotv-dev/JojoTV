@@ -574,6 +574,19 @@ fun SearchScreen(
                     }
                 }
 
+                if (uiState.isPartialIptvResult && trimmedSubmittedQuery.length >= 2) {
+                    item {
+                        Text(
+                            text = stringResource(R.string.search_iptv_partial_results),
+                            style = androidx.tv.material3.MaterialTheme.typography.bodySmall,
+                            color = NuvioColors.TextSecondary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 52.dp)
+                        )
+                    }
+                }
+
                 when {
                     trimmedSubmittedQuery.length < 2 && !hasPendingUnsubmittedQuery -> {
                         item {
@@ -649,7 +662,12 @@ fun SearchScreen(
                             val catalogKey = "${catalogRow.addonId}_${catalogRow.apiType}_${catalogRow.catalogId}"
                             val isPlaceholder = catalogRow.isLoading &&
                                 catalogRow.items.firstOrNull()?.id?.startsWith("__placeholder_") == true
-                            val hasEnoughForSeeAll = !isPlaceholder && catalogRow.items.size >= 15
+                            val isIptvSearchRow = catalogRow.rawType == IPTV_LIVE_SEARCH_TYPE ||
+                                catalogRow.rawType == IPTV_MOVIE_SEARCH_TYPE ||
+                                catalogRow.rawType == IPTV_SERIES_SEARCH_TYPE
+                            val hasEnoughForSeeAll = !isIptvSearchRow &&
+                                !isPlaceholder &&
+                                catalogRow.items.size >= 15
 
                             val listState = searchRowStates.getOrPut(catalogKey) {
                                 val saved = viewModel.savedRowScrollPositions[catalogKey]

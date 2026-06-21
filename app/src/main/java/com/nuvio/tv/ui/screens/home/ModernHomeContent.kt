@@ -1,4 +1,4 @@
-﻿@file:OptIn(
+@file:OptIn(
     androidx.compose.foundation.ExperimentalFoundationApi::class,
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     kotlinx.coroutines.FlowPreview::class
@@ -70,6 +70,7 @@ import coil3.request.ImageRequest
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
+import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.WatchProgress
@@ -112,9 +113,15 @@ fun ModernHomeContent(
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onItemFocus: (MetaPreview) -> Unit = {},
     continueWatchingPortraitMode: Boolean = false,
+    videoPortraitMode: Boolean = false,
+    movieFavoritesPortraitMode: Boolean = true,
+    seriesFavoritesPortraitMode: Boolean = true,
     continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
     onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
-    onNavigateToFreebox: (String) -> Unit = {},
+    onRenameFreeboxProgress: (ContinueWatchingItem, String) -> Unit = { _, _ -> },
+    onMarkFreeboxUnwatched: (ContinueWatchingItem) -> Unit = {},
+    onRenameFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry, String) -> Unit = { _, _ -> },
+    onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     onPreloadAdjacentItem: (MetaPreview) -> Unit = {},
     onSaveFocusState: (Int, Int, String?, Map<String, String>, Map<String, Int>, Int, Int) -> Unit,
     scrollToTopTrigger: Int = 0,
@@ -228,6 +235,7 @@ fun ModernHomeContent(
         mutableStateOf<HeroPreview?>(initialHero)
     }
     val optionsItem = remember { mutableStateOf<ContinueWatchingItem?>(null) }
+    val renameOptionsItem = remember { mutableStateOf<ContinueWatchingItem?>(null) }
     val lastFocusedContinueWatchingIndex = remember { mutableIntStateOf(-1) }
     val lastHeroNavigationAtMs = remember { mutableLongStateOf(0L) }
     val heroFocusSettleDelayMs = remember { mutableLongStateOf(MODERN_HERO_FOCUS_DEBOUNCE_MS) }
@@ -559,6 +567,8 @@ fun ModernHomeContent(
     val cwPortraitScale = continueWatchingThumbnailSize.cardWidth.value / 220f
     val continueWatchingCardWidth = if (continueWatchingPortraitMode) (126f * cwPortraitScale).dp else continueWatchingThumbnailSize.cardWidth
     val continueWatchingCardHeight = if (continueWatchingPortraitMode) (189f * cwPortraitScale).dp else continueWatchingThumbnailSize.imageHeight
+    val videoCardWidth = if (videoPortraitMode) (126f * cwPortraitScale).dp else continueWatchingThumbnailSize.cardWidth
+    val videoCardHeight = if (videoPortraitMode) (189f * cwPortraitScale).dp else continueWatchingThumbnailSize.imageHeight
 
     val localConfiguration = LocalConfiguration.current
     val screenWidth = localConfiguration.screenWidthDp.dp
@@ -1053,6 +1063,10 @@ fun ModernHomeContent(
                 landscapeCatalogCardHeight = landscapeCatalogCardHeight,
                 continueWatchingCardWidth = continueWatchingCardWidth,
                 continueWatchingCardHeight = continueWatchingCardHeight,
+                videoCardWidth = videoCardWidth,
+                videoCardHeight = videoCardHeight,
+                movieFavoritesPortraitMode = movieFavoritesPortraitMode,
+                seriesFavoritesPortraitMode = seriesFavoritesPortraitMode,
                 blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
                 useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
                 pendingRowFocusKey = pendingRowFocusKey,
@@ -1076,7 +1090,9 @@ fun ModernHomeContent(
                 continueWatchingContentIds = uiState.continueWatchingItems.filterIsInstance<ContinueWatchingItem.InProgress>().map { it.progress.contentId }.toSet(),
                 onNavigateToFreebox = onNavigateToFreebox,
                 freeboxVideoArtwork = uiState.freeboxVideoArtwork,
+                freeboxVideoBackdrops = uiState.freeboxVideoBackdrops,
                 freeboxVideoProbedDurations = uiState.freeboxVideoProbedDurations,
+                onRenameFreeboxVideo = onRenameFreeboxVideo,
                 onDeleteFreeboxVideo = { entry ->
                     val contentId = freeboxContentIdForEntry(entry)
                     onDeleteFreeboxProgress?.invoke(
@@ -1105,6 +1121,7 @@ fun ModernHomeContent(
 
     val selectedOptionsItem = optionsItem.value
     if (selectedOptionsItem != null) {
+        val selectedIsIptv = selectedOptionsItem.contentId().startsWith("iptv_")
         ContinueWatchingOptionsDialog(
             item = selectedOptionsItem,
             onDismiss = { optionsItem.value = null },
@@ -1130,7 +1147,19 @@ fun ModernHomeContent(
                 onContinueWatchingStartFromBeginning(selectedOptionsItem)
                 optionsItem.value = null
             },
-            showPlayManually = showContinueWatchingManualPlayOption,
+            showPlayManually = showContinueWatchingManualPlayOption && !selectedIsIptv,
+            onRenameFreebox = if (selectedOptionsItem is ContinueWatchingItem.InProgress && selectedOptionsItem.progress.contentId.startsWith("freebox:")) {
+                {
+                    renameOptionsItem.value = selectedOptionsItem
+                    optionsItem.value = null
+                }
+            } else null,
+            onMarkAsUnwatched = if (selectedOptionsItem is ContinueWatchingItem.InProgress && selectedOptionsItem.progress.contentId.startsWith("freebox:")) {
+                {
+                    onMarkFreeboxUnwatched(selectedOptionsItem)
+                    optionsItem.value = null
+                }
+            } else null,
             onPlayManually = {
                 onContinueWatchingPlayManually(selectedOptionsItem)
                 optionsItem.value = null
@@ -1147,6 +1176,18 @@ fun ModernHomeContent(
                     optionsItem.value = null
                 }
             } else null
+        )
+    }
+
+    val selectedRenameItem = renameOptionsItem.value
+    if (selectedRenameItem is ContinueWatchingItem.InProgress) {
+        com.nuvio.tv.ui.components.FreeboxRenameDialog(
+            initialName = freeboxFileNameOnly(selectedRenameItem.progress.name.ifBlank { selectedRenameItem.progress.videoId }),
+            onDismiss = { renameOptionsItem.value = null },
+            onConfirm = { newName ->
+                onRenameFreeboxProgress(selectedRenameItem, newName)
+                renameOptionsItem.value = null
+            }
         )
     }
 }

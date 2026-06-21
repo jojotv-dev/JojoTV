@@ -1,12 +1,15 @@
-﻿package com.nuvio.tv.ui.screens.iptv.tivi
+package com.nuvio.tv.ui.screens.iptv.tivi
 
 import androidx.activity.compose.BackHandler
 import android.widget.Toast
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.animation.animateColorAsState
 
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -16,14 +19,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Subscriptions
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,10 +39,16 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.tv.material3.*
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import coil3.compose.AsyncImage
 import com.nuvio.tv.ui.navigation.Screen
+import com.nuvio.tv.ui.screens.iptv.IptvFocusedMediaDetails
+import com.nuvio.tv.ui.screens.iptv.IptvFocusedMediaPanel
+import com.nuvio.tv.ui.screens.iptv.IptvVodPosterWidth
 import com.nuvio.tv.ui.theme.NuvioColors
+import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import com.nuvio.tv.ui.screens.iptv.tivi.components.*
+import com.streamvault.domain.model.Result
 
 private val TabShape = RoundedCornerShape(10.dp)
 
@@ -51,7 +63,12 @@ fun IptvTiviScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val miniState by miniPlayerVm.state.collectAsState()
+    val visibilityDialogState by viewModel.visibilityDialogState.collectAsState()
+    DisposableEffect(miniPlayerVm) {
+        onDispose { miniPlayerVm.stop() }
+    }
     val context = LocalContext.current
+    val playbackScope = rememberCoroutineScope()
     val channelListState = rememberLazyListState()
     val epgListState = rememberLazyListState()
     LaunchedEffect(initialTab) { viewModel.selectTab(initialTab) }
@@ -72,6 +89,14 @@ fun IptvTiviScreen(
     }
     BackHandler { onBack() }
 
+    visibilityDialogState?.let { state ->
+        VisibilityToggleDialog(
+            state = state,
+            onDismiss = viewModel::dismissVisibilityDialog,
+            onSave = viewModel::saveVisibility,
+        )
+    }
+
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -87,17 +112,8 @@ fun IptvTiviScreen(
             onProviderFocus = { viewModel.focusProvider(it) },
             onGroupClick = { providerId, groupId -> viewModel.selectGroup(providerId, groupId) },
             onGroupFocus = { providerId, groupId -> viewModel.focusGroup(providerId, groupId) },
-            onManageProvider = if (uiState.selectedTab == TiviTab.LIVE) {
-                { providerId ->
-                    uiState.providerNodes.firstOrNull { it.provider.id == providerId }?.let { node ->
-                        navController.navigate(
-                            Screen.IptvLiveTvGroup.createRoute(providerId, node.provider.name)
-                        )
-                    }
-                }
-            } else {
-                null
-            },
+            onProviderLongClick = viewModel::openProviderVisibility,
+            onGroupLongClick = viewModel::openGroupVisibility,
             modifier = Modifier.fillMaxHeight(),
         )
 
@@ -199,7 +215,36 @@ fun IptvTiviScreen(
                     } else if (c.isLoading) {
                         TiviEmptyHint("Chargement...")
                     } else {
-                        TiviMovieGrid(movies = c.movies)
+                        TiviMovieContent(
+                            movies = c.movies,
+                            onMovieFocused = viewModel::enrichMovieDetails,
+                            onToggleFavorite = viewModel::toggleMovieFavorite,
+                            onPlayMovie = { movie ->
+                                playbackScope.launch {
+                                    when (val result = viewModel.resolveMovieStream(movie)) {
+                                        is Result.Success -> {
+                                            val (url, headers) = result.data
+                                            navController.navigate(
+                                                Screen.Player.createRoute(
+                                                    streamUrl = url,
+                                                    title = movie.name,
+                                                    streamName = movie.name,
+                                                    headers = headers,
+                                                    contentId = "iptv_movie:${movie.providerId}:${movie.id}",
+                                                    contentType = "iptv_movie",
+                                                    contentName = movie.name,
+                                                    videoId = movie.id.toString(),
+                                                    poster = movie.posterUrl,
+                                                    backdrop = movie.backdropUrl
+                                                )
+                                            ) { popUpTo(Screen.Player.route) { inclusive = true } }
+                                        }
+                                        is Result.Error -> Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                                        else -> Toast.makeText(context, "Erreur de lecture", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
                 is TiviContent.SeriesContent -> {
@@ -208,7 +253,15 @@ fun IptvTiviScreen(
                     } else if (c.isLoading) {
                         TiviEmptyHint("Chargement...")
                     } else {
-                        TiviSeriesGrid(series = c.series)
+                        TiviSeriesContent(
+                            series = c.series,
+                            onSeriesFocused = viewModel::enrichSeriesDetails,
+                            onToggleFavorite = viewModel::toggleSeriesFavorite,
+                            onOpenSeries = { series ->
+                                val providerId = uiState.selectedProviderId ?: series.providerId
+                                navController.navigate(Screen.IptvSeriesDetail.createRoute(series.id, providerId))
+                            }
+                        )
                     }
                 }
                 TiviContent.Empty -> {
@@ -223,25 +276,46 @@ fun IptvTiviScreen(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TiviMovieGrid(
+private fun TiviMovieContent(
     movies: List<com.streamvault.domain.model.Movie>,
+    onMovieFocused: (com.streamvault.domain.model.Movie) -> Unit,
+    onToggleFavorite: (com.streamvault.domain.model.Movie) -> Unit,
+    onPlayMovie: (com.streamvault.domain.model.Movie) -> Unit,
 ) {
     if (movies.isEmpty()) {
         TiviEmptyHint("Aucun film dans ce groupe")
         return
     }
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(120.dp),
-        modifier = Modifier.fillMaxSize().padding(8.dp),
-        contentPadding = PaddingValues(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(movies, key = { it.id }) { movie ->
-            TiviMediaCard(
-                title = movie.name,
-                posterUrl = movie.posterUrl,
+    var focusedMovieId by remember { mutableStateOf<Long?>(null) }
+    val focusedMovie = movies.firstOrNull { it.id == focusedMovieId } ?: movies.firstOrNull()
+    LaunchedEffect(focusedMovie?.id) { focusedMovie?.let(onMovieFocused) }
+    Column(Modifier.fillMaxSize()) {
+        focusedMovie?.let { movie ->
+            IptvFocusedMediaPanel(
+                details = movie.toTiviFocusedDetails(),
+                modifier = Modifier.fillMaxWidth(),
             )
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(120.dp),
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
+            contentPadding = PaddingValues(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(movies, key = { it.id }) { movie ->
+                TiviMediaCard(
+                    title = movie.name,
+                    posterUrl = movie.posterUrl,
+                    isFavorite = movie.isFavorite,
+                    onLongPress = { onToggleFavorite(movie) },
+                    onFocused = {
+                        focusedMovieId = movie.id
+                        onMovieFocused(movie)
+                    },
+                    onClick = { onPlayMovie(movie) },
+                )
+            }
         }
     }
 }
@@ -250,25 +324,46 @@ private fun TiviMovieGrid(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TiviSeriesGrid(
+private fun TiviSeriesContent(
     series: List<com.streamvault.domain.model.Series>,
+    onSeriesFocused: (com.streamvault.domain.model.Series) -> Unit,
+    onToggleFavorite: (com.streamvault.domain.model.Series) -> Unit,
+    onOpenSeries: (com.streamvault.domain.model.Series) -> Unit,
 ) {
     if (series.isEmpty()) {
-        TiviEmptyHint("Aucune s\u00e9rie dans ce groupe")
+        TiviEmptyHint("Aucune série dans ce groupe")
         return
     }
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(120.dp),
-        modifier = Modifier.fillMaxSize().padding(8.dp),
-        contentPadding = PaddingValues(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(series, key = { it.id }) { s ->
-            TiviMediaCard(
-                title = s.name,
-                posterUrl = s.posterUrl,
+    var focusedSeriesId by remember { mutableStateOf<Long?>(null) }
+    val focusedSeries = series.firstOrNull { it.id == focusedSeriesId } ?: series.firstOrNull()
+    LaunchedEffect(focusedSeries?.id) { focusedSeries?.let(onSeriesFocused) }
+    Column(Modifier.fillMaxSize()) {
+        focusedSeries?.let { item ->
+            IptvFocusedMediaPanel(
+                details = item.toTiviFocusedDetails(),
+                modifier = Modifier.fillMaxWidth(),
             )
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(120.dp),
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
+            contentPadding = PaddingValues(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(series, key = { it.id }) { item ->
+                TiviMediaCard(
+                    title = item.name,
+                    posterUrl = item.posterUrl,
+                    isFavorite = item.isFavorite,
+                    onLongPress = { onToggleFavorite(item) },
+                    onFocused = {
+                        focusedSeriesId = item.id
+                        onSeriesFocused(item)
+                    },
+                    onClick = { onOpenSeries(item) },
+                )
+            }
         }
     }
 }
@@ -280,46 +375,128 @@ private fun TiviSeriesGrid(
 private fun TiviMediaCard(
     title: String,
     posterUrl: String?,
+    isFavorite: Boolean,
+    onLongPress: () -> Unit,
+    onFocused: () -> Unit,
+    onClick: () -> Unit,
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(10.dp)
+    val longPressKeyTracker = rememberLongPressKeyTracker()
     val borderColor by animateColorAsState(
         targetValue = if (isFocused) NuvioColors.FocusRing else Color.Transparent,
         label = "cardBorder"
     )
 
-    Column(
+    Card(
+        onClick = onClick,
         modifier = Modifier
-            .width(120.dp)
-            .onFocusChanged { isFocused = it.isFocused },
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(NuvioColors.BackgroundCard)
-                .border(1.5.dp, borderColor, RoundedCornerShape(8.dp)),
-        ) {
-            if (!posterUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = posterUrl,
-                    contentDescription = title,
-                    modifier = Modifier.fillMaxSize(),
-                )
+            .width(IptvVodPosterWidth)
+            .onFocusChanged {
+                isFocused = it.isFocused
+                if (it.isFocused) onFocused()
             }
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                if (native.action == AndroidKeyEvent.ACTION_DOWN &&
+                    native.keyCode == AndroidKeyEvent.KEYCODE_MENU
+                ) {
+                    onLongPress()
+                    true
+                } else {
+                    longPressKeyTracker.handle(
+                        native,
+                        { keyCode ->
+                            keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+                                keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+                                keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER
+                        },
+                        onLongPress
+                    )
+                }
+            },
+        shape = CardDefaults.shape(shape),
+        colors = CardDefaults.colors(
+            containerColor = NuvioColors.BackgroundCard,
+            focusedContainerColor = NuvioColors.BackgroundCard,
+        ),
+        border = CardDefaults.border(
+            border = Border(border = BorderStroke(1.dp, Color.Transparent), shape = shape),
+            focusedBorder = Border(border = BorderStroke(2.dp, borderColor), shape = shape),
+        ),
+        scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.97f),
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
+                    .background(NuvioColors.BackgroundElevated),
+            ) {
+                if (!posterUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = posterUrl,
+                        contentDescription = title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+                if (isFavorite) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = null,
+                        tint = Color(0xFFFFD700),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(22.dp),
+                    )
+                }
+            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = NuvioColors.TextPrimary,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NuvioColors.Secondary)
+                    .padding(horizontal = 8.dp, vertical = 7.dp),
+            )
         }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = title,
-            fontSize = 10.sp,
-            color = NuvioColors.TextSecondary,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
+private fun com.streamvault.domain.model.Movie.toTiviFocusedDetails(): IptvFocusedMediaDetails = IptvFocusedMediaDetails(
+    title = name,
+    year = year ?: releaseDate?.take(4),
+    rating = rating,
+    duration = duration ?: durationSeconds.takeIf { it > 0 }?.let(::formatTiviDurationSeconds),
+    genre = genre,
+    cast = cast,
+    director = director,
+    plot = plot,
+)
+
+private fun com.streamvault.domain.model.Series.toTiviFocusedDetails(): IptvFocusedMediaDetails = IptvFocusedMediaDetails(
+    title = name,
+    year = releaseDate?.take(4),
+    rating = rating,
+    duration = episodeRunTime,
+    genre = genre,
+    cast = cast,
+    director = director,
+    plot = plot,
+)
+
+private fun formatTiviDurationSeconds(seconds: Int): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    return if (hours > 0) "${hours}h ${minutes}min" else "${minutes}min"
+}
 // -- Hint vide ----------------------------------------------------------------
 
 @Composable

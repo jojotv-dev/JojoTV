@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.iptv
+package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -66,7 +66,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
@@ -83,6 +82,10 @@ class IptvSeriesDetailViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             _series.value = seriesRepository.getSeriesById(seriesId)
+            when (val result = seriesRepository.getSeriesDetails(providerId, seriesId)) {
+                is Result.Success -> _series.value = result.data
+                else -> Unit
+            }
         }
     }
 

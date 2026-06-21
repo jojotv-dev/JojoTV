@@ -684,6 +684,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
 
     val (computedHomeRows, nextGridItems) = withContext(Dispatchers.Default) {
         val computedHomeRows = buildList {
+            addAll(iptvFavoriteRows)
             val displayRowsByKey = displayRows.associateBy { "${it.addonId}_${it.apiType}_${it.catalogId}" }
             // Build a lookup of placeholder descriptors by key for lazy catalogs
             val placeholdersByKey = synchronized(catalogStateLock) {

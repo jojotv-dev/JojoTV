@@ -1,21 +1,22 @@
-﻿package com.nuvio.tv.ui.screens.iptv.tivi.components
+package com.nuvio.tv.ui.screens.iptv.tivi.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
@@ -32,7 +33,8 @@ fun TiviProviderTree(
     onProviderFocus: (Long) -> Unit,
     onGroupClick: (Long, Long) -> Unit,
     onGroupFocus: (Long, Long) -> Unit,
-    onManageProvider: ((Long) -> Unit)? = null,
+    onProviderLongClick: (Long) -> Unit,
+    onGroupLongClick: (Long, Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -50,7 +52,7 @@ fun TiviProviderTree(
                     isSelected = node.provider.id == selectedProviderId,
                     onClick = { onProviderClick(node.provider.id) },
                     onFocus = { onProviderFocus(node.provider.id) },
-                    onManage = onManageProvider?.let { manage -> { manage(node.provider.id) } },
+                    onLongClick = { onProviderLongClick(node.provider.id) },
                 )
             }
             if (node.isExpanded) {
@@ -60,6 +62,7 @@ fun TiviProviderTree(
                         isSelected = group.id == selectedGroupId,
                         onClick = { onGroupClick(node.provider.id, group.id) },
                         onFocus = { onGroupFocus(node.provider.id, group.id) },
+                        onLongClick = { onGroupLongClick(node.provider.id, group.id) },
                     )
                 }
             }
@@ -75,28 +78,33 @@ private fun TiviProviderHeader(
     isSelected: Boolean,
     onClick: () -> Unit,
     onFocus: () -> Unit,
-    onManage: (() -> Unit)?,
+    onLongClick: () -> Unit,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val rotation by animateFloatAsState(
         targetValue = if (isExpanded) 180f else 0f,
         label = "chevron"
     )
+    val accent = MaterialTheme.colorScheme.primary
+    val selectedBackground = accent.copy(alpha = 0.14f)
+    val shape = RoundedCornerShape(8.dp)
 
     Surface(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (isFocused) Modifier.border(2.dp, accent, shape) else Modifier)
             .onFocusChanged {
                 isFocused = it.isFocused
                 if (it.isFocused) onFocus()
             },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) NuvioColors.FocusBackground else Color.Transparent,
-            focusedContainerColor = NuvioColors.FocusBackground,
-            pressedContainerColor = NuvioColors.FocusBackground,
+            containerColor = if (isSelected) selectedBackground else TIVI_EPG_BACKGROUND,
+            focusedContainerColor = TIVI_EPG_BACKGROUND,
+            pressedContainerColor = accent.copy(alpha = 0.12f),
         ),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        shape = ClickableSurfaceDefaults.shape(shape),
     ) {
         Row(
             modifier = Modifier
@@ -110,19 +118,11 @@ private fun TiviProviderHeader(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (isFocused || isSelected) NuvioColors.TextPrimary else NuvioColors.TextSecondary,
-                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).then(if (isFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                onManage?.let {
-                    IconButton(onClick = it) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = "Gérer les groupes et chaînes",
-                            tint = NuvioColors.TextSecondary,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
                 androidx.compose.material3.Icon(
                     imageVector = Icons.Filled.ExpandMore,
                     contentDescription = null,
@@ -143,23 +143,29 @@ private fun TiviGroupItem(
     isSelected: Boolean,
     onClick: () -> Unit,
     onFocus: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val accent = MaterialTheme.colorScheme.primary
+    val selectedBackground = accent.copy(alpha = 0.14f)
+    val shape = RoundedCornerShape(8.dp)
 
     Surface(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (isFocused) Modifier.border(2.dp, accent, shape) else Modifier)
             .onFocusChanged {
                 isFocused = it.isFocused
                 if (it.isFocused) onFocus()
             },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) NuvioColors.FocusBackground else Color.Transparent,
-            focusedContainerColor = NuvioColors.BackgroundCard,
-            pressedContainerColor = NuvioColors.FocusBackground,
+            containerColor = if (isSelected) selectedBackground else TIVI_EPG_BACKGROUND,
+            focusedContainerColor = TIVI_EPG_BACKGROUND,
+            pressedContainerColor = accent.copy(alpha = 0.12f),
         ),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        shape = ClickableSurfaceDefaults.shape(shape),
     ) {
         Row(
             modifier = Modifier
@@ -172,7 +178,7 @@ private fun TiviGroupItem(
                     modifier = Modifier
                         .width(3.dp)
                         .height(14.dp)
-                        .background(NuvioColors.Secondary, RoundedCornerShape(2.dp))
+                        .background(accent, RoundedCornerShape(2.dp))
                 )
                 Spacer(Modifier.width(8.dp))
             } else {
@@ -187,6 +193,10 @@ private fun TiviGroupItem(
                     else       -> NuvioColors.TextTertiary
                 },
                 fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).then(if (isFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
             )
         }
     }

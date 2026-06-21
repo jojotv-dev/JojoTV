@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.navigation
+package com.nuvio.tv.ui.navigation
 
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.EnterTransition
@@ -61,6 +61,7 @@ import com.nuvio.tv.ui.screens.iptv.IptvRecordingScheduleScreen
 import com.nuvio.tv.ui.screens.iptv.IptvRecordingListScreen
 import com.nuvio.tv.ui.screens.iptv.IptvEpgScreen
 import com.nuvio.tv.ui.screens.iptv.tivi.IptvTiviScreen
+import com.nuvio.tv.ui.screens.iptv.tivi.IptvTiviViewModel
 import com.nuvio.tv.ui.screens.iptv.tivi.TiviTab
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.ui.screens.stream.StreamScreen
@@ -80,6 +81,11 @@ fun NuvioNavHost(
     startDestination: String = Screen.Home.route,
     hideBuiltInHeaders: Boolean = false
 ) {
+    val liveTiviViewModel: IptvTiviViewModel =
+        androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
+
+    val navCoroutineScope = rememberCoroutineScope()
+
     fun isStreamToPlayer(from: String, to: String): Boolean {
         return from.startsWith("stream/") && to.startsWith("player/")
     }
@@ -250,7 +256,7 @@ fun NuvioNavHost(
                     progress.contentType.equals("freebox", ignoreCase = true) -> progress.contentId
                     else -> return false
                 }
-                coroutineScope.launch {
+                navCoroutineScope.launch {
                     freeboxBrowserViewModel.playbackRequestForContent(
                         contentIdOrVideoId = freeboxId,
                         title = progress.name,
@@ -263,32 +269,114 @@ fun NuvioNavHost(
                 return true
             }
 
+            fun navigateIptvMovieContinueWatching(
+                item: ContinueWatchingItem,
+                startFromBeginning: Boolean = false
+            ): Boolean {
+                val progress = (item as? ContinueWatchingItem.InProgress)?.progress ?: return false
+                if (!progress.contentType.equals("iptv_movie", ignoreCase = true) &&
+                    !progress.contentId.startsWith("iptv_movie:", ignoreCase = true)
+                ) {
+                    return false
+                }
+                val parts = progress.contentId.split(':')
+                val providerId = parts.getOrNull(1)?.toLongOrNull() ?: return false
+                val movieId = parts.getOrNull(2)?.toLongOrNull()
+                    ?: progress.videoId.toLongOrNull()
+                    ?: return false
+                navCoroutineScope.launch {
+                    when (val result = liveTiviViewModel.resolveMovieFromProgress(providerId, movieId)) {
+                        is com.streamvault.domain.model.Result.Success -> {
+                            val (movie, url, headers) = result.data
+                            navController.navigate(
+                                Screen.Player.createRoute(
+                                    streamUrl = url,
+                                    title = movie.name,
+                                    streamName = movie.name,
+                                    headers = headers,
+                                    contentId = progress.contentId,
+                                    contentType = "iptv_movie",
+                                    contentName = movie.name,
+                                    videoId = movie.id.toString(),
+                                    poster = movie.posterUrl ?: progress.poster,
+                                    backdrop = movie.backdropUrl ?: progress.backdrop,
+                                    startFromBeginning = startFromBeginning,
+                                    returnToHomeOnBack = true,
+                                )
+                            ) { popUpTo(Screen.Player.route) { inclusive = true } }
+                        }
+                        else -> Unit
+                    }
+                }
+                return true
+            }
             HomeScreen(
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    val heroBackdrop = HeroBackdropState.consumeAndClear()
-                    navController.navigate(
-                        Screen.Detail.createRoute(
-                            itemId = itemId,
-                            itemType = itemType,
-                            addonBaseUrl = addonBaseUrl,
-                            heroBackdropUrl = heroBackdrop
-                        )
-                    )
+                    val iptvFavoriteParts = itemId.split(':')
+                    val providerId = iptvFavoriteParts.getOrNull(1)?.toLongOrNull()
+                    val contentId = iptvFavoriteParts.getOrNull(2)?.toLongOrNull()
+                    when {
+                        itemType == "iptv_movie" && providerId != null && contentId != null -> {
+                            navCoroutineScope.launch {
+                                when (val result = liveTiviViewModel.resolveMovieFromProgress(providerId, contentId)) {
+                                    is com.streamvault.domain.model.Result.Success -> {
+                                        val (movie, url, headers) = result.data
+                                        navController.navigate(
+                                            Screen.Player.createRoute(
+                                                streamUrl = url,
+                                                title = movie.name,
+                                                streamName = movie.name,
+                                                headers = headers,
+                                                contentId = itemId,
+                                                contentType = "iptv_movie",
+                                                contentName = movie.name,
+                                                videoId = movie.id.toString(),
+                                                poster = movie.posterUrl,
+                                                backdrop = movie.backdropUrl,
+                                                returnToHomeOnBack = true,
+                                            )
+                                        ) { popUpTo(Screen.Player.route) { inclusive = true } }
+                                    }
+                                    else -> Unit
+                                }
+                            }
+                        }
+                        itemType == "iptv_series" && providerId != null && contentId != null -> {
+                            navController.navigate(Screen.IptvSeriesDetail.createRoute(contentId, providerId))
+                        }
+                        else -> {
+                            val heroBackdrop = HeroBackdropState.consumeAndClear()
+                            navController.navigate(
+                                Screen.Detail.createRoute(
+                                    itemId = itemId,
+                                    itemType = itemType,
+                                    addonBaseUrl = addonBaseUrl,
+                                    heroBackdropUrl = heroBackdrop
+                                )
+                            )
+                        }
+                    }
                 },
                 onContinueWatchingClick = { item ->
-                    if (!navigateFreeboxContinueWatching(item)) {
+                    if (!navigateFreeboxContinueWatching(item) &&
+                        !navigateIptvMovieContinueWatching(item)
+                    ) {
                         navController.navigate(createContinueWatchingRoute(item))
                     }
                 },
                 onContinueWatchingStartFromBeginning = { item ->
-                    if (!navigateFreeboxContinueWatching(item, startFromBeginning = true)) {
+                    if (!navigateFreeboxContinueWatching(item, startFromBeginning = true) &&
+                        !navigateIptvMovieContinueWatching(item, startFromBeginning = true)
+                    ) {
                         navController.navigate(
                             createContinueWatchingRoute(item, startFromBeginning = true)
                         )
                     }
                 },
                 onContinueWatchingPlayManually = { item ->
-                    if (!navigateFreeboxContinueWatching(item)) {
+                    if (!navigateFreeboxContinueWatching(item) &&
+                        !navigateIptvMovieContinueWatching(item)
+                    ) {
                         navController.navigate(
                             createContinueWatchingRoute(item, manualSelection = true)
                         )
@@ -300,12 +388,13 @@ fun NuvioNavHost(
                 onNavigateToFolderDetail = { collectionId, folderId ->
                     navController.navigate(Screen.FolderDetail.createRoute(collectionId, folderId))
                 },
-                onNavigateToFreebox = { path ->
-                    coroutineScope.launch {
+                onNavigateToFreebox = { path, artworkUrl ->
+                    navCoroutineScope.launch {
                         val freeboxPath = freeboxPathFromContentId(path)
                         freeboxBrowserViewModel.playbackRequestForContent(
                             contentIdOrVideoId = path,
-                            title = freeboxPath.substringAfterLast('/')
+                            title = freeboxPath.substringAfterLast('/'),
+                            artworkUrl = artworkUrl
                         )?.let { request ->
                             navigateToFreeboxPlayer(request)
                         }
@@ -1077,7 +1166,39 @@ fun NuvioNavHost(
             SearchScreen(
                 viewModel = searchViewModel,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-                    navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl))
+                    when (itemType) {
+                        com.nuvio.tv.ui.screens.search.IPTV_LIVE_SEARCH_TYPE,
+                        com.nuvio.tv.ui.screens.search.IPTV_MOVIE_SEARCH_TYPE -> {
+                            navCoroutineScope.launch {
+                                searchViewModel.resolveIptvPlayback(itemId, itemType)?.let { request ->
+                                    navController.navigate(
+                                        Screen.Player.createRoute(
+                                            streamUrl = request.streamUrl,
+                                            title = request.title,
+                                            headers = request.headers,
+                                            contentType = "iptv",
+                                            poster = request.posterUrl
+                                        )
+                                    ) {
+                                        popUpTo(Screen.Player.route) { inclusive = true }
+                                    }
+                                }
+                            }
+                        }
+                        com.nuvio.tv.ui.screens.search.IPTV_SERIES_SEARCH_TYPE -> {
+                            val parsed = com.nuvio.tv.ui.screens.search.parseIptvSearchItemId(itemId)
+                            if (parsed != null) {
+                                navController.navigate(
+                                    Screen.IptvSeriesDetail.createRoute(parsed.third, parsed.second)
+                                )
+                            }
+                        }
+                        else -> {
+                            navController.navigate(
+                                Screen.Detail.createRoute(itemId, itemType, addonBaseUrl)
+                            )
+                        }
+                    }
                 },
                 onNavigateToSeeAll = { catalogId, addonId, type ->
                     navController.navigate(
@@ -1502,16 +1623,25 @@ fun NuvioNavHost(
             IptvEpgScreen(onBack = { navController.popBackStack() })
         }
         composable(Screen.IptvTivi.route) {
-            IptvTiviScreen(navController = navController, onBack = { navController.popBackStack() })
+            IptvTiviScreen(
+                navController = navController,
+                onBack = { navController.popBackStack() },
+                viewModel = liveTiviViewModel
+            )
         }
         composable(Screen.IptvLiveProviders.route) {
-            IptvTiviScreen(navController = navController, initialTab = TiviTab.LIVE, onBack = { navController.popBackStack() })
+            IptvTiviScreen(
+                navController = navController,
+                initialTab = TiviTab.LIVE,
+                onBack = { navController.popBackStack() },
+                viewModel = liveTiviViewModel
+            )
         }
         composable(Screen.IptvMovieProviders.route) {
-            IptvTiviScreen(navController = navController, initialTab = TiviTab.MOVIES, onBack = { navController.popBackStack() })
+            IptvTiviScreen(navController = navController, initialTab = TiviTab.MOVIES, onBack = { navController.popBackStack() }, viewModel = liveTiviViewModel)
         }
         composable(Screen.IptvSeriesProviders.route) {
-            IptvTiviScreen(navController = navController, initialTab = TiviTab.SERIES, onBack = { navController.popBackStack() })
+            IptvTiviScreen(navController = navController, initialTab = TiviTab.SERIES, onBack = { navController.popBackStack() }, viewModel = liveTiviViewModel)
         }
         composable(
             route = Screen.IptvRecordingSchedule.route,
@@ -1606,6 +1736,7 @@ fun NuvioNavHost(
                     navController.navigate(Screen.IptvMovieCategory.createRoute(providerId, providerName))
                 },
                 onNavigateToSeries = {
+                    navController.navigate(Screen.IptvSeriesCategory.createRoute(providerId, providerName))
                 }
             )
         }
@@ -1754,6 +1885,3 @@ private fun parseRouteHeaders(headersJson: String?): Map<String, String> {
         json.keys().asSequence().associateWith { key -> json.optString(key) }
     }.getOrDefault(emptyMap())
 }
-
-
-

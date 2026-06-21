@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.home
+package com.nuvio.tv.ui.screens.home
 
 import android.content.Context
 import android.os.SystemClock
@@ -22,12 +22,15 @@ import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
+import com.nuvio.tv.data.freebox.FreeboxFrameThumbnailService
 import com.nuvio.tv.data.freebox.FreeboxOsClient
 import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
+import com.nuvio.tv.data.freebox.freeboxContentIdForPath
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.data.freebox.freeboxLegacyContentIdFor
 import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.data.local.FreeboxSettingsDataStore
+import com.nuvio.tv.data.local.FreeboxPosterOverrideDataStore
 import com.nuvio.tv.data.trailer.TrailerService
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.CatalogDescriptor
@@ -41,10 +44,15 @@ import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.data.repository.MDBListRepository
 import com.nuvio.tv.domain.model.MDBListSettings
 import com.nuvio.tv.domain.model.TmdbSettings
+import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.CatalogRepository
 import com.nuvio.tv.domain.repository.LibraryRepository
 import com.nuvio.tv.domain.repository.MetaRepository
+import com.streamvault.domain.repository.FavoriteRepository
+import com.streamvault.domain.repository.MovieRepository
+import com.streamvault.domain.repository.ProviderRepository
+import com.streamvault.domain.repository.SeriesRepository
 import com.nuvio.tv.domain.repository.WatchProgressRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -86,12 +94,18 @@ class HomeViewModel @Inject constructor(
     internal val trailerService: TrailerService,
     internal val watchedItemsPreferences: WatchedItemsPreferences,
     internal val freeboxOsClient: FreeboxOsClient,
+    internal val freeboxFrameThumbnailService: FreeboxFrameThumbnailService,
     internal val freeboxSettingsDataStore: FreeboxSettingsDataStore,
     internal val freeboxDurationCacheDataStore: com.nuvio.tv.data.local.FreeboxDurationCacheDataStore,
+    internal val freeboxPosterOverrideDataStore: FreeboxPosterOverrideDataStore,
     internal val watchedSeriesStateHolder: com.nuvio.tv.data.local.WatchedSeriesStateHolder,
     internal val cwEnrichmentCache: ContinueWatchingEnrichmentCache,
     internal val profileManager: com.nuvio.tv.core.profile.ProfileManager,
-    internal val tvRecommendationManager: TvRecommendationManager
+    internal val tvRecommendationManager: TvRecommendationManager,
+    internal val iptvProviderRepository: ProviderRepository,
+    internal val iptvFavoriteRepository: FavoriteRepository,
+    internal val iptvMovieRepository: MovieRepository,
+    internal val iptvSeriesRepository: SeriesRepository
 ) : ViewModel() {
     companion object {
         internal const val TAG = "HomeViewModel"
@@ -106,6 +120,9 @@ class HomeViewModel @Inject constructor(
         internal const val EXTERNAL_META_PREFETCH_ADJACENT_DEBOUNCE_MS = 120L
         internal const val MAX_POSTER_STATUS_OBSERVERS = 8
         private const val MAX_FREEBOX_DURATION_PROBES = 2
+        internal const val IPTV_FAVORITES_ADDON_ID = "iptv_favorites"
+        internal const val IPTV_MOVIE_FAVORITES_CATALOG_ID = "iptv_favorite_movies"
+        internal const val IPTV_SERIES_FAVORITES_CATALOG_ID = "iptv_favorite_series"
         private val FREEBOX_DURATION_RETRY_DELAYS_MS = longArrayOf(0L, 2_000L, 5_000L)
     }
 
@@ -114,6 +131,10 @@ class HomeViewModel @Inject constructor(
 
     private val freeboxDurationProbeSemaphore = Semaphore(MAX_FREEBOX_DURATION_PROBES)
     private val freeboxDurationProbesInFlight = Collections.synchronizedSet(mutableSetOf<String>())
+    @Volatile private var freeboxAutomaticArtwork: Map<String, String> = emptyMap()
+    @Volatile private var freeboxAutomaticBackdrops: Map<String, String> = emptyMap()
+    @Volatile private var freeboxPosterOverrides: Map<String, String> = emptyMap()
+    @Volatile internal var iptvFavoriteRows: List<HomeRow.Catalog> = emptyList()
 
     internal val _movieWatchedStatus = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val movieWatchedStatus: StateFlow<Map<String, Boolean>> = _movieWatchedStatus.asStateFlow()
@@ -296,6 +317,13 @@ class HomeViewModel @Inject constructor(
                 }
         }
 
+        viewModelScope.launch {
+            freeboxPosterOverrideDataStore.overrides.collectLatest { overrides ->
+                freeboxPosterOverrides = overrides
+                publishFreeboxArtwork()
+            }
+        }
+
         observeStartupAuthNotice()
         viewModelScope.launch {
             profileManager.activeProfileReady.first { it }
@@ -303,6 +331,7 @@ class HomeViewModel @Inject constructor(
             observeModernHomePresentation()
             loadContinueWatching()
             loadFreeboxVideos()
+            observeIptvFavoriteRows()
             watchedSeriesStateHolder.loadFromDisk()
             observeExternalMetaPrefetchPreference()
             observeContinueWatchingSortMode()
@@ -909,6 +938,141 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun renameFreeboxVideo(entry: FreeboxFileEntry, newName: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            renameFreeboxEntry(entry = entry, newName = newName, sourceProgress = null)
+        }
+    }
+
+    fun renameFreeboxContinueWatching(item: ContinueWatchingItem, newName: String) {
+        val progress = (item as? ContinueWatchingItem.InProgress)?.progress ?: return
+        if (!progress.contentId.startsWith("freebox:")) return
+        val path = freeboxPathFromContentId(progress.contentId)
+        if (path.isBlank()) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            renameFreeboxEntry(
+                entry = FreeboxFileEntry(
+                    name = freeboxFileNameOnly(path),
+                    path = path,
+                    encodedPath = null,
+                    isDirectory = false,
+                    durationMs = progress.duration.takeIf { it > 0L }
+                ),
+                newName = newName,
+                sourceProgress = progress
+            )
+        }
+    }
+
+    fun markFreeboxAsUnwatched(item: ContinueWatchingItem) {
+        val progress = (item as? ContinueWatchingItem.InProgress)?.progress ?: return
+        if (!progress.contentId.startsWith("freebox:")) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            watchProgressRepository.removeProgress(progress.contentId, progress.season, progress.episode)
+            pruneStaleFreeboxFromContinueWatchingCache(progress.contentId)
+        }
+    }
+
+    private suspend fun renameFreeboxEntry(
+        entry: FreeboxFileEntry,
+        newName: String,
+        sourceProgress: WatchProgress?
+    ) {
+        val trimmedName = newName.trim()
+        if (trimmedName.isBlank() || trimmedName == entry.name) return
+        try {
+            val settings = freeboxSettingsDataStore.settings.first()
+            if (!settings.hasSavedConnection) return
+            val token = freeboxOsClient.openSession(settings).getOrNull()?.sessionToken ?: return
+            val settingsWithToken = settings.copy(sessionToken = token)
+            freeboxOsClient.rename(settingsWithToken, entry.path, entry.encodedPath, trimmedName).getOrThrow()
+
+            val oldContentId = sourceProgress?.contentId ?: freeboxContentIdForEntry(entry)
+            val newPath = renamedFreeboxPath(entry.path, trimmedName)
+            val renamedEntry = entry.copy(name = trimmedName, path = newPath, encodedPath = null)
+            val newContentId = freeboxContentIdForEntry(renamedEntry)
+            val legacyNewContentId = freeboxContentIdForPath(newPath)
+            freeboxPosterOverrideDataStore.move(oldContentId, newContentId)
+            val allProgress = watchProgressRepository.allProgress.first()
+            val progressToMigrate = sourceProgress
+                ?: allProgress.firstOrNull { progress ->
+                    progress.contentId == oldContentId || freeboxPathFromContentId(progress.contentId) == entry.path
+                }
+
+            if (progressToMigrate != null) {
+                val migrated = progressToMigrate.copy(
+                    contentId = newContentId,
+                    videoId = newContentId,
+                    name = trimmedName,
+                    duration = progressToMigrate.duration.takeIf { it > 0L }
+                        ?: entry.durationMs?.takeIf { it > 0L }
+                        ?: 0L
+                )
+                watchProgressRepository.saveProgress(migrated)
+                if (progressToMigrate.contentId != newContentId) {
+                    watchProgressRepository.removeProgress(progressToMigrate.contentId, progressToMigrate.season, progressToMigrate.episode)
+                    pruneStaleFreeboxFromContinueWatchingCache(progressToMigrate.contentId)
+                }
+            }
+
+            _uiState.update { state ->
+                val movedArtwork = state.freeboxVideoArtwork[oldContentId]
+                    ?: state.freeboxVideoArtwork[legacyNewContentId]
+                val artwork = state.freeboxVideoArtwork
+                    .minus(oldContentId)
+                    .minus(legacyNewContentId)
+                    .let { current -> if (movedArtwork != null) current + (newContentId to movedArtwork) else current }
+                val movedDuration = state.freeboxVideoProbedDurations[entry.path]
+                val durations = state.freeboxVideoProbedDurations
+                    .minus(entry.path)
+                    .let { current -> if (movedDuration != null) current + (newPath to movedDuration) else current }
+                state.copy(
+                    freeboxVideoEntries = state.freeboxVideoEntries.map { current ->
+                        if (current.path == entry.path) renamedEntry else current
+                    },
+                    freeboxVideoArtwork = artwork,
+                    freeboxVideoProbedDurations = durations
+                )
+            }
+            loadFreeboxVideos()
+        } catch (error: Exception) {
+            Log.w(TAG, "Impossible de renommer le fichier Freebox: ${entry.path}", error)
+        }
+    }
+
+    private fun renamedFreeboxPath(path: String, newName: String): String {
+        val directory = path.substringBeforeLast("/", missingDelimiterValue = "")
+        return if (directory.isBlank()) newName else "$directory/$newName"
+    }
+    private fun publishFreeboxArtwork() {
+        val artwork = freeboxAutomaticArtwork + freeboxPosterOverrides
+        _uiState.update { state ->
+            val enrichedCw = state.continueWatchingItems.map { item ->
+                if (item is ContinueWatchingItem.InProgress &&
+                    (item.progress.contentType.equals("freebox", ignoreCase = true) ||
+                        item.progress.contentId.startsWith("freebox:", ignoreCase = true))
+                ) {
+                    val contentId = item.progress.contentId
+                    item.copy(
+                        progress = item.progress.copy(
+                            poster = artwork[contentId] ?: item.progress.poster,
+                            backdrop = freeboxAutomaticBackdrops[contentId]
+                                ?: artwork[contentId]
+                                ?: item.progress.backdrop,
+                        )
+                    )
+                } else {
+                    item
+                }
+            }
+            state.copy(
+                freeboxVideoArtwork = artwork,
+                freeboxVideoBackdrops = freeboxAutomaticBackdrops,
+                continueWatchingItems = enrichedCw
+            )
+        }
+    }
+
     fun loadFreeboxVideos() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
@@ -924,20 +1088,32 @@ class HomeViewModel @Inject constructor(
                         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { probeMissingFreeboxDurations(settingsWithToken, videos) }
                         // Charger les artworks TMDB en arriere-plan
                         val artworkMap = mutableMapOf<String, String>()
+                        val backdropMap = mutableMapOf<String, String>()
                         videos.forEach { entry ->
                             try {
                                 val contentId = freeboxContentIdForEntry(entry)
                                 val query = com.nuvio.tv.data.freebox.freeboxTmdbSearchQuery(entry.name)
                                 val meta = tmdbService.fetchMetadataForTitleQuery(query)
-                                val artwork = meta?.posterUrl ?: meta?.backdropUrl
+                                val artwork = meta?.posterUrl
+                                    ?: meta?.backdropUrl
+                                    ?: freeboxFrameThumbnailService.thumbnailUri(entry)
                                 if (!artwork.isNullOrBlank()) {
                                     artworkMap[contentId] = artwork
                                 }
+                                val backdrop = meta?.backdropUrl ?: artwork
+                                if (!backdrop.isNullOrBlank()) {
+                                    backdropMap[contentId] = backdrop
+                                }
+                                if (!artwork.isNullOrBlank() || !backdrop.isNullOrBlank()) {
+                                    freeboxAutomaticArtwork = artworkMap.toMap()
+                                    freeboxAutomaticBackdrops = backdropMap.toMap()
+                                    publishFreeboxArtwork()
+                                }
                             } catch (_: Exception) {}
                         }
-                        if (artworkMap.isNotEmpty()) {
-                            _uiState.update { it.copy(freeboxVideoArtwork = artworkMap) }
-                        }
+                        freeboxAutomaticArtwork = artworkMap
+                        freeboxAutomaticBackdrops = backdropMap
+                        publishFreeboxArtwork()
                     }
             } catch (e: Exception) {
                 // Freebox non connectee ou dossier absent, on ignore silencieusement

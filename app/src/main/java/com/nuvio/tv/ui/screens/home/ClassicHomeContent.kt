@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.home
+package com.nuvio.tv.ui.screens.home
 
 import com.nuvio.tv.LocalContentFocusRequester
 import androidx.compose.animation.core.AnimationSpec
@@ -37,6 +37,7 @@ import com.nuvio.tv.ui.util.dpadVerticalFastScroll
 import com.nuvio.tv.ui.util.asStable
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.WatchProgress
@@ -81,7 +82,10 @@ fun ClassicHomeContent(
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onRemoveContinueWatching: (String, Int?, Int?, Boolean) -> Unit,
     onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
-    onNavigateToFreebox: (String) -> Unit = {},
+    onRenameFreeboxProgress: (ContinueWatchingItem, String) -> Unit = { _, _ -> },
+    onMarkFreeboxUnwatched: (ContinueWatchingItem) -> Unit = {},
+    onRenameFreeboxVideo: (FreeboxFileEntry, String) -> Unit = { _, _ -> },
+    onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean = { false },
     onCatalogItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> },
     onRequestTrailerPreview: (MetaPreview) -> Unit,
@@ -91,6 +95,9 @@ fun ClassicHomeContent(
     scrollToTopTrigger: Int = 0,
     onRequestLazyCatalogLoad: (String) -> Unit = {},
     continueWatchingPortraitMode: Boolean = false,
+    videoPortraitMode: Boolean = false,
+    movieFavoritesPortraitMode: Boolean = true,
+    seriesFavoritesPortraitMode: Boolean = true,
     continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT
 ) {
     val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
@@ -115,15 +122,41 @@ fun ClassicHomeContent(
             height = posterCardStyle.height * CLASSIC_CATALOG_POSTER_SCALE
         )
     }
+    val movieFavoritesPosterCardStyle = remember(classicCatalogPosterCardStyle, movieFavoritesPortraitMode) {
+        if (movieFavoritesPortraitMode) classicCatalogPosterCardStyle
+        else classicCatalogPosterCardStyle.copy(height = classicCatalogPosterCardStyle.width * 9f / 16f)
+    }
+    val seriesFavoritesPosterCardStyle = remember(classicCatalogPosterCardStyle, seriesFavoritesPortraitMode) {
+        if (seriesFavoritesPortraitMode) classicCatalogPosterCardStyle
+        else classicCatalogPosterCardStyle.copy(height = classicCatalogPosterCardStyle.width * 9f / 16f)
+    }
     val classicSecondaryPosterCardStyle = remember(posterCardStyle) {
         posterCardStyle.copy(
             width = posterCardStyle.width * CLASSIC_SECONDARY_ROW_POSTER_SCALE,
             height = posterCardStyle.height * CLASSIC_SECONDARY_ROW_POSTER_SCALE
         )
     }
-    // Memes dimensions que la section Continuer a regarder (Classic l'affiche toujours en paysage)
-    val classicContinueWatchingCardWidth = continueWatchingThumbnailSize.cardWidth
-    val classicContinueWatchingImageHeight = continueWatchingThumbnailSize.imageHeight
+    val classicPortraitScale = continueWatchingThumbnailSize.cardWidth.value / 220f
+    val classicContinueWatchingCardWidth = if (continueWatchingPortraitMode) {
+        (126f * classicPortraitScale).dp
+    } else {
+        continueWatchingThumbnailSize.cardWidth
+    }
+    val classicContinueWatchingImageHeight = if (continueWatchingPortraitMode) {
+        (189f * classicPortraitScale).dp
+    } else {
+        continueWatchingThumbnailSize.imageHeight
+    }
+    val classicVideoCardWidth = if (videoPortraitMode) {
+        (126f * classicPortraitScale).dp
+    } else {
+        continueWatchingThumbnailSize.cardWidth
+    }
+    val classicVideoImageHeight = if (videoPortraitMode) {
+        (189f * classicPortraitScale).dp
+    } else {
+        continueWatchingThumbnailSize.imageHeight
+    }
 
     // Nested prefetch: when LazyColumn prefetches a row ahead of scrolling,
     // pre-compose up to 2 ContentCards in its nested LazyRow across multiple frames.
@@ -479,6 +512,8 @@ fun ClassicHomeContent(
                         onRemoveContinueWatching(contentId, season, episode, isNextUp)
                     },
                     onDeleteFromFreebox = onDeleteFreeboxProgress,
+                    onRenameFreebox = onRenameFreeboxProgress,
+                    onMarkAsUnwatched = onMarkFreeboxUnwatched,
                     focusedItemIndex = when {
                         focusState.hasSavedFocus && focusState.focusedRowIndex == -1 -> focusState.focusedItemIndex
                         shouldRequestInitialFocus && !heroVisible -> 0
@@ -495,8 +530,8 @@ fun ClassicHomeContent(
                     blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
                     useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
                     downFocusRequester = cwDownRequester,
-                    cardWidth = continueWatchingThumbnailSize.cardWidth,
-                    imageHeight = continueWatchingThumbnailSize.imageHeight
+                    cardWidth = classicContinueWatchingCardWidth,
+                    imageHeight = classicContinueWatchingImageHeight
                 )
             }
         }
@@ -507,14 +542,16 @@ fun ClassicHomeContent(
                     entries = uiState.freeboxVideoEntries,
                     probedDurations = uiState.freeboxVideoProbedDurations,
                     onItemClick = { entry ->
-                        onNavigateToFreebox(freeboxContentIdForEntry(entry))
+                        val contentId = freeboxContentIdForEntry(entry)
+                        onNavigateToFreebox(contentId, uiState.freeboxVideoArtwork[contentId])
                     },
                     artworkMap = uiState.freeboxVideoArtwork,
-                    cardWidth = classicContinueWatchingCardWidth,
-                    imageHeight = classicContinueWatchingImageHeight,
+                    cardWidth = classicVideoCardWidth,
+                    imageHeight = classicVideoImageHeight,
                     onShowDetails = { entry ->
                         onNavigateToDetail(freeboxContentIdForEntry(entry), "freebox", "")
                     },
+                    onRenameFreebox = onRenameFreeboxVideo,
                     onDeleteFromFreebox = { entry ->
                         val contentId = freeboxContentIdForEntry(entry)
                         onDeleteFreeboxProgress?.invoke(
@@ -588,7 +625,11 @@ fun ClassicHomeContent(
 
                     CatalogRowSection(
                         catalogRow = catalogRow,
-                        posterCardStyle = classicCatalogPosterCardStyle,
+                        posterCardStyle = when (catalogRow.catalogId) {
+                            HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID -> movieFavoritesPosterCardStyle
+                            HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID -> seriesFavoritesPosterCardStyle
+                            else -> classicCatalogPosterCardStyle
+                        },
                         showPosterLabels = uiState.posterLabelsEnabled,
                         showAddonName = uiState.catalogAddonNameEnabled,
                         showCatalogTypeSuffix = uiState.catalogTypeSuffixEnabled,

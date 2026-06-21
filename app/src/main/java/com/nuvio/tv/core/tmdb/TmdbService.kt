@@ -10,13 +10,57 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.text.Normalizer
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.max
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "TmdbService"
 private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
 
+internal fun tmdbLooseTitleKey(value: String): String {
+    val expanded = value
+        .replace("œ", "oe")
+        .replace("Œ", "oe")
+        .replace("æ", "ae")
+        .replace("Æ", "ae")
+    val withoutDiacritics = Normalizer.normalize(expanded, Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+    return withoutDiacritics
+        .lowercase(Locale.ROOT)
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+}
+
+internal fun tmdbTitleMatchScore(query: String, title: String?, originalLanguage: String? = null): Int {
+    if (title.isNullOrBlank()) return 0
+    val q = tmdbLooseTitleKey(query)
+    val t = tmdbLooseTitleKey(title)
+    if (q.isBlank() || t.isBlank()) return 0
+    val base = when {
+        t == q -> 100
+        t.startsWith(q) || q.startsWith(t) -> 80
+        t.contains(q) || q.contains(t) -> 60
+        else -> 0
+    }
+    val langBonus = if (originalLanguage == "fr") 20 else 0
+    return base + langBonus
+}
+private fun tmdbCandidateTitleScore(query: String, title: String?, originalLanguage: String? = null): Int {
+    val strictScore = tmdbTitleMatchScore(query, title, originalLanguage)
+    if (strictScore > 0 || title.isNullOrBlank()) return strictScore
+
+    val ignoredWords = setOf("de", "des", "du", "la", "le", "les", "l", "un", "une", "et")
+    val queryWords = tmdbLooseTitleKey(query).split(' ').filter { it.length > 1 && it !in ignoredWords }.toSet()
+    val titleWords = tmdbLooseTitleKey(title).split(' ').filter { it.length > 1 && it !in ignoredWords }.toSet()
+    if (queryWords.isEmpty() || titleWords.isEmpty()) return 0
+
+    val overlap = queryWords.intersect(titleWords).size
+    return overlap * 100 / max(queryWords.size, titleWords.size)
+}
 /**
  * Service to handle TMDB ID conversions and lookups.
  * Provides caching to avoid redundant API calls.
@@ -256,19 +300,8 @@ class TmdbService @Inject constructor(
             val cleanQuery = query.trim()
             if (cleanQuery.length < 2 || TMDB_API_KEY.isBlank()) return@withContext null
 
-            fun titleScore(title: String?, originalLanguage: String? = null): Int {
-                if (title.isNullOrBlank()) return 0
-                val q = cleanQuery.lowercase().trim()
-                val t = title.lowercase().trim()
-                val base = when {
-                    t == q -> 100
-                    t.startsWith(q) || q.startsWith(t) -> 80
-                    t.contains(q) || q.contains(t) -> 60
-                    else -> 0
-                }
-                val langBonus = if (originalLanguage == "fr") 20 else 0
-                return base + langBonus
-            }
+            fun titleScore(title: String?, originalLanguage: String? = null): Int =
+                tmdbTitleMatchScore(cleanQuery, title, originalLanguage)
 
             suspend fun searchMovieBest(): Pair<Int, TmdbImages>? {
                 val results = tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
@@ -320,27 +353,93 @@ class TmdbService @Inject constructor(
                                else movieResult?.second ?: tvResult?.second
             }.getOrNull()
         }
+    suspend fun fetchPosterCandidatesForTitleQuery(
+        query: String,
+        mediaTypeHint: String = "movie"
+    ): List<TmdbPosterCandidate> = withContext(Dispatchers.IO) {
+        val cleanQuery = query.trim()
+        if (cleanQuery.length < 2 || TMDB_API_KEY.isBlank()) return@withContext emptyList()
+
+        data class Candidate(
+            val id: Int,
+            val mediaType: String,
+            val title: String,
+            val posterPath: String,
+            val releaseDate: String?,
+            val overview: String?,
+            val score: Int
+        )
+
+        runCatching {
+            val preferredType = normalizeMediaType(mediaTypeHint)
+            val movieCandidates = runCatching {
+                tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
+                    .body()?.results.orEmpty()
+                    .mapNotNull { result ->
+                        val title = result.title ?: result.originalTitle ?: return@mapNotNull null
+                        val posterPath = result.posterPath ?: return@mapNotNull null
+                        val score = tmdbCandidateTitleScore(cleanQuery, title, result.originalLanguage)
+                        if (score < 45) return@mapNotNull null
+                        Candidate(
+                            id = result.id,
+                            mediaType = "movie",
+                            title = title,
+                            posterPath = posterPath,
+                            releaseDate = result.releaseDate,
+                            overview = result.overview,
+                            score = score
+                        )
+                    }
+            }.getOrDefault(emptyList())
+            val tvCandidates = runCatching {
+                tmdbApi.searchTv(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
+                    .body()?.results.orEmpty()
+                    .mapNotNull { result ->
+                        val title = result.name ?: result.originalName ?: return@mapNotNull null
+                        val posterPath = result.posterPath ?: return@mapNotNull null
+                        val score = tmdbCandidateTitleScore(cleanQuery, title, result.originalLanguage)
+                        if (score < 45) return@mapNotNull null
+                        Candidate(
+                            id = result.id,
+                            mediaType = "tv",
+                            title = title,
+                            posterPath = posterPath,
+                            releaseDate = result.firstAirDate,
+                            overview = result.overview,
+                            score = score
+                        )
+                    }
+            }.getOrDefault(emptyList())
+
+            (movieCandidates + tvCandidates)
+                .distinctBy { "${it.mediaType}:${it.id}" }
+                .sortedWith(
+                    compareByDescending<Candidate> { it.score }
+                        .thenByDescending { it.mediaType == preferredType }
+                        .thenByDescending { it.releaseDate }
+                )
+                .take(8)
+                .map { candidate ->
+                    TmdbPosterCandidate(
+                        url = "https://image.tmdb.org/t/p/w500${candidate.posterPath}",
+                        language = "fr",
+                        title = candidate.title,
+                        releaseDate = candidate.releaseDate,
+                        overview = candidate.overview,
+                        mediaType = candidate.mediaType
+                    )
+                }
+        }.getOrDefault(emptyList())
+    }
 
 
-
-suspend fun fetchMetadataForTitleQuery(query: String, mediaTypeHint: String = "movie"): FreeboxVideoMeta? =
+    suspend fun fetchMetadataForTitleQuery(query: String, mediaTypeHint: String = "movie"): FreeboxVideoMeta? =
         withContext(Dispatchers.IO) {
             val cleanQuery = query.trim()
             if (cleanQuery.length < 2 || TMDB_API_KEY.isBlank()) return@withContext null
 
-            fun titleScore(title: String?, originalLanguage: String? = null): Int {
-                if (title.isNullOrBlank()) return 0
-                val q = cleanQuery.lowercase().trim()
-                val t = title.lowercase().trim()
-                val base = when {
-                    t == q -> 100
-                    t.startsWith(q) || q.startsWith(t) -> 80
-                    t.contains(q) || q.contains(t) -> 60
-                    else -> 0
-                }
-                val langBonus = if (originalLanguage == "fr") 20 else 0
-                return base + langBonus
-            }
+            fun titleScore(title: String?, originalLanguage: String? = null): Int =
+                tmdbTitleMatchScore(cleanQuery, title, originalLanguage)
 
             suspend fun searchMovieMeta(): Pair<Int, FreeboxVideoMeta>? {
                 val results = tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
@@ -457,6 +556,14 @@ data class FreeboxVideoMeta(
     val genres: List<String>
 )
 
+data class TmdbPosterCandidate(
+    val url: String,
+    val language: String?,
+    val title: String? = null,
+    val releaseDate: String? = null,
+    val overview: String? = null,
+    val mediaType: String? = null
+)
 data class TmdbImages(val backdropUrl: String?, val posterUrl: String?, val runtimeMinutes: Int? = null)
 
 

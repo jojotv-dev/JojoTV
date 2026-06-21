@@ -81,14 +81,14 @@ interface TmdbApi {
     suspend fun getMovieImages(
         @Path("movie_id") movieId: Int,
         @Query("api_key") apiKey: String,
-        @Query("include_image_language") includeImageLanguage: String = "en,null"
+        @Query("include_image_language") includeImageLanguage: String? = "en,null"
     ): Response<TmdbImagesResponse>
 
     @GET("tv/{tv_id}/images")
     suspend fun getTvImages(
         @Path("tv_id") tvId: Int,
         @Query("api_key") apiKey: String,
-        @Query("include_image_language") includeImageLanguage: String = "en,null"
+        @Query("include_image_language") includeImageLanguage: String? = "en,null"
     ): Response<TmdbImagesResponse>
 
     @GET("movie/{movie_id}/release_dates")

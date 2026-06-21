@@ -1522,6 +1522,39 @@ class PreferencesRepository @Inject constructor(
         }
     }
 
+    fun getHiddenMovieIds(providerId: Long): Flow<Set<Long>> =
+        hiddenContentIds(hiddenMoviesKey(providerId))
+
+    suspend fun setHiddenMovieIds(providerId: Long, movieIds: Set<Long>) {
+        setHiddenContentIds(hiddenMoviesKey(providerId), movieIds)
+    }
+
+    fun getHiddenSeriesIds(providerId: Long): Flow<Set<Long>> =
+        hiddenContentIds(hiddenSeriesKey(providerId))
+
+    suspend fun setHiddenSeriesIds(providerId: Long, seriesIds: Set<Long>) {
+        setHiddenContentIds(hiddenSeriesKey(providerId), seriesIds)
+    }
+
+    private fun hiddenContentIds(keyName: String): Flow<Set<Long>> {
+        val key = stringPreferencesKey(keyName)
+        return context.dataStore.data.map { preferences ->
+            preferences[key]
+                ?.split(',')
+                ?.mapNotNull(String::toLongOrNull)
+                ?.toSet()
+                .orEmpty()
+        }
+    }
+
+    private suspend fun setHiddenContentIds(keyName: String, ids: Set<Long>) {
+        val key = stringPreferencesKey(keyName)
+        context.dataStore.edit { preferences ->
+            if (ids.isEmpty()) preferences.remove(key)
+            else preferences[key] = ids.sorted().joinToString(",")
+        }
+    }
+
     fun getPinnedCategoryIds(providerId: Long, type: ContentType): Flow<Set<Long>> {
         val key = stringPreferencesKey(pinnedCategoriesKey(providerId, type))
         return context.dataStore.data.map { preferences ->
@@ -1688,6 +1721,10 @@ class PreferencesRepository @Inject constructor(
 
     private fun hiddenChannelsKey(providerId: Long): String =
         "hidden_channels_${providerId}"
+
+    private fun hiddenMoviesKey(providerId: Long): String = "hidden_movies_${providerId}"
+
+    private fun hiddenSeriesKey(providerId: Long): String = "hidden_series_${providerId}"
 
     private fun pinnedCategoriesKey(providerId: Long, type: ContentType): String =
         "pinned_categories_${providerId}_${type.name}"

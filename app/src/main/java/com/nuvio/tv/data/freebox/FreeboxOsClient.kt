@@ -268,32 +268,57 @@ class FreeboxOsClient @Inject constructor(
 
 
 
-    suspend fun probeDurationMs(settings: FreeboxConnectionSettings, entry: FreeboxFileEntry): Long? = withContext(Dispatchers.IO) {
+    suspend fun probeDurationMs(
+        settings: FreeboxConnectionSettings,
+        entry: FreeboxFileEntry
+    ): Long? = withContext(Dispatchers.IO) {
         var retriever: android.media.MediaMetadataRetriever? = null
+        var extractor: android.media.MediaExtractor? = null
         try {
             val sessionToken = settings.sessionToken.ifBlank {
                 openSession(settings).getOrThrow().sessionToken
             }
             val url = downloadUrl(settings.copy(sessionToken = sessionToken), entry.path, entry.encodedPath)
+            val headers = sessionHeaders(sessionToken)
+
             retriever = android.media.MediaMetadataRetriever()
-            retriever.setDataSource(url, sessionHeaders(sessionToken))
-            val durationStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
-            durationStr?.toLongOrNull()?.takeIf { it > 0L }.also { duration ->
-                if (duration == null) {
-                    Log.w(TAG, "Duree Freebox absente des metadonnees: ${entry.path}")
+            val retrieverDuration = runCatching {
+                retriever.setDataSource(url, headers)
+                retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull()
+                    ?.takeIf { it > 0L }
+            }.getOrNull()
+            if (retrieverDuration != null) return@withContext retrieverDuration
+
+            extractor = android.media.MediaExtractor()
+            extractor.setDataSource(url, headers)
+            val extractorDurationMs = (0 until extractor.trackCount)
+                .mapNotNull { trackIndex ->
+                    val format = extractor.getTrackFormat(trackIndex)
+                    if (format.containsKey(android.media.MediaFormat.KEY_DURATION)) {
+                        format.getLong(android.media.MediaFormat.KEY_DURATION)
+                            .takeIf { it > 0L }
+                            ?.div(1000L)
+                    } else {
+                        null
+                    }
                 }
+                .maxOrNull()
+            if (extractorDurationMs == null) {
+                Log.w(TAG, "Duree Freebox absente des metadonnees: ${entry.path}")
             }
+            extractorDurationMs
         } catch (error: Exception) {
             Log.w(TAG, "Echec du sondage de duree Freebox: ${entry.path}", error)
             null
         } finally {
             try { retriever?.release() } catch (_: Exception) {}
+            try { extractor?.release() } catch (_: Exception) {}
         }
     }
-
     fun downloadUrl(settings: FreeboxConnectionSettings, path: String, encodedPath: String? = null): String =
 
-        apiUrl(settings.address, "dl/${encodedPath?.let(::encodePathSegment) ?: encodeFreeboxPath(path)}")
+        apiUrl(settings.address, "dl/" + (encodedPath?.let(::encodePathSegment) ?: encodeFreeboxPath(path)))
 
 
     suspend fun rename(settings: FreeboxConnectionSettings, path: String, encodedPath: String?, newName: String): Result<Unit> = withContext(Dispatchers.IO) {
@@ -767,4 +792,3 @@ class FreeboxOsClient @Inject constructor(
     }
 
 }
-

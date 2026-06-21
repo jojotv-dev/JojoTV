@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.home
+package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.runtime.State
 import androidx.compose.foundation.lazy.grid.items
@@ -66,6 +66,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.domain.model.CollectionFolder
 import com.nuvio.tv.domain.model.MetaPreview
@@ -95,9 +96,15 @@ fun GridHomeContent(
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onRemoveContinueWatching: (String, Int?, Int?, Boolean) -> Unit,
     onDeleteFromFreebox: ((ContinueWatchingItem) -> Unit)? = null,
-    onNavigateToFreebox: (String) -> Unit = {},
+    onRenameFreeboxProgress: (ContinueWatchingItem, String) -> Unit = { _, _ -> },
+    onMarkFreeboxUnwatched: (ContinueWatchingItem) -> Unit = {},
+    onRenameFreeboxVideo: (FreeboxFileEntry, String) -> Unit = { _, _ -> },
+    onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
     continueWatchingPortraitMode: Boolean = false,
+    videoPortraitMode: Boolean = false,
+    movieFavoritesPortraitMode: Boolean = true,
+    seriesFavoritesPortraitMode: Boolean = true,
     isCatalogItemWatched: (MetaPreview) -> Boolean = { false },
     onCatalogItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> },
     posterCardStyle: PosterCardStyle = PosterCardDefaults.Style,
@@ -112,6 +119,14 @@ fun GridHomeContent(
     )
     val focusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val lastFocusedGridItemKey = remember { mutableStateOf(gridFocusState.focusedItemKey) }
+    val movieFavoritesPosterCardStyle = remember(posterCardStyle, movieFavoritesPortraitMode) {
+        if (movieFavoritesPortraitMode) posterCardStyle
+        else posterCardStyle.copy(height = posterCardStyle.width * 9f / 16f)
+    }
+    val seriesFavoritesPosterCardStyle = remember(posterCardStyle, seriesFavoritesPortraitMode) {
+        if (seriesFavoritesPortraitMode) posterCardStyle
+        else posterCardStyle.copy(height = posterCardStyle.width * 9f / 16f)
+    }
 
     // Scroll to top when triggered from sidebar Home button.
     LaunchedEffect(scrollToTopTrigger) {
@@ -340,6 +355,8 @@ fun GridHomeContent(
                         focusedItemIndex = if (shouldRequestInitialFocus && !hasHero) 0 else -1,
                         onItemClick = onContinueWatchingClick,
                         onDeleteFromFreebox = onDeleteFromFreebox,
+                        onRenameFreebox = onRenameFreeboxProgress,
+                        onMarkAsUnwatched = onMarkFreeboxUnwatched,
                         thumbnailSize = continueWatchingThumbnailSize,
                         continueWatchingPortraitMode = continueWatchingPortraitMode,
                         onStartFromBeginning = onContinueWatchingStartFromBeginning,
@@ -386,24 +403,29 @@ fun GridHomeContent(
                     span = { GridItemSpan(maxLineSpan) },
                     contentType = "freebox_videos"
                 ) {
-                    val gridCwPortraitScale = continueWatchingThumbnailSize.cardWidth.value / 220f
-                    val gridCwCardWidth = if (continueWatchingPortraitMode) (126f * gridCwPortraitScale).dp else continueWatchingThumbnailSize.cardWidth
-                    val gridCwImageHeight = if (continueWatchingPortraitMode) (189f * gridCwPortraitScale).dp else continueWatchingThumbnailSize.imageHeight
+                    val gridVideoPortraitScale = continueWatchingThumbnailSize.cardWidth.value / 220f
+                    val gridVideoCardWidth = if (videoPortraitMode) (126f * gridVideoPortraitScale).dp else continueWatchingThumbnailSize.cardWidth
+                    val gridVideoImageHeight = if (videoPortraitMode) (189f * gridVideoPortraitScale).dp else continueWatchingThumbnailSize.imageHeight
                     FreeboxVideosSection(
                         modifier = Modifier.fillMaxWidth(),
                         entries = uiState.freeboxVideoEntries,
-                        onItemClick = { entry -> onNavigateToFreebox(freeboxContentIdForEntry(entry)) },
+                        onItemClick = { entry ->
+                            val contentId = freeboxContentIdForEntry(entry)
+                            onNavigateToFreebox(contentId, uiState.freeboxVideoArtwork[contentId])
+                        },
                         continueWatchingIds = uiState.continueWatchingItems.filterIsInstance<com.nuvio.tv.ui.screens.home.ContinueWatchingItem.InProgress>().map { it.progress.contentId }.toSet(),
                         artworkMap = uiState.freeboxVideoArtwork,
+                        backdropMap = uiState.freeboxVideoBackdrops,
                         probedDurations = uiState.freeboxVideoProbedDurations,
-                        cardWidth = gridCwCardWidth,
-                        imageHeight = gridCwImageHeight,
+                        cardWidth = gridVideoCardWidth,
+                        imageHeight = gridVideoImageHeight,
                         horizontalPadding = 0.dp,
                         itemSpacing = 12.dp,
                         focusBorderPadding = 3.dp,
                         onShowDetails = { entry ->
                             onNavigateToDetail(freeboxContentIdForEntry(entry), "freebox", "")
                         },
+                        onRenameFreebox = onRenameFreeboxVideo,
                         onDeleteFromFreebox = { entry ->
                             val contentId = freeboxContentIdForEntry(entry)
                             onDeleteFromFreebox?.invoke(
@@ -480,7 +502,7 @@ fun GridHomeContent(
                             "series" -> strTypeSeries
                             else -> gridItem.type.replaceFirstChar { it.uppercase() }
                         }
-                        val displayName = if (uiState.catalogTypeSuffixEnabled && typeLabel.isNotBlank()) {
+                        val displayName = if (uiState.catalogTypeSuffixEnabled && gridItem.addonId != "iptv_favorites" && typeLabel.isNotBlank()) {
                             "${gridItem.catalogName.replaceFirstChar { it.uppercase() }} - $typeLabel"
                         } else {
                             gridItem.catalogName.replaceFirstChar { it.uppercase() }
@@ -505,7 +527,11 @@ fun GridHomeContent(
                         GridContentCard(
                             item = gridItem.item,
                             focusRequester = focusRequester ?: focusRequesters.getOrPut(itemKey) { FocusRequester() },
-                            posterCardStyle = posterCardStyle,
+                            posterCardStyle = when (gridItem.catalogId) {
+                                HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID -> movieFavoritesPosterCardStyle
+                                HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID -> seriesFavoritesPosterCardStyle
+                                else -> posterCardStyle
+                            },
                             showLabel = uiState.posterLabelsEnabled,
                             isWatched = isCatalogItemWatched(gridItem.item),
                             onFocused = remember(itemKey, gridItem.item) {

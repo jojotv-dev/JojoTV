@@ -6,6 +6,7 @@ import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.TrailerSettingsDataStore
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+import com.nuvio.tv.domain.model.ThumbnailOrientation
 import com.nuvio.tv.domain.model.ThumbnailSize
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
@@ -60,7 +61,10 @@ data class LayoutSettingsUiState(
     val nextUpFromFurthestEpisode: Boolean = true,
     val showUnairedNextUp: Boolean = true,
     val continueWatchingSortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
-    val continueWatchingPortraitMode: Boolean = false,
+    val continueWatchingThumbnailOrientation: ThumbnailOrientation = ThumbnailOrientation.DEFAULT,
+    val videoThumbnailOrientation: ThumbnailOrientation = ThumbnailOrientation.DEFAULT,
+    val movieFavoritesThumbnailOrientation: ThumbnailOrientation = ThumbnailOrientation.PORTRAIT,
+    val seriesFavoritesThumbnailOrientation: ThumbnailOrientation = ThumbnailOrientation.PORTRAIT,
     val continueWatchingThumbnailSize: ThumbnailSize = ThumbnailSize.DEFAULT
 )
 
@@ -105,7 +109,18 @@ sealed class LayoutSettingsEvent {
     data class SetNextUpFromFurthestEpisode(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetShowUnairedNextUp(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetContinueWatchingSortMode(val mode: ContinueWatchingSortMode) : LayoutSettingsEvent()
-    data class SetContinueWatchingPortraitMode(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetContinueWatchingThumbnailOrientation(
+        val orientation: ThumbnailOrientation
+    ) : LayoutSettingsEvent()
+    data class SetVideoThumbnailOrientation(
+        val orientation: ThumbnailOrientation
+    ) : LayoutSettingsEvent()
+    data class SetMovieFavoritesThumbnailOrientation(
+        val orientation: ThumbnailOrientation
+    ) : LayoutSettingsEvent()
+    data class SetSeriesFavoritesThumbnailOrientation(
+        val orientation: ThumbnailOrientation
+    ) : LayoutSettingsEvent()
     data class SetContinueWatchingThumbnailSize(val size: ThumbnailSize) : LayoutSettingsEvent()
     data object ResetPosterCardStyle : LayoutSettingsEvent()
 }
@@ -310,9 +325,34 @@ class LayoutSettingsViewModel @Inject constructor(
                 }
         }
         viewModelScope.launch {
-            layoutPreferenceDataStore.continueWatchingPortraitMode.distinctUntilChanged().collectLatest { enabled ->
-                updateUiStateIfChanged { it.copy(continueWatchingPortraitMode = enabled) }
-            }
+            layoutPreferenceDataStore.continueWatchingThumbnailOrientation
+                .distinctUntilChanged()
+                .collectLatest { orientation ->
+                    updateUiStateIfChanged {
+                        it.copy(continueWatchingThumbnailOrientation = orientation)
+                    }
+                }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.videoThumbnailOrientation
+                .distinctUntilChanged()
+                .collectLatest { orientation ->
+                    updateUiStateIfChanged { it.copy(videoThumbnailOrientation = orientation) }
+                }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.movieFavoritesThumbnailOrientation
+                .distinctUntilChanged()
+                .collectLatest { orientation ->
+                    updateUiStateIfChanged { it.copy(movieFavoritesThumbnailOrientation = orientation) }
+                }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.seriesFavoritesThumbnailOrientation
+                .distinctUntilChanged()
+                .collectLatest { orientation ->
+                    updateUiStateIfChanged { it.copy(seriesFavoritesThumbnailOrientation = orientation) }
+                }
         }
         viewModelScope.launch {
             layoutPreferenceDataStore.continueWatchingThumbnailSize.distinctUntilChanged().collectLatest { size ->
@@ -357,7 +397,14 @@ class LayoutSettingsViewModel @Inject constructor(
             is LayoutSettingsEvent.SetNextUpFromFurthestEpisode -> setNextUpFromFurthestEpisode(event.enabled)
             is LayoutSettingsEvent.SetShowUnairedNextUp -> setShowUnairedNextUp(event.enabled)
             is LayoutSettingsEvent.SetContinueWatchingSortMode -> setContinueWatchingSortMode(event.mode)
-            is LayoutSettingsEvent.SetContinueWatchingPortraitMode -> setContinueWatchingPortraitMode(event.enabled)
+            is LayoutSettingsEvent.SetContinueWatchingThumbnailOrientation ->
+                setContinueWatchingThumbnailOrientation(event.orientation)
+            is LayoutSettingsEvent.SetVideoThumbnailOrientation ->
+                setVideoThumbnailOrientation(event.orientation)
+            is LayoutSettingsEvent.SetMovieFavoritesThumbnailOrientation ->
+                setMovieFavoritesThumbnailOrientation(event.orientation)
+            is LayoutSettingsEvent.SetSeriesFavoritesThumbnailOrientation ->
+                setSeriesFavoritesThumbnailOrientation(event.orientation)
             is LayoutSettingsEvent.SetContinueWatchingThumbnailSize -> setContinueWatchingThumbnailSize(event.size)
             LayoutSettingsEvent.ResetPosterCardStyle -> resetPosterCardStyle()
         }
@@ -587,10 +634,31 @@ class LayoutSettingsViewModel @Inject constructor(
         }
     }
 
-    private fun setContinueWatchingPortraitMode(enabled: Boolean) {
-        if (_uiState.value.continueWatchingPortraitMode == enabled) return
+    private fun setContinueWatchingThumbnailOrientation(orientation: ThumbnailOrientation) {
+        if (_uiState.value.continueWatchingThumbnailOrientation == orientation) return
         viewModelScope.launch {
-            layoutPreferenceDataStore.setContinueWatchingPortraitMode(enabled)
+            layoutPreferenceDataStore.setContinueWatchingThumbnailOrientation(orientation)
+        }
+    }
+
+    private fun setVideoThumbnailOrientation(orientation: ThumbnailOrientation) {
+        if (_uiState.value.videoThumbnailOrientation == orientation) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setVideoThumbnailOrientation(orientation)
+        }
+    }
+
+    private fun setMovieFavoritesThumbnailOrientation(orientation: ThumbnailOrientation) {
+        if (_uiState.value.movieFavoritesThumbnailOrientation == orientation) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setMovieFavoritesThumbnailOrientation(orientation)
+        }
+    }
+
+    private fun setSeriesFavoritesThumbnailOrientation(orientation: ThumbnailOrientation) {
+        if (_uiState.value.seriesFavoritesThumbnailOrientation == orientation) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setSeriesFavoritesThumbnailOrientation(orientation)
         }
     }
 

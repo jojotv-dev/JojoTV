@@ -42,6 +42,7 @@ import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.session.MediaSession
 import com.nuvio.tv.R
 import com.nuvio.tv.core.player.DolbyVisionCodecFallback
@@ -52,6 +53,7 @@ import com.nuvio.tv.core.player.DolbyVisionConversionStats
 import com.nuvio.tv.core.player.DolbyVisionExtractorsFactory
 import com.nuvio.tv.core.player.DoviBridge
 import com.nuvio.tv.core.player.LastPlaybackDiagnostics
+import com.nuvio.tv.core.player.LegacyAacMatroskaExtractorsFactory
 import com.nuvio.tv.ui.screens.settings.MemoryBudget
 import com.nuvio.tv.data.local.AddonSubtitleStartupMode
 import com.nuvio.tv.data.local.AudioLanguageOption
@@ -646,7 +648,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                 } else {
                     extractorsFactory
                 }
-
+            val playbackExtractorsFactory: ExtractorsFactory = LegacyAacMatroskaExtractorsFactory(
+                delegate = effectiveExtractorsFactory,
+                subtitleParserFactory = DefaultSubtitleParserFactory()
+            )
             if (showLoadingStatus) _uiState.update { it.copy(loadingMessage = context.getString(R.string.player_loading_building)) }
             // ── Build ExoPlayer ──
             val buildDefaultPlayer = {
@@ -657,13 +662,13 @@ internal fun PlayerRuntimeController.initializePlayer(
                 // conversion never runs. (The libass path wires it via buildWithAssSupportCompat.)
                 mediaSourceFactory.configureSubtitleParsing(
                     extractorsFactory =
-                        if (isExperimentalDv7ToDv81ActiveForCurrentPlayback) effectiveExtractorsFactory else null,
+                        if (isExperimentalDv7ToDv81ActiveForCurrentPlayback) playbackExtractorsFactory else null,
                     subtitleParserFactory = null
                 )
                 val playerDataSourceFactory = PlayerPlaybackNetworking.createDataSourceFactory(context, headers)
                 ExoPlayer.Builder(context)
                     .setTrackSelector(trackSelector!!)
-                    .setMediaSourceFactory(DefaultMediaSourceFactory(playerDataSourceFactory, effectiveExtractorsFactory))
+                    .setMediaSourceFactory(DefaultMediaSourceFactory(playerDataSourceFactory, playbackExtractorsFactory))
                     .setRenderersFactory(renderersFactory)
                     .setLoadControl(loadControl)
                     .setReleaseTimeoutMs(PLAYER_RELEASE_TIMEOUT_MS)
@@ -679,7 +684,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 ExoPlayer.Builder(context)
                     .setLoadControl(loadControl)
                     .setTrackSelector(trackSelector!!)
-                    .setMediaSourceFactory(DefaultMediaSourceFactory(playerDataSourceFactory, effectiveExtractorsFactory))
+                    .setMediaSourceFactory(DefaultMediaSourceFactory(playerDataSourceFactory, playbackExtractorsFactory))
                     .setReleaseTimeoutMs(PLAYER_RELEASE_TIMEOUT_MS)
                     .setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
                     .buildWithAssSupportCompat(
@@ -687,7 +692,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         renderType = libassRenderType,
                         playerMediaSourceFactory = mediaSourceFactory,
                         dataSourceFactory = playerDataSourceFactory,
-                        extractorsFactory = effectiveExtractorsFactory,
+                        extractorsFactory = playbackExtractorsFactory,
                         renderersFactory = renderersFactory
                     )
             } else {
