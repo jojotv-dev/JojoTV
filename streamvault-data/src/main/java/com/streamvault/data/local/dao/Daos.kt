@@ -3001,6 +3001,15 @@ data class FavoriteGroupConstraint(
 
 @Dao
 abstract class FavoriteDao {
+    @Query("SELECT * FROM favorites WHERE group_id IS NULL ORDER BY provider_id ASC, position ASC")
+    abstract fun observeAllGlobal(): Flow<List<FavoriteEntity>>
+
+    @Query("SELECT * FROM favorites WHERE group_id IS NULL ORDER BY provider_id ASC, position ASC")
+    abstract suspend fun getAllGlobalSync(): List<FavoriteEntity>
+
+    @Query("DELETE FROM favorites WHERE group_id IS NULL AND provider_id IN (:providerIds) AND content_type IN ('MOVIE', 'SERIES')")
+    abstract suspend fun deleteSyncedGlobalVodFavorites(providerIds: List<Long>)
+
     @Query("SELECT * FROM favorites WHERE provider_id = :providerId AND group_id IS NULL ORDER BY position ASC")
     abstract fun getAllGlobal(providerId: Long): Flow<List<FavoriteEntity>>
 

@@ -10,6 +10,7 @@ private val SEASON_EPISODE_REGEX = Regex("\\b[sS]\\d{1,2}[eE]\\d{1,2}\\b")
 private val YEAR_REGEX = Regex("\\b(19\\d{2}|20\\d{2})\\b")
 private val DURATION_PREFIX_REGEX = Regex("^(?:\\d+h\\s*\\d{1,2}m?|\\d+h|\\d+min)\\s+", RegexOption.IGNORE_CASE)
 private val DURATION_VALUE_REGEX = Regex("^(\\d+)h\\s*(\\d{1,2})m?|^(\\d+)min", RegexOption.IGNORE_CASE)
+private val GENERATED_TIMESTAMP_PREFIX_REGEX = Regex("^\\d{10,14}[\\s._-]*")
 
 private const val FREEBOX_CONTENT_PREFIX = "freebox:"
 private const val FREEBOX_FILE_FINGERPRINT_SEPARATOR = "#fb:"
@@ -49,6 +50,7 @@ fun freeboxFileNameOnly(rawNameOrPath: String): String {
 fun freeboxDisplayName(rawNameOrPath: String, showExtensions: Boolean = false): String {
     val fileName = freeboxFileNameOnly(rawNameOrPath)
         .replace(DURATION_PREFIX_REGEX, "")
+        .replace(GENERATED_TIMESTAMP_PREFIX_REGEX, "")
         .trim()
     return if (showExtensions) {
         fileName.ifBlank { rawNameOrPath.trim() }

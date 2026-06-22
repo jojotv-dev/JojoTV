@@ -183,6 +183,22 @@ val releaseStorePasswordValue = env("NUVIO_RELEASE_STORE_PASSWORD")
 
     ?: localProperties.getProperty("NUVIO_RELEASE_STORE_PASSWORD", "815787")
 
+val updateStoreFilePath = env("JOJOTV_UPDATE_STORE_FILE")
+
+    ?: localProperties.getProperty("JOJOTV_UPDATE_STORE_FILE")
+
+val updateKeyAliasValue = env("JOJOTV_UPDATE_KEY_ALIAS")
+
+    ?: localProperties.getProperty("JOJOTV_UPDATE_KEY_ALIAS", "androiddebugkey")
+
+val updateKeyPasswordValue = env("JOJOTV_UPDATE_KEY_PASSWORD")
+
+    ?: localProperties.getProperty("JOJOTV_UPDATE_KEY_PASSWORD", "android")
+
+val updateStorePasswordValue = env("JOJOTV_UPDATE_STORE_PASSWORD")
+
+    ?: localProperties.getProperty("JOJOTV_UPDATE_STORE_PASSWORD", "android")
+
 
 
 android {
@@ -332,6 +348,22 @@ android {
 
 
     signingConfigs {
+
+        getByName("debug") {
+
+            updateStoreFilePath?.takeIf { it.isNotBlank() }?.let { updateStorePath ->
+
+                keyAlias = updateKeyAliasValue
+
+                keyPassword = updateKeyPasswordValue
+
+                storeFile = file(updateStorePath)
+
+                storePassword = updateStorePasswordValue
+
+            }
+
+        }
 
         create("release") {
 
