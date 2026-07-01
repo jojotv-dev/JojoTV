@@ -745,18 +745,26 @@ internal suspend fun HomeViewModel.fetchIptvProviderMetadata(contentId: String):
 internal fun mergeIptvTitleMetadata(
     currentItem: MetaPreview,
     metadata: FreeboxVideoMeta
-): MetaPreview = currentItem.copy(
-    poster = currentItem.poster ?: metadata.posterUrl,
-    background = currentItem.background ?: metadata.backdropUrl,
-    description = currentItem.description?.takeIf { it.isNotBlank() }
-        ?: metadata.overview?.takeIf { it.isNotBlank() },
-    imdbRating = currentItem.imdbRating ?: metadata.voteAverage?.toFloat(),
-    releaseInfo = currentItem.releaseInfo?.takeIf { it.isNotBlank() }
-        ?: metadata.year?.takeIf { it.isNotBlank() },
-    genres = currentItem.genres.ifEmpty { metadata.genres },
-    runtime = currentItem.runtime?.takeIf { it.isNotBlank() }
+): MetaPreview {
+    val runtime = currentItem.runtime?.takeIf { it.isNotBlank() }
         ?: metadata.runtimeMinutes?.takeIf { it > 0 }?.let(::formatTmdbRuntime)
-)
+    return currentItem.copy(
+        name = if (currentItem.rawType == "iptv_movie") {
+            prefixHomeIptvMovieDuration(currentItem.name, runtime)
+        } else {
+            currentItem.name
+        },
+        poster = currentItem.poster ?: metadata.posterUrl,
+        background = currentItem.background ?: metadata.backdropUrl,
+        description = currentItem.description?.takeIf { it.isNotBlank() }
+            ?: metadata.overview?.takeIf { it.isNotBlank() },
+        imdbRating = currentItem.imdbRating ?: metadata.voteAverage?.toFloat(),
+        releaseInfo = currentItem.releaseInfo?.takeIf { it.isNotBlank() }
+            ?: metadata.year?.takeIf { it.isNotBlank() },
+        genres = currentItem.genres.ifEmpty { metadata.genres },
+        runtime = runtime
+    )
+}
 
 private fun formatTmdbRuntime(minutes: Int): String {
     val hours = minutes / 60

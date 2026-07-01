@@ -160,11 +160,12 @@ private fun Movie.toHomePreview(
     val previewId = stableIptvProgressId()
     val posterOverride = posterOverrides[previewId]?.takeIf { it.isNotBlank() }
     val backdropOverride = backdropOverrides[previewId]?.takeIf { it.isNotBlank() }
+    val formattedDuration = formatHomeIptvDuration(durationSeconds, duration)
     return MetaPreview(
     id = previewId,
     type = ContentType.UNKNOWN,
     rawType = "iptv_movie",
-    name = name,
+    name = prefixHomeIptvMovieDuration(name, formattedDuration),
     poster = posterOverride ?: posterUrl,
     posterShape = PosterShape.POSTER,
     background = backdropOverride ?: backdropUrl,
@@ -175,7 +176,7 @@ private fun Movie.toHomePreview(
     releaseInfo = year ?: releaseDate?.take(4),
     imdbRating = rating.takeIf { it > 0f },
     genres = genre.toGenreList(),
-    runtime = formatHomeIptvDuration(durationSeconds, duration) ?: duration,
+    runtime = formattedDuration ?: duration,
     isFavorite = isFavorite
 )
 }
@@ -420,6 +421,11 @@ private fun formatHomeIptvDuration(durationSeconds: Int, duration: String?): Str
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60
     return if (hours > 0) hours.toString() + "h" + minutes.toString().padStart(2, '0') else minutes.toString() + " min"
+}
+
+internal fun prefixHomeIptvMovieDuration(title: String, formattedDuration: String?): String {
+    val duration = formattedDuration?.takeIf { it.isNotBlank() } ?: return title
+    return if (title.startsWith("$duration ")) title else "$duration $title"
 }
 
 private fun parseIptvDurationSeconds(rawDuration: String): Long? {
