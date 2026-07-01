@@ -50,6 +50,7 @@ class AddonSyncService @Inject constructor(
             }
 
             val localUrls = addonPreferences.installedAddonUrls.first()
+                .filterNot(::isBlockedAutomaticAddonUrl)
             val userSetNames = addonPreferences.userSetNames.first()
             val enabledStates = addonPreferences.addonEnabledStates.first()
             Log.d(TAG, "pushToRemote: localUrls count=${localUrls.size} for profile $profileId")
@@ -120,8 +121,9 @@ class AddonSyncService @Inject constructor(
 
             Result.success(
                 remoteAddons
-                .sortedBy { it.sortOrder }
-                .map { it.url }
+                    .sortedBy { it.sortOrder }
+                    .map { it.url }
+                    .filterNot(::isBlockedAutomaticAddonUrl)
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get remote addon URLs", e)
@@ -140,5 +142,11 @@ class AddonSyncService @Inject constructor(
             path.trimEnd('/')
         }
         return cleanPath + query
+    }
+
+    private fun isBlockedAutomaticAddonUrl(url: String): Boolean {
+        val normalized = canonicalizeUrl(url).lowercase()
+        return normalized == "https://v3-cinemeta.strem.io" ||
+            normalized == "https://opensubtitles-v3.strem.io"
     }
 }

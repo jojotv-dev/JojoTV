@@ -26,6 +26,8 @@ import com.nuvio.tv.data.local.DeviceLocalPlayerPreferences
 import com.nuvio.tv.data.local.StreamLinkCacheDataStore
 import com.nuvio.tv.data.local.BingeGroupCacheDataStore
 import com.nuvio.tv.data.local.StreamAutoPlayMode
+import com.nuvio.tv.data.freebox.freeboxDisplayName
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.data.repository.ParentalGuideRepository
 import com.nuvio.tv.data.repository.SkipIntroRepository
 import com.nuvio.tv.data.repository.SkipInterval
@@ -216,9 +218,9 @@ class PlayerRuntimeController(
 
     internal val _uiState = MutableStateFlow(
         PlayerUiState(
-            title = title,
+            title = displayTitleForPlayback(),
             contentName = contentName,
-            currentStreamName = streamName,
+            currentStreamName = displayStreamNameForPlayback(streamName),
             currentStreamUrl = currentStreamUrl,
             releaseYear = year,
             contentType = contentType,
@@ -400,6 +402,7 @@ class PlayerRuntimeController(
     internal val subtitleDelayUs = AtomicLong(0L)
     internal var pendingPreviewSeekPosition: Long? = null
     internal var pendingResumeProgress: WatchProgress? = null
+    internal var deferResumeSeekUntilPlaybackStarts: Boolean = false
     internal var hasRetriedCurrentStreamAfter416: Boolean = false
     internal var isReleasingPlayer: Boolean = false
     internal var cachedDecoderPriority: Int = 1
@@ -561,6 +564,41 @@ class PlayerRuntimeController(
         hasSentScrobbleStartForCurrentItem = false
         hasSentCompletionScrobbleForCurrentItem = false
     }
+}
+
+internal fun PlayerRuntimeController.displayTitleForPlayback(): String {
+    val directTitle = firstReadableTitle(contentName, title)
+    if (!contentType.equals("freebox", ignoreCase = true) && !isFreeboxPlayback) {
+        return directTitle ?: title
+    }
+
+    val freeboxTitle = firstReadableTitle(
+        currentFilename?.let { freeboxDisplayName(it) },
+        navigationArgs.filename?.let { freeboxDisplayName(it) },
+        contentId?.let { freeboxDisplayName(freeboxPathFromContentId(it)) },
+        currentVideoId?.let { freeboxDisplayName(freeboxPathFromContentId(it)) },
+        currentStreamDescription?.let { freeboxDisplayName(it) }
+    )
+    return freeboxTitle ?: directTitle ?: title
+}
+
+internal fun PlayerRuntimeController.displayStreamNameForPlayback(rawName: String?): String? {
+    val streamDisplayName = firstReadableTitle(rawName) ?: return null
+    val titleDisplayName = displayTitleForPlayback()
+    return streamDisplayName.takeUnless { it.equals(titleDisplayName, ignoreCase = true) }
+}
+
+private fun firstReadableTitle(vararg candidates: String?): String? {
+    return candidates
+        .asSequence()
+        .mapNotNull { it?.trim()?.takeIf(String::isNotBlank) }
+        .firstOrNull { !it.isGeneratedPlaybackTitle() }
+}
+
+private fun String.isGeneratedPlaybackTitle(): Boolean {
+    val normalized = trim()
+    if (normalized.length >= 9 && normalized.all(Char::isDigit)) return true
+    return normalized.matches(Regex("""\d{10,}(\.\w{1,8})?"""))
 }
 
 internal fun PlayerRuntimeController.beginSwitchTraceSession(

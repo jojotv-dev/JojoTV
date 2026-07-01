@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,6 +73,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.data.freebox.freeboxDisplayName
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.theme.NuvioTheme
@@ -108,12 +112,14 @@ fun ContinueWatchingSection(
     onStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
     showManualPlayOption: Boolean = false,
     onPlayManually: (ContinueWatchingItem) -> Unit = {},
+    onSearchPoster: ((ContinueWatchingItem) -> Unit)? = null,
     modifier: Modifier = Modifier,
     focusedItemIndex: Int = -1,
     onItemFocused: (itemIndex: Int) -> Unit = {},
     blurUnwatchedEpisodes: Boolean = false,
     useEpisodeThumbnails: Boolean = true,
     downFocusRequester: FocusRequester? = null,
+    entryFocusRequester: FocusRequester? = null,
     cardWidth: Dp = 288.dp,
     imageHeight: Dp = 162.dp
 ) {
@@ -241,11 +247,17 @@ fun ContinueWatchingSection(
                             }
                         }
                         .then(
-                            if (downFocusRequester != null) {
-                                Modifier.focusProperties { down = downFocusRequester }
+                            if (downFocusRequester != null || entryFocusRequester != null) {
+                                Modifier.focusProperties {
+                                    if (downFocusRequester != null) down = downFocusRequester
+                                }
                             } else Modifier
                         )
                         .then(focusModifier)
+                        .then(
+                            if (index == 0 && entryFocusRequester != null) Modifier.focusRequester(entryFocusRequester)
+                            else Modifier
+                        )
                 )
             }
         }
@@ -258,13 +270,23 @@ fun ContinueWatchingSection(
             is ContinueWatchingItem.InProgress -> menuItem.progress.contentId
             is ContinueWatchingItem.NextUp -> menuItem.info.contentId
         }
-        val isFreeboxItem = menuContentId.startsWith("freebox:")
-        val isIptvItem = menuContentId.startsWith("iptv_")
+        val isFreeboxItem = menuContentId.startsWith("freebox:", ignoreCase = true)
+        val isIptvItem = menuContentId.startsWith("iptv_", ignoreCase = true)
+        val isIptvSeriesItem = menuContentId.startsWith("iptv_series:", ignoreCase = true) ||
+            menuContentId.startsWith("iptv_series_remote:", ignoreCase = true)
 
         ContinueWatchingOptionsDialog(
             item = menuItem,
             onDismiss = { optionsItem = null },
-            onDeleteFromFreebox = if (isFreeboxItem) onDeleteFromFreebox?.let { cb -> { cb(menuItem) } } else null,
+            onDeleteFromFreebox = if (isFreeboxItem) onDeleteFromFreebox?.let { cb ->
+                {
+                    val targetIndex = if (items.size <= 1) null else minOf(lastFocusedIndex, items.size - 2)
+                    pendingFocusIndex = targetIndex
+                    cb(menuItem)
+                    onRemoveItem(menuItem)
+                    optionsItem = null
+                }
+            } else null,
             onRenameFreebox = if (onRenameFreebox != null && menuItem is ContinueWatchingItem.InProgress && menuItem.progress.contentId.startsWith("freebox:")) {
                 {
                     renameItem = menuItem
@@ -291,14 +313,20 @@ fun ContinueWatchingSection(
                 onDetailsClick(menuItem)
                 optionsItem = null
             },
+            showDetails = !isIptvItem || isIptvSeriesItem || isFreeboxItem,
             onStartFromBeginning = {
                 onStartFromBeginning(menuItem)
                 optionsItem = null
             },
-            showPlayManually = showManualPlayOption && !isIptvItem,
+            showPlayManually = showManualPlayOption && !isIptvItem && !isFreeboxItem,
             onPlayManually = {
                 onPlayManually(menuItem)
                 optionsItem = null
+            },
+            onSearchPoster = if (isFreeboxItem || isIptvItem) {
+                onSearchPoster?.let { cb -> { cb(menuItem); optionsItem = null } }
+            } else {
+                null
             }
         )
     }
@@ -345,8 +373,10 @@ fun ContinueWatchingCard(
     useEpisodeThumbnails: Boolean = true,
     showBadge: Boolean = true,
     showProgressBar: Boolean = true,
+    showFavoriteMarker: Boolean = false,
     cardSizeMultiplier: Float = 1.5f,
-    onDirectionLeft: (() -> Boolean)? = null
+    onDirectionLeft: (() -> Boolean)? = null,
+    containArtworkOnLandscape: Boolean = false
 ) {
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
@@ -392,12 +422,15 @@ fun ContinueWatchingCard(
         }
     }
     val isFreeboxProgress = progress?.isFreeboxProgressForDisplay() == true
-    val badgeText = remember(isFreeboxProgress, remainingText, nextUpBadgeText, strNextUp) {
-        if (isFreeboxProgress && (progress?.duration ?: 0L) == 0L) null
+    val isIptvProgress = progress?.isIptvProgressForDisplay() == true
+    val isSpecialProgress = isFreeboxProgress || isIptvProgress
+    val badgeText = remember(isSpecialProgress, remainingText, nextUpBadgeText, strNextUp) {
+        if (isSpecialProgress) remainingText
         else remainingText ?: nextUpBadgeText ?: strNextUp
     }
     val progressFraction = remember(progress) { progress?.progressPercentage ?: 0f }
     val preferLandscapeArtwork = cardWidth > imageHeight
+    val preferPosterArtwork = (isFreeboxProgress || isIptvProgress) && !preferLandscapeArtwork
     val imageModel = remember(nextUp, progress, item, useEpisodeThumbnails, preferLandscapeArtwork) {
         fun firstNonBroken(vararg candidates: String?): String? {
             return candidates.firstOrNull { !it.isNullOrBlank() && it !in brokenImageUrls }?.trim()
@@ -420,12 +453,12 @@ fun ContinueWatchingCard(
             )
             useEpisodeThumbnails -> firstNonBroken(
                 (item as? ContinueWatchingItem.InProgress)?.episodeThumbnail,
-                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.poster else progress?.backdrop,
-                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.backdrop else progress?.poster
+                if (preferPosterArtwork) progress?.poster else progress?.backdrop,
+                if (preferPosterArtwork) progress?.backdrop else progress?.poster
             )
             else -> firstNonBroken(
-                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.poster else progress?.backdrop,
-                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.backdrop else progress?.poster,
+                if (preferPosterArtwork) progress?.poster else progress?.backdrop,
+                if (preferPosterArtwork) progress?.backdrop else progress?.poster,
                 (item as? ContinueWatchingItem.InProgress)?.episodeThumbnail
             )
         }
@@ -437,8 +470,8 @@ fun ContinueWatchingCard(
                 nextUp.poster
             )
             else -> firstNonBlank(
-                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.poster else progress?.backdrop,
-                if (isFreeboxProgress && !preferLandscapeArtwork) progress?.backdrop else progress?.poster
+                if (preferPosterArtwork) progress?.poster else progress?.backdrop,
+                if (preferPosterArtwork) progress?.backdrop else progress?.poster
             )
         }
     }
@@ -447,12 +480,12 @@ fun ContinueWatchingCard(
     LaunchedEffect(imageModel) { usesFallbackImage = false }
 
     val effectiveImageModel = if (usesFallbackImage) fallbackImageModel else imageModel
+    val containArtwork = containArtworkOnLandscape &&
+        preferLandscapeArtwork &&
+        !effectiveImageModel.isNullOrBlank()
     val titleText = remember(progress, nextUp) {
         if (progress != null && progress.isFreeboxProgressForDisplay()) {
-            freeboxVideoDisplayTitle(
-                progress.name.ifBlank { progress.videoId },
-                progress.duration
-            )
+            progress.freeboxContinueWatchingDisplayTitle()
         } else {
             progress?.name ?: nextUp?.name.orEmpty()
         }
@@ -570,6 +603,58 @@ fun ContinueWatchingCard(
                 // Background image with size hints for efficient decoding
                 if (effectiveImageModel.isNullOrBlank()) {
                     MonochromePosterPlaceholder()
+                } else if (containArtwork) {
+                    AsyncImage(
+                        model = imageRequest,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                compositingStrategy = CompositingStrategy.Offscreen
+                                alpha = 0.38f
+                            }
+                            .clip(CwClipShape),
+                        placeholder = backgroundPainter,
+                        error = backgroundPainter,
+                        fallback = backgroundPainter,
+                        contentScale = ContentScale.Crop,
+                        onError = {
+                            if (!usesFallbackImage && effectiveImageModel != null) {
+                                brokenImageUrls.add(effectiveImageModel)
+                                if (fallbackImageModel != null && fallbackImageModel != effectiveImageModel) {
+                                    usesFallbackImage = true
+                                }
+                            }
+                        }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.36f))
+                    )
+                    AsyncImage(
+                        model = imageRequest,
+                        contentDescription = titleText,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .graphicsLayer {
+                                compositingStrategy = CompositingStrategy.Offscreen
+                            }
+                            .clip(CwClipShape),
+                        placeholder = backgroundPainter,
+                        error = backgroundPainter,
+                        fallback = backgroundPainter,
+                        contentScale = ContentScale.Fit,
+                        onError = {
+                            if (!usesFallbackImage && effectiveImageModel != null) {
+                                brokenImageUrls.add(effectiveImageModel)
+                                if (fallbackImageModel != null && fallbackImageModel != effectiveImageModel) {
+                                    usesFallbackImage = true
+                                }
+                            }
+                        }
+                    )
                 } else {
                     AsyncImage(
                         model = imageRequest,
@@ -635,6 +720,26 @@ fun ContinueWatchingCard(
                     }
                 }
 
+                if (showFavoriteMarker) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(5.dp)
+                            .clip(BadgeShape)
+                            .background(Color.Black.copy(alpha = 0.62f))
+                            .padding(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = Color(0xFFFFD54F),
+                            modifier = Modifier
+                                .width(16.dp)
+                                .height(16.dp)
+                        )
+                    }
+                }
+
                 if (showProgressBar && progress != null && progress.duration > 0L) {
                     Box(
                         modifier = Modifier
@@ -666,29 +771,32 @@ fun ContinueWatchingCard(
                     )
                     .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
-                // Episode info (for series)
-                if (episodeStr != null) {
+                // Episode info + title on a single line (for series)
+                Row(
+                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    if (episodeStr != null) {
+                        Text(
+                            text = "$episodeStr  •  ",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = NuvioColors.TextPrimary,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
                     Text(
-                        text = episodeStr,
-                        style = MaterialTheme.typography.labelMedium,
+                        text = titleText,
+                        style = MaterialTheme.typography.titleSmall,
                         color = NuvioColors.TextPrimary,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = false
                     )
                 }
 
-                Text(
-                    text = titleText,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = NuvioColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
-                )
-
-                // Episode title if available (not for Freebox items)
-                val isFreebox = progress?.isFreeboxProgressForDisplay() == true
-                if (!isFreebox) {
+                // Episode title if available (not for Freebox/IPTV continue watching items)
+                val isSpecialProgress = isFreeboxProgress || isIptvProgress
+                if (!isSpecialProgress) {
                     episodeTitle?.let { title ->
                         Text(
                             text = title,
@@ -711,26 +819,28 @@ fun ContinueWatchingOptionsDialog(
     onDismiss: () -> Unit,
     onRemove: () -> Unit,
     onDetails: () -> Unit,
+    showDetails: Boolean = true,
     onStartFromBeginning: () -> Unit = {},
     showPlayManually: Boolean = false,
     onPlayManually: () -> Unit = {},
     onRenameFreebox: (() -> Unit)? = null,
     onMarkAsUnwatched: (() -> Unit)? = null,
-    onDeleteFromFreebox: (() -> Unit)? = null
+    onDeleteFromFreebox: (() -> Unit)? = null,
+    onSearchPoster: (() -> Unit)? = null
 ) {
     val title = when (item) {
         is ContinueWatchingItem.InProgress -> if (item.progress.isFreeboxProgressForDisplay()) {
-            freeboxVideoDisplayTitle(item.progress.name.ifBlank { item.progress.videoId }, item.progress.duration)
+            item.progress.freeboxContinueWatchingDisplayTitle()
         } else {
             item.progress.name
         }
         is ContinueWatchingItem.NextUp -> item.info.name
     }
 
-    val detailsFocusRequester = remember { FocusRequester() }
+    val primaryFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        detailsFocusRequester.requestFocus()
+        primaryFocusRequester.requestFocus()
     }
 
     NuvioDialog(
@@ -738,17 +848,34 @@ fun ContinueWatchingOptionsDialog(
         title = title,
         subtitle = stringResource(R.string.cw_dialog_subtitle)
     ) {
-        Button(
-            onClick = onDetails,
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(detailsFocusRequester),
-            colors = ButtonDefaults.colors(
-                containerColor = NuvioColors.BackgroundCard,
-                contentColor = NuvioColors.TextPrimary
-            )
-        ) {
-            Text(stringResource(R.string.cw_action_go_to_details))
+        if (showDetails) {
+            Button(
+                onClick = onDetails,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(primaryFocusRequester),
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.BackgroundCard,
+                    contentColor = NuvioColors.TextPrimary
+                )
+            ) {
+                Text(stringResource(R.string.cw_action_go_to_details))
+            }
+        }
+
+        if (item is ContinueWatchingItem.InProgress) {
+            Button(
+                onClick = onStartFromBeginning,
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.BackgroundCard,
+                    contentColor = NuvioColors.TextPrimary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (!showDetails) Modifier.focusRequester(primaryFocusRequester) else Modifier)
+            ) {
+                Text(stringResource(R.string.cw_action_start_from_beginning))
+            }
         }
 
         if (showPlayManually) {
@@ -761,19 +888,6 @@ fun ContinueWatchingOptionsDialog(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(stringResource(R.string.play_manually))
-            }
-        }
-
-        if (item is ContinueWatchingItem.InProgress) {
-            Button(
-                onClick = onStartFromBeginning,
-                colors = ButtonDefaults.colors(
-                    containerColor = NuvioColors.BackgroundCard,
-                    contentColor = NuvioColors.TextPrimary
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(stringResource(R.string.cw_action_start_from_beginning))
             }
         }
 
@@ -800,6 +914,19 @@ fun ContinueWatchingOptionsDialog(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(stringResource(R.string.cw_action_rename))
+            }
+        }
+
+        onSearchPoster?.let { searchAction ->
+            Button(
+                onClick = searchAction,
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioColors.BackgroundCard,
+                    contentColor = NuvioColors.TextPrimary
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.freebox_choose_poster))
             }
         }
 
@@ -874,6 +1001,27 @@ internal fun formatRemainingTime(
 
 private fun String.compactHoursMinutes(): String =
     replace(Regex("(\\d+)h\\s+(\\d+)m"), "$1h$2m")
+
+private fun com.nuvio.tv.domain.model.WatchProgress.freeboxContinueWatchingDisplayTitle(): String {
+    val bestName = name
+        .takeUnless { it.isLikelyGeneratedFreeboxLabel() }
+        ?: freeboxPathFromContentId(contentId)
+            .takeUnless { it.isLikelyGeneratedFreeboxLabel() }
+        ?: freeboxPathFromContentId(videoId)
+            .takeUnless { it.isLikelyGeneratedFreeboxLabel() }
+        ?: videoId
+    return freeboxVideoDisplayTitle(bestName, duration)
+}
+
+private fun String.isLikelyGeneratedFreeboxLabel(): Boolean {
+    val value = trim()
+    if (value.isBlank()) return true
+    return value.matches(Regex("\\d{10,}"))
+}
+
 private fun com.nuvio.tv.domain.model.WatchProgress.isFreeboxProgressForDisplay(): Boolean {
     return contentId.startsWith("freebox:") || videoId.startsWith("freebox:") || contentType.equals("freebox", ignoreCase = true)
+}
+private fun com.nuvio.tv.domain.model.WatchProgress.isIptvProgressForDisplay(): Boolean {
+    return contentId.startsWith("iptv_") || videoId.startsWith("iptv_") || contentType.startsWith("iptv", ignoreCase = true)
 }

@@ -1,0 +1,598 @@
+
+================================================================
+1. Toutes les occurrences de maxCategoryConcurrency dans streamvault-data (qui l'utilise et comment)
+================================================================
+
+Path                                                                                                                    LineNumber Line                                   
+----                                                                                                                    ---------- ----                                   
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\CatalogSyncRuntimeProfile.kt             56     val maxCategoryConcurrency: Int,   
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\CatalogSyncRuntimeProfile.kt             80                                        
+                                                                                                                                   maxCategoryConcurrency = 1,            
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\CatalogSyncRuntimeProfile.kt             88                                        
+                                                                                                                                   maxCategoryConcurrency = 2,            
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\CatalogSyncRuntimeProfile.kt             96                                        
+                                                                                                                                   maxCategoryConcurrency = Int.MAX_VALUE,
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManager.kt                         2248         val runtimeLimit = runtimeProfi
+                                                                                                                                   le.maxCategoryConcurrency.coerceAtLeast
+                                                                                                                                   (1)                                    
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManager.kt                         5606                                        
+                                                                                                                                   runtimeProfile.maxCategoryConcurrency, 
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManagerXtreamLiveStrategy.kt        141             preferSequential = existing
+                                                                                                                                   Metadata.liveSequentialFailuresRemember
+                                                                                                                                   ed ||                                  
+                                                                                                                                   runtimeProfile.maxCategoryConcurrency  
+                                                                                                                                   <= 1,                                  
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManagerXtreamLiveStrategy.kt        439         val concurrency = adaptiveConcu
+                                                                                                                                   rrency.coerceAtMost(runtimeProfile.maxC
+                                                                                                                                   ategoryConcurrency)                    
+
+
+
+================================================================
+2. syncXtreamCategoryShell - corps complet de la fonction (ligne 1409 + 250 lignes)
+================================================================
+--- syncXtreamCategoryShell : C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManager.kt (lignes 1409-1659) ---
+    private suspend fun syncXtreamCategoryShell(
+        provider: Provider,
+        api: XtreamProvider,
+        contentType: ContentType,
+        label: String,
+        now: Long,
+        onProgress: ((String) -> Unit)?
+    ): kotlin.Result<Int> = runCatching {
+        progress(provider.id, onProgress, "Loading $label categories...")
+        upsertXtreamIndexJob(
+            providerId = provider.id,
+            section = contentType.name,
+            state = "RUNNING",
+            now = now,
+            lastAttemptAt = now
+        )
+        val categories = when (contentType) {
+            ContentType.MOVIE -> requireResult(api.getVodCategories(), "Failed to load VOD categories")
+            ContentType.SERIES -> requireResult(api.getSeriesCategories(), "Failed to load series categories")
+            else -> throw IllegalArgumentException("Unsupported Xtream category shell: $contentType")
+        }
+        syncCatalogStore.upsertCategories(
+            providerId = provider.id,
+            type = contentType.name,
+            categories = categories.map { category -> category.toEntity(provider.id) }
+        )
+        upsertXtreamIndexJob(
+            providerId = provider.id,
+            section = contentType.name,
+            state = "QUEUED",
+            now = now,
+            totalCategories = categories.size,
+            completedCategories = 0,
+            nextCategoryIndex = 0,
+            failedCategories = 0,
+            indexedRows = 0,
+            skippedMalformedRows = 0,
+            lastAttemptAt = now,
+            lastError = null
+        )
+        categories.size
+    }
+
+    suspend fun processQueuedXtreamIndexJobs(
+        providerId: Long,
+        section: ContentType? = null,
+        force: Boolean = false,
+        maxCategoriesPerSection: Int? = null,
+        onProgress: ((String) -> Unit)? = null
+    ): com.streamvault.domain.model.Result<Unit> = withProviderLock(providerId) lock@{
+        val providerEntity = providerDao.getById(providerId)
+            ?: return@lock com.streamvault.domain.model.Result.error("Provider $providerId not found")
+        if (providerEntity.type != ProviderType.XTREAM_CODES) {
+            return@lock com.streamvault.domain.model.Result.success(Unit)
+        }
+
+        val provider = providerEntity
+            .copy(password = credentialCrypto.decryptIfNeeded(providerEntity.password))
+            .toDomain()
+        val useTextClassification = preferencesRepository.useXtreamTextClassification.first()
+        val enableBase64TextCompatibility = preferencesRepository.xtreamBase64TextCompatibility.first()
+        val api = createXtreamSyncProvider(provider, useTextClassification, enableBase64TextCompatibility)
+        val sections = when (section) {
+            ContentType.MOVIE -> listOf(ContentType.MOVIE)
+            ContentType.SERIES -> listOf(ContentType.SERIES)
+            ContentType.LIVE -> listOf(ContentType.LIVE)
+            ContentType.SERIES_EPISODE -> emptyList()
+            null -> listOf(ContentType.LIVE, ContentType.MOVIE, ContentType.SERIES)
+        }
+
+        var sawRetryableFailure = false
+        val warnings = mutableListOf<String>()
+        val failures = mutableListOf<Throwable>()
+        sections.forEach { contentType ->
+            val job = xtreamIndexJobDao.get(providerId, contentType.name)
+            if (!force && !shouldRunXtreamSummaryIndex(job)) {
+                return@forEach
+            }
+            val failure = runCatching {
+                when (contentType) {
+                    ContentType.LIVE -> processXtreamLiveIndexBackfillSection(providerId, onProgress)
+                    ContentType.MOVIE,
+                    ContentType.SERIES -> processXtreamSummaryIndexSection(provider, api, contentType, maxCategoriesPerSection, onProgress)
+                    ContentType.SERIES_EPISODE -> Unit
+                }
+            }.exceptionOrNull()
+            if (failure != null) {
+                val state = xtreamIndexFailureState(failure)
+                val currentJob = xtreamIndexJobDao.get(providerId, contentType.name)
+                if (currentJob?.state != "PARTIAL") {
+                    val failureAt = System.currentTimeMillis()
+                    upsertXtreamIndexJob(
+                        providerId = providerId,
+                        section = contentType.name,
+                        state = state,
+                        now = failureAt,
+                        lastAttemptAt = failureAt,
+                        lastError = sanitizeThrowableMessage(failure)
+                    )
+                }
+                failures += failure
+                sawRetryableFailure = sawRetryableFailure || state != "FAILED_PERMANENT"
+                warnings += "${contentType.name.lowercase().replaceFirstChar { it.titlecase() }} indexing failed: ${sanitizeThrowableMessage(failure)}"
+            }
+        }
+
+        if (warnings.isNotEmpty()) {
+            val message = warnings.joinToString("; ")
+            val cause = failures.firstOrNull()
+            val exception = if (sawRetryableFailure) IOException(message, cause) else IllegalStateException(message, cause)
+            com.streamvault.domain.model.Result.error(warnings.first(), exception)
+        } else {
+            com.streamvault.domain.model.Result.success(Unit)
+        }
+    }
+
+    private fun shouldRunXtreamSummaryIndex(job: XtreamIndexJobEntity?): Boolean {
+        if (job == null) return true
+        if (job.state in setOf("QUEUED", "RUNNING", "PARTIAL", "STALE", "FAILED_RETRYABLE")) return true
+        return ContentCachePolicy.shouldRefresh(job.lastSuccessAt, ContentCachePolicy.CATALOG_TTL_MILLIS)
+    }
+
+    suspend fun processQueuedStalkerIndexJobs(
+        providerId: Long,
+        section: ContentType? = null,
+        force: Boolean = false,
+        maxCategoriesPerSection: Int? = null,
+        onProgress: ((String) -> Unit)? = null
+    ): com.streamvault.domain.model.Result<Unit> {
+        val providerMaxConnections = providerDao.getById(providerId)?.maxConnections ?: Int.MAX_VALUE
+        return withStalkerSummaryLock(providerId, section, providerMaxConnections) lock@{
+        val playbackDelayMillis = StalkerTrafficCoordinator.deferCatalogFetchMillis(providerId)
+        if (playbackDelayMillis > 0L) {
+            Log.i(TAG, "Deferring Stalker catalog work for provider $providerId because playback is active.")
+            scheduleStalkerIndexSync(
+                providerId = providerId,
+                section = null,
+                force = force,
+                initialDelaySeconds = ((playbackDelayMillis + 999L) / 1000L).coerceAtLeast(1L)
+            )
+            return@lock com.streamvault.domain.model.Result.success(Unit)
+        }
+
+        val providerEntity = providerDao.getById(providerId)
+            ?: return@lock com.streamvault.domain.model.Result.error("Provider $providerId not found")
+        if (providerEntity.type != ProviderType.STALKER_PORTAL) {
+            return@lock com.streamvault.domain.model.Result.success(Unit)
+        }
+
+        val provider = providerEntity
+            .copy(password = credentialCrypto.decryptIfNeeded(providerEntity.password))
+            .toDomain()
+        val api = createStalkerSyncProvider(provider)
+        val decision = chooseNextStalkerCatalogSection(
+            provider = provider,
+            api = api,
+            requestedSection = section,
+            force = force,
+            now = System.currentTimeMillis()
+        )
+        val contentType = decision.contentType
+        if (contentType == null) {
+            Log.i(TAG, "Stalker catalog worker skipped provider $providerId: ${decision.reason}")
+            if (decision.retryDelaySeconds > 0L) {
+                scheduleStalkerIndexSync(
+                    providerId = providerId,
+                    section = null,
+                    force = false,
+                    initialDelaySeconds = decision.retryDelaySeconds
+                )
+            } else {
+                scheduleStalkerEpgIfCatalogIdle(provider)
+            }
+            return@lock com.streamvault.domain.model.Result.success(Unit)
+        }
+        Log.i(TAG, "Stalker catalog worker selected ${contentType.name} for provider $providerId: ${decision.reason}")
+
+        val warnings = mutableListOf<String>()
+        val failures = mutableListOf<Throwable>()
+        var sawRetryableFailure = false
+        val categoryLimit = maxCategoriesPerSection?.coerceAtLeast(1) ?: STALKER_INDEX_CATEGORY_SLICE_SIZE
+        val failure = runCatching {
+            processStalkerSummaryIndexSection(
+                provider = provider,
+                api = api,
+                contentType = contentType,
+                maxCategories = categoryLimit,
+                onProgress = onProgress
+            )
+        }.exceptionOrNull()
+        if (failure != null) {
+            val failedAt = System.currentTimeMillis()
+            val state = stalkerIndexFailureState(failure)
+            upsertXtreamIndexJob(
+                providerId = providerId,
+                section = contentType.name,
+                state = state,
+                now = failedAt,
+                lastAttemptAt = failedAt,
+                lastError = sanitizeThrowableMessage(failure)
+            )
+            failures += failure
+            sawRetryableFailure = sawRetryableFailure || state != "FAILED_PERMANENT"
+            warnings += "${contentType.name.lowercase().replaceFirstChar { it.titlecase() }} indexing failed: ${sanitizeThrowableMessage(failure)}"
+        }
+
+        if (warnings.isNotEmpty()) {
+            val message = warnings.joinToString("; ")
+            val cause = failures.firstOrNull()
+            val exception = if (sawRetryableFailure) IOException(message, cause) else IllegalStateException(message, cause)
+            com.streamvault.domain.model.Result.error(warnings.first(), exception)
+        } else {
+            scheduleNextStalkerCatalogStep(provider, api)
+            scheduleStalkerEpgIfCatalogIdle(provider)
+            com.streamvault.domain.model.Result.success(Unit)
+        }
+        }
+    }
+
+    private data class StalkerCatalogDecision(
+        val contentType: ContentType?,
+        val retryDelaySeconds: Long = 0L,
+        val reason: String
+    )
+
+    private data class StalkerCatalogSectionState(
+        val contentType: ContentType,
+        val runnable: Boolean,
+        val retryDelaySeconds: Long,
+        val pending: Boolean,
+        val jobState: String?
+    )
+
+    private suspend fun chooseNextStalkerCatalogSection(
+        provider: Provider,
+        api: StalkerProvider,
+        requestedSection: ContentType?,
+        force: Boolean,
+        now: Long
+    ): StalkerCatalogDecision {
+        val movie = stalkerCatalogSectionState(provider, api, ContentType.MOVIE, force, now)
+        if (movie.runnable) {
+            return StalkerCatalogDecision(ContentType.MOVIE, reason = "movies are runnable (${movie.jobState ?: "no job"})")
+        }
+
+        val series = stalkerCatalogSectionState(provider, api, ContentType.SERIES, force, now)
+        if (series.runnable) {
+            val reason = if (movie.pending && movie.retryDelaySeconds > 0L) {
+                "movies are waiting ${movie.retryDelaySeconds}s for retry; series is runnable"
+            } else {
+                "movies are complete or terminal; series is runnable (${series.jobState ?: "no job"})"
+
+
+================================================================
+3. Point d'entree principal sync() - lignes 655 a 900 (ordre Live/Movies/Series, sequentiel ou parallele)
+================================================================
+--- fun sync() - point d'entree : C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManager.kt (lignes 655-900) ---
+    suspend fun sync(
+        providerId: Long,
+        force: Boolean = false,
+        movieFastSyncOverride: Boolean? = null,
+        epgSyncModeOverride: ProviderEpgSyncMode? = null,
+        onProgress: ((String) -> Unit)? = null,
+        trackInitialLiveOnboarding: Boolean = false
+    ): com.streamvault.domain.model.Result<Unit> = withProviderLock(providerId) lock@{
+        try {
+            val providerEntity = providerDao.getById(providerId)
+                ?: return@lock com.streamvault.domain.model.Result.error("Provider $providerId not found")
+
+            val provider = providerEntity
+                .copy(password = credentialCrypto.decryptIfNeeded(providerEntity.password))
+                .toDomain()
+                .let { resolvedProvider ->
+                    resolvedProvider.copy(
+                        xtreamFastSyncEnabled = movieFastSyncOverride ?: resolvedProvider.xtreamFastSyncEnabled,
+                        epgSyncMode = epgSyncModeOverride ?: resolvedProvider.epgSyncMode
+                    )
+                }
+            publishSyncState(providerId, SyncState.Syncing("Starting..."))
+
+            try {
+                val outcome = withContext(Dispatchers.IO) {
+                    when (provider.type) {
+                        ProviderType.XTREAM_CODES -> syncXtreamIndexFirst(
+                            provider = provider,
+                            force = force,
+                            onProgress = onProgress,
+                            trackInitialLiveOnboarding = trackInitialLiveOnboarding,
+                            syncReason = if (trackInitialLiveOnboarding) {
+                                XtreamLiveSyncReason.INITIAL_ONBOARDING
+                            } else {
+                                XtreamLiveSyncReason.FOREGROUND
+                            }
+                        )
+                        ProviderType.M3U -> syncM3u(provider, force, onProgress)
+                        ProviderType.STALKER_PORTAL -> syncStalker(provider, force, onProgress)
+                    }
+                }
+                providerDao.updateSyncTime(providerId, System.currentTimeMillis())
+                updateSyncStatusMetadata(
+                    providerId = providerId,
+                    status = if (outcome.partial) "PARTIAL" else "SUCCESS"
+                )
+                publishSyncState(providerId, if (outcome.partial) {
+                    SyncState.Partial("Sync completed with warnings", outcome.warnings)
+                } else {
+                    SyncState.Success()
+                })
+                com.streamvault.domain.model.Result.success(Unit)
+            } catch (e: CancellationException) {
+                resetState(providerId)
+                throw e
+            } catch (e: Exception) {
+                val safeMessage = syncErrorSanitizer.userMessage(e, "Sync failed")
+                Log.e(TAG, "Sync failed for provider $providerId: ${syncErrorSanitizer.throwableMessage(e)}")
+                if (provider.type == ProviderType.XTREAM_CODES && trackInitialLiveOnboarding) {
+                    recordXtreamLiveOnboardingState(
+                        provider = provider,
+                        phase = XTREAM_ONBOARDING_PHASE_FAILED,
+                        lastError = sanitizeThrowableMessage(e)
+                    )
+                }
+                updateSyncStatusMetadata(providerId = providerId, status = "ERROR")
+                publishSyncState(providerId, SyncState.Error(safeMessage, e))
+                com.streamvault.domain.model.Result.error(safeMessage, e)
+            }
+        } finally {
+            // D7 - reset systematique du bus a la fin du cycle (succes, exception, abort low-memory)
+            // pour eviter qu'un ecran ulterieur n'herite d'un etat de progression obsolete.
+            syncProgressBus.reset()
+        }
+    }
+
+    fun resetState(providerId: Long? = null) {
+        syncStateTracker.reset(providerId)
+    }
+
+    suspend fun rebuildXtreamIndex(
+        providerId: Long,
+        onProgress: ((String) -> Unit)? = null
+    ): com.streamvault.domain.model.Result<Unit> = withProviderLock(providerId) lock@{
+        val providerEntity = providerDao.getById(providerId)
+            ?: return@lock com.streamvault.domain.model.Result.error("Provider $providerId not found")
+        if (providerEntity.type != ProviderType.XTREAM_CODES) {
+            return@lock com.streamvault.domain.model.Result.error("Index rebuild is only available for Xtream providers")
+        }
+
+        val provider = providerEntity
+            .copy(password = credentialCrypto.decryptIfNeeded(providerEntity.password))
+            .toDomain()
+
+        publishSyncState(providerId, SyncState.Syncing("Preparing index rebuild..."))
+        val now = System.currentTimeMillis()
+        val warnings = mutableListOf<String>()
+
+        try {
+            withContext(Dispatchers.IO) {
+                progress(providerId, onProgress, "Marking existing index rows stale...")
+                val staleRows = xtreamContentIndexDao.markVodAndSeriesRowsStaleForRebuild(providerId)
+                Log.i(TAG, "Marked $staleRows Xtream VOD/series index rows STALE_REMOTE for provider $providerId rebuild.")
+
+                val useTextClassification = preferencesRepository.useXtreamTextClassification.first()
+                val enableBase64TextCompatibility = preferencesRepository.xtreamBase64TextCompatibility.first()
+                val api = createXtreamSyncProvider(provider, useTextClassification, enableBase64TextCompatibility)
+
+                syncXtreamCategoryShell(
+                    provider = provider,
+                    api = api,
+                    contentType = ContentType.MOVIE,
+                    label = "Movies",
+                    now = now,
+                    onProgress = onProgress
+                ).getOrElse { error ->
+                    warnings += "Movies index rebuild could not be queued."
+                    upsertXtreamIndexJob(
+                        providerId = providerId,
+                        section = ContentType.MOVIE.name,
+                        state = xtreamIndexFailureState(error),
+                        now = now,
+                        lastAttemptAt = now,
+                        lastError = sanitizeThrowableMessage(error)
+                    )
+                    0
+                }
+                scheduleXtreamIndexSync(providerId, ContentType.MOVIE, force = true)
+
+                syncXtreamCategoryShell(
+                    provider = provider,
+                    api = api,
+                    contentType = ContentType.SERIES,
+                    label = "Series",
+                    now = now,
+                    onProgress = onProgress
+                ).getOrElse { error ->
+                    warnings += "Series index rebuild could not be queued."
+                    upsertXtreamIndexJob(
+                        providerId = providerId,
+                        section = ContentType.SERIES.name,
+                        state = xtreamIndexFailureState(error),
+                        now = now,
+                        lastAttemptAt = now,
+                        lastError = sanitizeThrowableMessage(error)
+                    )
+                    0
+                }
+                scheduleXtreamIndexSync(providerId, ContentType.SERIES, force = true)
+
+                val metadata = syncMetadataRepository.getMetadata(providerId) ?: SyncMetadata(providerId)
+                syncMetadataRepository.updateMetadata(
+                    metadata.copy(
+                        lastMovieAttempt = now,
+                        movieCatalogStale = true,
+                        movieSyncMode = VodSyncMode.UNKNOWN
+                    )
+                )
+            }
+            updateSyncStatusMetadata(
+                providerId = providerId,
+                status = if (warnings.isEmpty()) "SUCCESS" else "PARTIAL"
+            )
+            publishSyncState(
+                providerId,
+                if (warnings.isEmpty()) {
+                    SyncState.Success()
+                } else {
+                    SyncState.Partial("Index rebuild queued with warnings", warnings)
+                }
+            )
+            com.streamvault.domain.model.Result.success(Unit)
+        } catch (e: CancellationException) {
+            resetState(providerId)
+            throw e
+        } catch (e: Exception) {
+            val safeMessage = syncErrorSanitizer.userMessage(e, "Index rebuild failed")
+            Log.e(TAG, "Xtream index rebuild failed for provider $providerId: ${syncErrorSanitizer.throwableMessage(e)}")
+            updateSyncStatusMetadata(providerId = providerId, status = "ERROR")
+            publishSyncState(providerId, SyncState.Error(safeMessage, e))
+            com.streamvault.domain.model.Result.error(safeMessage, e)
+        }
+    }
+
+    suspend fun retrySection(
+        providerId: Long,
+        section: SyncRepairSection,
+        movieFastSyncOverride: Boolean? = null,
+        syncReason: XtreamLiveSyncReason = XtreamLiveSyncReason.MANUAL_SETTINGS,
+        onProgress: ((String) -> Unit)? = null
+    ): com.streamvault.domain.model.Result<Unit> = withProviderLock(providerId) lock@{
+        val providerEntity = providerDao.getById(providerId)
+            ?: return@lock com.streamvault.domain.model.Result.error("Provider $providerId not found")
+
+        val provider = providerEntity
+            .copy(password = credentialCrypto.decryptIfNeeded(providerEntity.password))
+            .toDomain()
+            .let { resolvedProvider ->
+                movieFastSyncOverride?.let { override ->
+                    resolvedProvider.copy(xtreamFastSyncEnabled = override)
+                } ?: resolvedProvider
+            }
+
+        try {
+            val outcome = withContext(Dispatchers.IO) {
+                when (section) {
+                    SyncRepairSection.LIVE -> syncLiveOnly(provider, syncReason, onProgress)
+                    SyncRepairSection.EPG -> {
+                        syncEpgOnly(provider, onProgress)
+                        SyncOutcome()
+                    }
+                    SyncRepairSection.MOVIES -> syncMoviesOnly(provider, onProgress)
+                    SyncRepairSection.SERIES -> syncSeriesOnly(provider, onProgress)
+                }
+            }
+            updateSyncStatusMetadata(
+                providerId = providerId,
+                status = if (outcome.partial) "PARTIAL" else "SUCCESS"
+            )
+            publishSyncState(
+                providerId,
+                if (outcome.partial) {
+                    SyncState.Partial("Section retry completed with warnings", outcome.warnings)
+                } else {
+                    SyncState.Success()
+                }
+            )
+            com.streamvault.domain.model.Result.success(Unit)
+        } catch (e: CancellationException) {
+            resetState(providerId)
+            throw e
+        } catch (e: Exception) {
+            val safeMessage = syncErrorSanitizer.userMessage(e, "Retry failed")
+            Log.e(TAG, "Section retry failed for provider $providerId [$section]: ${syncErrorSanitizer.throwableMessage(e)}")
+            updateSyncStatusMetadata(providerId = providerId, status = "ERROR")
+            publishSyncState(providerId, SyncState.Error(safeMessage, e))
+            com.streamvault.domain.model.Result.error(safeMessage, e)
+        } finally {
+            syncProgressBus.reset()
+        }
+    }
+
+    private suspend fun syncXtreamIndexFirst(
+        provider: Provider,
+        force: Boolean,
+        onProgress: ((String) -> Unit)?,
+
+
+================================================================
+4. EffectiveXtreamLiveSyncMethod - ou et comment est-il decide (AUTO -> STREAM_ALL ou CATEGORY_BY_CATEGORY) ?
+================================================================
+
+Path                                                                                                                    LineNumber Line                                   
+----                                                                                                                    ---------- ----                                   
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManagerXtreamLiveStrategy.kt         56         effectiveLiveSyncMethod:       
+                                                                                                                                   EffectiveXtreamLiveSyncMethod = Effecti
+                                                                                                                                   veXtreamLiveSyncMethod.STREAM_ALL      
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManagerXtreamLiveStrategy.kt         97         val shouldAttemptFullCatalog = 
+                                                                                                                                   effectiveLiveSyncMethod == EffectiveXtr
+                                                                                                                                   eamLiveSyncMethod.STREAM_ALL &&        
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\SyncManagerXtreamLiveStrategy.kt        155                                        
+                                                                                                                                   preferredSegmentedFirst =              
+                                                                                                                                   effectiveLiveSyncMethod == EffectiveXtr
+                                                                                                                                   eamLiveSyncMethod.CATEGORY_BY_CATEGORY 
+                                                                                                                                   || !shouldAttemptFullCatalog,          
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  13 internal enum class                    
+                                                                                                                                   EffectiveXtreamLiveSyncMethod {        
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  26     ): EffectiveXtreamLiveSyncMethod = 
+                                                                                                                                   when (userMode) {                      
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  27         ProviderXtreamLiveSyncMode.CATE
+                                                                                                                                   GORY_BY_CATEGORY -> EffectiveXtreamLive
+                                                                                                                                   SyncMethod.CATEGORY_BY_CATEGORY        
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  28                                        
+                                                                                                                                   ProviderXtreamLiveSyncMode.STREAM_ALL  
+                                                                                                                                   -> EffectiveXtreamLiveSyncMethod.STREAM
+                                                                                                                                   _ALL                                   
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  44     ): EffectiveXtreamLiveSyncMethod { 
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  45         if                             
+                                                                                                                                   (hiddenLiveCategoryIds.isNotEmpty())   
+                                                                                                                                   return EffectiveXtreamLiveSyncMethod.CA
+                                                                                                                                   TEGORY_BY_CATEGORY                     
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  46         if (runtimeProfile.tier ==     
+                                                                                                                                   DeviceSyncTier.LOW) return EffectiveXtr
+                                                                                                                                   eamLiveSyncMethod.CATEGORY_BY_CATEGORY 
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  47         if (runtimeProfile.snapshot.isC
+                                                                                                                                   urrentlyLowOnMemory) return EffectiveXt
+                                                                                                                                   reamLiveSyncMethod.CATEGORY_BY_CATEGORY
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  48         if                             
+                                                                                                                                   (metadata.liveAvoidFullUntil > now)    
+                                                                                                                                   return EffectiveXtreamLiveSyncMethod.CA
+                                                                                                                                   TEGORY_BY_CATEGORY                     
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  49         if (metadata.liveSequentialFail
+                                                                                                                                   uresRemembered) return EffectiveXtreamL
+                                                                                                                                   iveSyncMethod.CATEGORY_BY_CATEGORY     
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  51             return EffectiveXtreamLiveS
+                                                                                                                                   yncMethod.CATEGORY_BY_CATEGORY         
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  55                                        
+                                                                                                                                   XtreamLiveSyncReason.MANUAL_SETTINGS   
+                                                                                                                                   -> EffectiveXtreamLiveSyncMethod.CATEGO
+                                                                                                                                   RY_BY_CATEGORY                         
+C:\Users\arnau\Desktop\JojoTV\streamvault-data\src\main\java\com\streamvault\data\sync\XtreamLiveSyncPolicy.kt                  57                                        
+                                                                                                                                   XtreamLiveSyncReason.FOREGROUND -> Effe
+                                                                                                                                   ctiveXtreamLiveSyncMethod.STREAM_ALL   
+
+
+
+=== FIN DU DIAGNOSTIC 03 ===

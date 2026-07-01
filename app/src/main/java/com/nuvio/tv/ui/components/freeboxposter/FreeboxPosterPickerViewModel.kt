@@ -1,8 +1,9 @@
-package com.nuvio.tv.ui.components.freeboxposter
+﻿package com.nuvio.tv.ui.components.freeboxposter
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.tmdb.TmdbPosterCandidate
+import com.nuvio.tv.core.tmdb.TmdbArtworkType
 import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import com.nuvio.tv.data.freebox.FreeboxFrameThumbnailService
@@ -22,6 +23,7 @@ data class FreeboxPosterPickerState(
     val entry: FreeboxFileEntry? = null,
     val posters: List<TmdbPosterCandidate> = emptyList(),
     val currentPosterUrl: String? = null,
+    val currentBackdropUrl: String? = null,
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
     val saveFailed: Boolean = false
@@ -38,32 +40,64 @@ class FreeboxPosterPickerViewModel @Inject constructor(
 
     private var loadJob: Job? = null
 
-    fun open(entry: FreeboxFileEntry, currentPosterUrl: String?) {
+    fun open(entry: FreeboxFileEntry, currentPosterUrl: String?, currentBackdropUrl: String? = null) {
         loadJob?.cancel()
         _state.value = FreeboxPosterPickerState(
             entry = entry,
             currentPosterUrl = currentPosterUrl,
+            currentBackdropUrl = currentBackdropUrl,
             isLoading = true
         )
         val contentId = freeboxContentIdForEntry(entry)
         loadJob = viewModelScope.launch {
-            val tmdbPosters = tmdbService.fetchPosterCandidatesForTitleQuery(
-                query = freeboxTmdbSearchQuery(entry.name)
-            )
-            val posters = if (tmdbPosters.isNotEmpty()) {
-                tmdbPosters
-            } else {
-                listOfNotNull(
-                    frameThumbnailService.thumbnailUri(entry)?.let { uri ->
-                        TmdbPosterCandidate(
-                            url = uri,
-                            language = null,
-                            title = "Image extraite de la vidéo",
-                            mediaType = "local"
-                        )
-                    }
+            val framePosters = runCatching {
+                frameThumbnailService.thumbnailUris(
+                    entry = entry,
+                    positionsUs = listOf(10_000_000L, 60_000_000L, 180_000_000L, 300_000_000L)
                 )
             }
+                .getOrDefault(emptyList())
+                .flatMapIndexed { index, uri -> uri.toFramePosterCandidates(index + 1) }
+            val existingCandidates = listOfNotNull(
+                currentPosterUrl?.let {
+                    TmdbPosterCandidate(
+                        url = it,
+                        language = null,
+                        title = "Image actuelle",
+                        artworkType = TmdbArtworkType.PORTRAIT
+                    )
+                },
+                currentBackdropUrl?.let {
+                    TmdbPosterCandidate(
+                        url = it,
+                        language = null,
+                        title = "Fond actuel",
+                        artworkType = TmdbArtworkType.LANDSCAPE
+                    )
+                }
+            ).distinctBy { it.artworkType to it.url }
+            val initialCandidates = (existingCandidates + framePosters)
+                .distinctBy { it.artworkType to it.url }
+            _state.update { current ->
+                if (current.entry?.let(::freeboxContentIdForEntry) != contentId) current
+                else current.copy(posters = initialCandidates, isLoading = false)
+            }
+            val freeboxQuery = freeboxTmdbSearchQuery(entry.name)
+            val moviePosters = runCatching {
+                tmdbService.fetchPosterCandidatesForTitleQuery(
+                    query = freeboxQuery,
+                    mediaTypeHint = "movie"
+                )
+            }.getOrDefault(emptyList())
+            val tvPosters = runCatching {
+                tmdbService.fetchPosterCandidatesForTitleQuery(
+                    query = freeboxQuery,
+                    mediaTypeHint = "tv"
+                )
+            }.getOrDefault(emptyList())
+            val tmdbPosters = (moviePosters + tvPosters).distinctBy { it.artworkType to it.url }
+            val posters = (existingCandidates + framePosters + tmdbPosters)
+                .distinctBy { it.artworkType to it.url }
             _state.update { current ->
                 if (current.entry?.let(::freeboxContentIdForEntry) != contentId) current
                 else current.copy(posters = posters, isLoading = false)
@@ -77,7 +111,15 @@ class FreeboxPosterPickerViewModel @Inject constructor(
         _state.update { it.copy(isSaving = true, saveFailed = false) }
         viewModelScope.launch {
             runCatching {
-                posterOverrideDataStore.set(freeboxContentIdForEntry(entry), poster.url)
+                val contentId = freeboxContentIdForEntry(entry)
+                if (poster.artworkType == TmdbArtworkType.LANDSCAPE) {
+                    posterOverrideDataStore.setBackdrop(contentId, poster.url)
+                } else {
+                    posterOverrideDataStore.set(contentId, poster.url)
+                }
+                poster.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                    posterOverrideDataStore.setOverview(contentId, overview)
+                }
             }.onSuccess {
                 _state.value = FreeboxPosterPickerState()
             }.onFailure {
@@ -90,4 +132,24 @@ class FreeboxPosterPickerViewModel @Inject constructor(
         loadJob?.cancel()
         _state.value = FreeboxPosterPickerState()
     }
+}
+
+private fun String.toFramePosterCandidates(index: Int): List<TmdbPosterCandidate> {
+    val title = if (index == 1) "Image extraite de la vidéo" else "Autre vignette frame $index"
+    return listOf(
+        TmdbPosterCandidate(
+            url = this,
+            language = null,
+            title = title,
+            mediaType = "local",
+            artworkType = TmdbArtworkType.PORTRAIT
+        ),
+        TmdbPosterCandidate(
+            url = this,
+            language = null,
+            title = title,
+            mediaType = "local",
+            artworkType = TmdbArtworkType.LANDSCAPE
+        )
+    )
 }

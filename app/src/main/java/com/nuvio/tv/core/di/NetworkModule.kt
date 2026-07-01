@@ -36,6 +36,7 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import com.nuvio.tv.core.network.IPv4FirstDns
+import com.nuvio.tv.core.network.IptvDnsResolver
 import java.io.File
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -92,7 +93,10 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(@ApplicationContext context: Context): OkHttpClient {
+    fun provideOkHttpClient(
+        @ApplicationContext context: Context,
+        iptvDnsResolver: IptvDnsResolver
+    ): OkHttpClient {
         val trustAllManager = object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
             override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
@@ -102,7 +106,7 @@ object NetworkModule {
             init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
         }
         return OkHttpClient.Builder()
-            .dns(IPv4FirstDns())
+            .dns(IPv4FirstDns(iptvDnsResolver))
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
             .hostnameVerifier { _, _ -> true }
             .cache(Cache(File(context.cacheDir, "http_cache"), 50L * 1024 * 1024)) // 50 MB disk cache

@@ -24,8 +24,10 @@ interface SeriesRepository {
     fun browseSeries(query: LibraryBrowseQuery): Flow<PagedResult<Series>>
     fun searchSeries(providerId: Long, query: String): Flow<List<Series>>
     suspend fun getSeriesById(seriesId: Long): Series?
+    suspend fun getSeriesByProviderSeriesId(providerId: Long, providerSeriesId: String): Series?
     suspend fun getEpisodeById(episodeId: Long): Episode?
     suspend fun getSeriesDetails(providerId: Long, seriesId: Long): Result<Series>
     suspend fun getEpisodeStreamInfo(episode: Episode): Result<StreamInfo>
     suspend fun refreshSeries(providerId: Long): Result<Unit>
+    suspend fun updateSeriesArtwork(seriesId: Long, posterUrl: String?, backdropUrl: String?): Result<Unit>
 }

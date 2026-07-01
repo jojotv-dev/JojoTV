@@ -653,7 +653,7 @@ class FreeboxOsClient @Inject constructor(
 
             is Number -> raw.toDouble()
 
-            is String -> raw.trim().toDoubleOrNull()
+            is String -> raw.trim().toDoubleOrNull() ?: raw.toDurationMillisOrNull()?.toDouble()
 
             else -> null
 
@@ -671,6 +671,25 @@ class FreeboxOsClient @Inject constructor(
 
         }.takeIf { it > 0L }
 
+    }
+
+    private fun String.toDurationMillisOrNull(): Long? {
+        val parts = split(':').map { it.trim() }
+        if (parts.size !in 2..3) return null
+        val numeric = parts.map { it.toLongOrNull() ?: return null }
+        return when (numeric.size) {
+            2 -> {
+                val (minutes, seconds) = numeric
+                if (seconds < 0 || seconds >= 60) return null
+                (minutes * 60 + seconds) * 1000L
+            }
+            3 -> {
+                val (hours, minutes, seconds) = numeric
+                if (minutes < 0 || minutes >= 60 || seconds < 0 || seconds >= 60) return null
+                (hours * 3600 + minutes * 60 + seconds) * 1000L
+            }
+            else -> null
+        }
     }
 
     private fun apiUrl(address: String, endpoint: String): String {

@@ -26,6 +26,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
@@ -46,6 +48,8 @@ import androidx.tv.material3.Border
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -59,13 +63,14 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.nuvio.tv.ui.theme.ThemeColors
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun GridContentCard(
     item: MetaPreview,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     posterCardStyle: PosterCardStyle = PosterCardDefaults.Style,
+    focusedPosterCardStyle: PosterCardStyle? = null,
     showLabel: Boolean = true,
     showLogo: Boolean = false,
     imageCrossfade: Boolean = true,
@@ -76,18 +81,23 @@ fun GridContentCard(
     onLongPress: (() -> Unit)? = null,
     onFocused: () -> Unit = {}
 ) {
-    val cardShape = remember(posterCardStyle.cornerRadius) { RoundedCornerShape(posterCardStyle.cornerRadius) }
-    val density = LocalDensity.current
-    val requestWidthPx = remember(density, posterCardStyle.width) { with(density) { posterCardStyle.width.roundToPx() }.coerceAtLeast(1) }
-    val requestHeightPx = remember(density, posterCardStyle.height) { with(density) { posterCardStyle.height.roundToPx() }.coerceAtLeast(1) }
     var isFocused by remember { mutableStateOf(false) }
+    val currentPosterCardStyle = if (isFocused && focusedPosterCardStyle != null) {
+        focusedPosterCardStyle
+    } else {
+        posterCardStyle
+    }
+    val cardShape = remember(currentPosterCardStyle.cornerRadius) { RoundedCornerShape(currentPosterCardStyle.cornerRadius) }
+    val density = LocalDensity.current
+    val requestWidthPx = remember(density, currentPosterCardStyle.width) { with(density) { currentPosterCardStyle.width.roundToPx() }.coerceAtLeast(1) }
+    val requestHeightPx = remember(density, currentPosterCardStyle.height) { with(density) { currentPosterCardStyle.height.roundToPx() }.coerceAtLeast(1) }
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
 
 
     Column(
         modifier = modifier
-            .width(posterCardStyle.width)
+            .width(currentPosterCardStyle.width)
             .recompositionHighlighter()
     ) {
         Card(
@@ -99,8 +109,7 @@ fun GridContentCard(
                 }
             },
             modifier = Modifier
-                .width(posterCardStyle.width)
-                .height(posterCardStyle.height)
+                .width(currentPosterCardStyle.width)
                 .then(
                     if (focusRequester != null) Modifier.focusRequester(focusRequester)
                     else Modifier
@@ -159,104 +168,123 @@ fun GridContentCard(
             ),
             border = CardDefaults.border(
                 focusedBorder = Border(
-                    border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioColors.FocusRing),
+                    border = BorderStroke(currentPosterCardStyle.focusedBorderWidth, NuvioColors.FocusRing),
                     shape = cardShape
                 )
             ),
-            scale = CardDefaults.scale(focusedScale = posterCardStyle.focusedScale)
+            scale = CardDefaults.scale(focusedScale = currentPosterCardStyle.focusedScale)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(cardShape)
-            ) {
-                val context = LocalContext.current
-                val bgCardColor = NuvioColors.BackgroundCard
-                val bgPainter = remember(bgCardColor) { androidx.compose.ui.graphics.painter.ColorPainter(bgCardColor) }
-                val imageModel = remember(item.poster, requestWidthPx, requestHeightPx) {
-                    ImageRequest.Builder(context)
-                        .data(item.poster)
-                        .crossfade(imageCrossfade)
-                        .size(width = requestWidthPx, height = requestHeightPx)
-                        .memoryCacheKey("${item.poster}_${requestWidthPx}x${requestHeightPx}")
-                        .build()
-                }
-                if (item.poster.isNullOrBlank()) {
-                    MonochromePosterPlaceholder()
-                } else {
-                    AsyncImage(
-                        model = imageModel,
-                        contentDescription = item.name,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                        placeholder = bgPainter,
-                        error = bgPainter,
-                        fallback = bgPainter
-                    )
-                }
-
-                if (showLogo && !item.logo.isNullOrBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .height(posterCardStyle.height * 0.45f)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))
-                                )
-                            )
-                    )
-                    val logoRequest = remember(item.logo) {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(currentPosterCardStyle.height)
+                        .clip(cardShape)
+                ) {
+                    val context = LocalContext.current
+                    val bgCardColor = NuvioColors.BackgroundCard
+                    val bgPainter = remember(bgCardColor) { androidx.compose.ui.graphics.painter.ColorPainter(bgCardColor) }
+                    val imageModel = remember(item.poster, requestWidthPx, requestHeightPx) {
                         ImageRequest.Builder(context)
-                            .data(item.logo)
-                            .crossfade(true)
+                            .data(item.poster)
+                            .crossfade(imageCrossfade)
+                            .size(width = requestWidthPx, height = requestHeightPx)
+                            .memoryCacheKey("${item.poster}_${requestWidthPx}x${requestHeightPx}")
                             .build()
                     }
-                    AsyncImage(
-                        model = logoRequest,
-                        contentDescription = item.name,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .heightIn(max = posterCardStyle.height * 0.35f)
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
-                    )
+                    if (item.poster.isNullOrBlank()) {
+                        MonochromePosterPlaceholder()
+                    } else {
+                        AsyncImage(
+                            model = imageModel,
+                            contentDescription = item.name,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    compositingStrategy = CompositingStrategy.Offscreen
+                                }
+                                .clip(cardShape),
+                            contentScale = ContentScale.Crop,
+                            placeholder = bgPainter,
+                            error = bgPainter,
+                            fallback = bgPainter
+                        )
+                    }
+
+                    if (showLogo && !item.logo.isNullOrBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .height(currentPosterCardStyle.height * 0.45f)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))
+                                    )
+                                )
+                        )
+                        val logoRequest = remember(item.logo) {
+                            ImageRequest.Builder(context)
+                                .data(item.logo)
+                                .crossfade(true)
+                                .build()
+                        }
+                        AsyncImage(
+                            model = logoRequest,
+                            contentDescription = item.name,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .heightIn(max = currentPosterCardStyle.height * 0.35f)
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
+                        )
+                    }
+
+                    if (isWatched) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(end = 8.dp, top = 8.dp)
+                                .zIndex(2f)
+                                .size(21.dp)
+                                .shadow(10.dp, shape = CircleShape, spotColor = Color.Transparent)
+                                .background(NuvioColors.Secondary, CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                tint = if (NuvioColors.Secondary == ThemeColors.White.secondary) Color.Black else Color.White,
+                                contentDescription = stringResource(R.string.episodes_cd_watched),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                 }
 
-                if (isWatched) {
-                    Box(
+                if (showLabel && (!showLogo || item.logo.isNullOrBlank())) {
+                    Column(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(end = 8.dp, top = 8.dp)
-                            .zIndex(2f)
-                            .size(21.dp)
-                            .shadow(10.dp, shape = CircleShape, spotColor = Color.Transparent)
-                            .background(NuvioColors.Secondary, CircleShape)
+                            .fillMaxWidth()
+                            .background(
+                                color = NuvioColors.Secondary.copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(
+                                    bottomStart = currentPosterCardStyle.cornerRadius,
+                                    bottomEnd = currentPosterCardStyle.cornerRadius
+                                )
+                            )
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            tint = if (NuvioColors.Secondary == ThemeColors.White.secondary) Color.Black else Color.White,
-                            contentDescription = stringResource(R.string.episodes_cd_watched),
-                            modifier = Modifier.size(20.dp)
+                        Text(
+                            text = item.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = NuvioColors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = if (isFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
                         )
                     }
                 }
             }
-        }
-
-        if (showLabel && (!showLogo || item.logo.isNullOrBlank())) {
-            Text(
-                text = item.name,
-                style = MaterialTheme.typography.titleMedium,
-                color = NuvioColors.TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .width(posterCardStyle.width)
-                    .padding(top = 8.dp, start = 2.dp, end = 2.dp)
-            )
         }
     }
 }

@@ -17,6 +17,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -51,11 +52,14 @@ fun GridContinueWatchingSection(
     onStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
     showManualPlayOption: Boolean = false,
     onPlayManually: (ContinueWatchingItem) -> Unit = {},
+    onSearchPoster: ((ContinueWatchingItem) -> Unit)? = null,
     modifier: Modifier = Modifier,
     fullWidth: Dp = Dp.Unspecified,
     focusedItemIndex: Int = -1,
     blurUnwatchedEpisodes: Boolean = false,
-    useEpisodeThumbnails: Boolean = true
+    useEpisodeThumbnails: Boolean = true,
+    downFocusRequester: FocusRequester? = null,
+    entryFocusRequester: FocusRequester? = null
 ) {
     if (items.isEmpty()) return
     var optionsItem by remember { mutableStateOf<ContinueWatchingItem?>(null) }
@@ -137,11 +141,22 @@ fun GridContinueWatchingSection(
                     blurUnwatchedEpisodes = blurUnwatchedEpisodes,
                     useEpisodeThumbnails = useEpisodeThumbnails,
                     modifier = focusModifier
+                        .then(
+                            if (downFocusRequester != null || entryFocusRequester != null) {
+                                Modifier.focusProperties {
+                                    if (downFocusRequester != null) down = downFocusRequester
+                                }
+                            } else Modifier
+                        )
                         .onFocusChanged { focusState ->
                             if (focusState.isFocused && lastFocusedIndex.intValue != index) {
                                 lastFocusedIndex.intValue = index
                             }
-                        },
+                        }
+                        .then(
+                            if (index == 0 && entryFocusRequester != null) Modifier.focusRequester(entryFocusRequester)
+                            else Modifier
+                        ),
                     cardWidth = if (continueWatchingPortraitMode) (126f * (thumbnailSize.cardWidth.value / 220f)).dp else thumbnailSize.cardWidth,
                     imageHeight = if (continueWatchingPortraitMode) (189f * (thumbnailSize.cardWidth.value / 220f)).dp else thumbnailSize.imageHeight
                 )
@@ -155,13 +170,23 @@ fun GridContinueWatchingSection(
             is ContinueWatchingItem.InProgress -> menuItem.progress.contentId
             is ContinueWatchingItem.NextUp -> menuItem.info.contentId
         }
-        val isFreeboxItem = menuContentId.startsWith("freebox:")
-        val isIptvItem = menuContentId.startsWith("iptv_")
+        val isFreeboxItem = menuContentId.startsWith("freebox:", ignoreCase = true)
+        val isIptvItem = menuContentId.startsWith("iptv_", ignoreCase = true)
+        val isIptvSeriesItem = menuContentId.startsWith("iptv_series:", ignoreCase = true) ||
+            menuContentId.startsWith("iptv_series_remote:", ignoreCase = true)
 
         ContinueWatchingOptionsDialog(
             item = menuItem,
             onDismiss = { optionsItem = null },
-            onDeleteFromFreebox = if (isFreeboxItem) onDeleteFromFreebox?.let { cb -> { cb(menuItem) } } else null,
+            onDeleteFromFreebox = if (isFreeboxItem) onDeleteFromFreebox?.let { cb ->
+                {
+                    val targetIndex = if (items.size <= 1) null else minOf(lastFocusedIndex.intValue, items.size - 2)
+                    pendingFocusIndex = targetIndex
+                    cb(menuItem)
+                    onRemoveItem(menuItem)
+                    optionsItem = null
+                }
+            } else null,
             onRenameFreebox = if (onRenameFreebox != null && menuItem is ContinueWatchingItem.InProgress && menuItem.progress.contentId.startsWith("freebox:")) {
                 {
                     renameItem = menuItem
@@ -188,14 +213,20 @@ fun GridContinueWatchingSection(
                 onDetailsClick(menuItem)
                 optionsItem = null
             },
+            showDetails = !isIptvItem || isIptvSeriesItem || isFreeboxItem,
             onStartFromBeginning = {
                 onStartFromBeginning(menuItem)
                 optionsItem = null
             },
-            showPlayManually = showManualPlayOption && !isIptvItem,
+            showPlayManually = showManualPlayOption && !isIptvItem && !isFreeboxItem,
             onPlayManually = {
                 onPlayManually(menuItem)
                 optionsItem = null
+            },
+            onSearchPoster = if (isFreeboxItem || isIptvItem) {
+                onSearchPoster?.let { cb -> { cb(menuItem); optionsItem = null } }
+            } else {
+                null
             }
         )
     }

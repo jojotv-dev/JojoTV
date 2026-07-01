@@ -746,7 +746,7 @@ class MainActivity : ComponentActivity() {
                         strNavFreebox,
                         strNavSettings,
                         strNavFavorites,
-                        
+
                         strNavIptv,
                         strNavIptvTivi,
                         discoverLocation,
@@ -872,6 +872,8 @@ class MainActivity : ComponentActivity() {
                         }?.route
                     }
                     val selectedDrawerItem = drawerItems.firstOrNull { it.route == selectedDrawerRoute } ?: drawerItems.first()
+                    val showProfileSelector = profiles.size > 1
+                    val showProfileInSidebar = activeProfile?.name?.isNotBlank() == true
 
                     if (modernSidebarEnabled) {
                         ModernSidebarScaffold(
@@ -888,7 +890,8 @@ class MainActivity : ComponentActivity() {
                             activeProfileName = activeProfile?.name ?: "",
                             activeProfileColorHex = activeProfile?.avatarColorHex ?: "#1E88E5",
                             activeProfileAvatarImageUrl = activeProfileAvatarImageUrl,
-                            showProfileSelector = profiles.size > 1,
+                            showProfileInSidebar = showProfileInSidebar,
+                            showProfileSelector = showProfileSelector,
                             onSwitchProfile = { hasSelectedProfileThisSession = false },
                             onNavigate = { optimisticRoute = it },
                             onExitApp = {
@@ -909,7 +912,8 @@ class MainActivity : ComponentActivity() {
                             activeProfileName = activeProfile?.name ?: "",
                             activeProfileColorHex = activeProfile?.avatarColorHex ?: "#1E88E5",
                             activeProfileAvatarImageUrl = activeProfileAvatarImageUrl,
-                            showProfileSelector = profiles.size > 1,
+                            showProfileInSidebar = showProfileInSidebar,
+                            showProfileSelector = showProfileSelector,
                             onSwitchProfile = { hasSelectedProfileThisSession = false },
                             onNavigate = { optimisticRoute = it },
                             onExitApp = {
@@ -1007,6 +1011,7 @@ private fun LegacySidebarScaffold(
     activeProfileName: String,
     activeProfileColorHex: String,
     activeProfileAvatarImageUrl: String?,
+    showProfileInSidebar: Boolean,
     showProfileSelector: Boolean,
     onSwitchProfile: () -> Unit,
     onNavigate: (String) -> Unit,
@@ -1130,6 +1135,9 @@ private fun LegacySidebarScaffold(
                         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
                         label = "legacySidebarItemWidth"
                     )
+                    val legacyProfileFocusRequester = remember { FocusRequester() }
+                    val firstDrawerRequester = drawerItems.firstOrNull()?.route?.let(drawerItemFocusRequesters::get)
+                    val lastDrawerRequester = drawerItems.lastOrNull()?.route?.let(drawerItemFocusRequesters::get)
 
                     if (isExpanded) {
                         Column(
@@ -1138,7 +1146,7 @@ private fun LegacySidebarScaffold(
                                 .fillMaxWidth()
                         ) {
                             Spacer(modifier = Modifier.height(30.dp))
-                            if (showProfileSelector && activeProfileName.isNotEmpty()) {
+                            if (showProfileInSidebar && activeProfileName.isNotEmpty()) {
                                 var isProfileFocused by remember { mutableStateOf(false) }
                                 val profileItemShape = RoundedCornerShape(32.dp)
                                 val profileLeadingInset = 18.dp
@@ -1147,8 +1155,12 @@ private fun LegacySidebarScaffold(
                                 val profileGapAfterAvatar =
                                     (profileLabelStart - profileLeadingInset - profileAvatarSize).coerceAtLeast(0.dp)
                                 val profileBgColor by animateColorAsState(
-                                    targetValue = if (isProfileFocused) NuvioColors.FocusBackground else Color.Transparent,
+                                    targetValue = if (isProfileFocused) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f),
                                     label = "legacyProfileItemBg"
+                                )
+                                val profileBorderColor by animateColorAsState(
+                                    targetValue = if (isProfileFocused) Color.White.copy(alpha = 0.28f) else Color.Transparent,
+                                    label = "legacyProfileItemBorder"
                                 )
                                 Box(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1159,11 +1171,38 @@ private fun LegacySidebarScaffold(
                                             .width(itemWidth)
                                             .height(44.dp)
                                             .background(color = profileBgColor, shape = profileItemShape)
+                                            .border(1.dp, profileBorderColor, profileItemShape)
+                                            .focusRequester(legacyProfileFocusRequester)
+                                            .focusProperties {
+                                                canFocus = isExpanded
+                                                if (firstDrawerRequester != null) down = firstDrawerRequester
+                                                if (lastDrawerRequester != null) up = lastDrawerRequester
+                                            }
                                             .onFocusChanged { isProfileFocused = it.isFocused }
-                                            .clickable {
-                                                onSwitchProfile()
-                                                drawerState.setValue(DrawerValue.Closed)
-                                            },
+                                            .onPreviewKeyEvent { keyEvent ->
+                                                if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                                when (keyEvent.key) {
+                                                    Key.DirectionDown -> {
+                                                        firstDrawerRequester?.requestFocus()
+                                                        true
+                                                    }
+                                                    Key.DirectionUp -> {
+                                                        lastDrawerRequester?.requestFocus()
+                                                        true
+                                                    }
+                                                    else -> false
+                                                }
+                                            }
+                                            .then(
+                                                if (showProfileSelector) {
+                                                    Modifier.clickable {
+                                                        onSwitchProfile()
+                                                        drawerState.setValue(DrawerValue.Closed)
+                                                    }
+                                                } else {
+                                                    Modifier
+                                                }
+                                            ),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Spacer(modifier = Modifier.width(profileLeadingInset))
@@ -1171,12 +1210,13 @@ private fun LegacySidebarScaffold(
                                             name = activeProfileName,
                                             colorHex = activeProfileColorHex,
                                             size = profileAvatarSize,
-                                            avatarImageUrl = activeProfileAvatarImageUrl
+                                            avatarImageUrl = activeProfileAvatarImageUrl,
+                                            isSelected = isProfileFocused
                                         )
                                         Spacer(modifier = Modifier.width(profileGapAfterAvatar))
                                         Text(
                                             text = activeProfileName,
-                                            color = if (isProfileFocused) NuvioColors.TextPrimary else NuvioColors.TextSecondary,
+                                            color = Color.White.copy(alpha = if (isProfileFocused) 1f else 0.92f),
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             textAlign = TextAlign.Start,
@@ -1382,6 +1422,7 @@ private fun ModernSidebarScaffold(
     activeProfileName: String,
     activeProfileColorHex: String,
     activeProfileAvatarImageUrl: String?,
+    showProfileInSidebar: Boolean,
     showProfileSelector: Boolean,
     onSwitchProfile: () -> Unit,
     onNavigate: (String) -> Unit,
@@ -1407,7 +1448,7 @@ private fun ModernSidebarScaffold(
     val keepFloatingPillExpanded = selectedDrawerRoute == Screen.Settings.route
     val keepSidebarFocusDuringCollapse =
         isSidebarExpanded || sidebarCollapsePending || pendingContentFocusTransfer
-    val hasSidebarProfileItem = showProfileSelector && activeProfileName.isNotEmpty()
+    val hasSidebarProfileItem = showProfileInSidebar && activeProfileName.isNotEmpty()
     val sidebarTopBoundaryIndex = 0
 
     LaunchedEffect(showSidebar) {
@@ -1731,7 +1772,10 @@ private fun ModernSidebarScaffold(
                             }
 
                             Key.DirectionDown -> {
-                                if (focusedDrawerIndex == drawerItems.lastIndex + 1) {
+                                if (hasSidebarProfileItem && focusedDrawerIndex == 0) {
+                                    drawerItemFocusRequesters.values.firstOrNull()?.requestFocus()
+                                    true
+                                } else if (focusedDrawerIndex == drawerItems.lastIndex + 1) {
                                     drawerItemFocusRequesters.values.firstOrNull()?.requestFocus()
                                     true
                                 } else {
@@ -1785,6 +1829,7 @@ private fun ModernSidebarScaffold(
                         activeProfileName = activeProfileName,
                         activeProfileColorHex = activeProfileColorHex,
                         activeProfileAvatarImageUrl = activeProfileAvatarImageUrl,
+                        showProfileInSidebar = showProfileInSidebar,
                         showProfileSelector = showProfileSelector,
                         onSwitchProfile = onSwitchProfile
                     )

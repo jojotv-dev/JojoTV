@@ -176,6 +176,8 @@
     <string name="hero_play_episode">Regarder S%1$d E%2$d</string>
     <string name="hero_add_to_library">Ajouter à la bibliothèque</string>
     <string name="hero_remove_from_library">Retirer de la bibliothèque</string>
+    <string name="hero_add_to_favorites">Ajouter aux favoris</string>
+    <string name="hero_remove_from_favorites">Retirer des favoris</string>
     <string name="hero_mark_watched">Marquer comme vu</string>
     <string name="hero_mark_unwatched">Marquer comme non vu</string>
     <string name="hero_play_trailer">Regarder la bande-annonce</string>
@@ -2678,6 +2680,7 @@
     <string name="layout_thumbnail_orientation_series">Séries</string>
     <string name="home_iptv_favorite_movies">Films</string>
     <string name="home_iptv_favorite_series">Séries</string>
+    <string name="home_add_to_favorites">Ajouter aux favoris</string>
     <string name="home_remove_from_favorites">Retirer des favoris</string>
     <string name="layout_thumbnail_orientation_portrait">Portrait</string>
     <string name="layout_thumbnail_orientation_landscape">Paysage</string>

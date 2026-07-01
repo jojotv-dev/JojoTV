@@ -7,6 +7,7 @@
 package com.nuvio.tv.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -331,8 +332,12 @@ private fun FolderCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .padding(8.dp),
+                        .background(
+                            color = NuvioColors.Secondary.copy(alpha = 0.18f),
+                            shape = RoundedCornerShape(bottomStart = posterCardStyle.cornerRadius, bottomEnd = posterCardStyle.cornerRadius)
+                        )
+                        .padding(8.dp)
+                        .align(Alignment.BottomCenter),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

@@ -11,6 +11,7 @@ import com.nuvio.tv.data.freebox.FreeboxOsClient
 import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.data.freebox.freeboxContentIdForPath
 import com.nuvio.tv.data.freebox.freeboxDisplayName
+import com.nuvio.tv.data.local.FreeboxPosterOverrideDataStore
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.data.freebox.freeboxTmdbSearchQuery
@@ -79,6 +80,7 @@ class FreeboxBrowserViewModel @Inject constructor(
     private val freeboxClient: FreeboxOsClient,
     private val watchProgressRepository: WatchProgressRepository,
     private val tmdbService: TmdbService,
+    private val posterOverrideDataStore: FreeboxPosterOverrideDataStore,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -91,10 +93,25 @@ class FreeboxBrowserViewModel @Inject constructor(
     private val directVideoDurations = mutableMapOf<String, Long>()
     private val progressVideoDurations = mutableMapOf<String, Long>()
     private val videoArtworkCache = mutableMapOf<String, String>()
+    @Volatile private var freeboxPosterOverrides: Map<String, String> = emptyMap()
+    @Volatile private var freeboxBackdropOverrides: Map<String, String> = emptyMap()
     private val videoMetadataCache = mutableMapOf<String, FreeboxVideoMeta>()
     private val metadataRequestsInFlight = mutableSetOf<String>()
 
     init {
+        viewModelScope.launch {
+            posterOverrideDataStore.overrides.collect { overrides ->
+                freeboxPosterOverrides = overrides
+                publishArtwork()
+            }
+        }
+        viewModelScope.launch {
+            posterOverrideDataStore.backdropOverrides.collect { overrides ->
+                freeboxBackdropOverrides = overrides
+                publishArtwork()
+            }
+        }
+
         viewModelScope.launch {
             watchProgressRepository.allProgress.collect { progresses ->
                 progressVideoDurations.clear()
@@ -271,7 +288,9 @@ class FreeboxBrowserViewModel @Inject constructor(
         val videoId = freeboxContentIdForEntry(entry)
         // Artwork fetched in background - do not block playback startup
         viewModelScope.launch { artworkFor(settings, token, entry, videoId) }
-        val artworkUrl = videoArtworkCache[videoId]?.takeIf { it.isNotBlank() }
+        val artworkUrl = freeboxPosterOverrides[videoId]
+            ?: freeboxBackdropOverrides[videoId]
+            ?: videoArtworkCache[videoId]?.takeIf { it.isNotBlank() }
         return FreeboxPlaybackRequest(
             streamUrl = freeboxClient.downloadUrl(
                 settings = settings.copy(sessionToken = token),
@@ -445,7 +464,7 @@ class FreeboxBrowserViewModel @Inject constructor(
                     isLoading = false,
                     errorMessage = null,
                     knownVideoDurations = progressVideoDurations + directVideoDurations,
-                    videoArtwork = videoArtworkCache.toMap(),
+                    videoArtwork = mergedVideoArtwork(),
                     videoMetadata = videoMetadataCache.toMap()
                 )
             )
@@ -530,7 +549,10 @@ class FreeboxBrowserViewModel @Inject constructor(
         entry: FreeboxFileEntry,
         contentId: String
     ): String? {
-        videoArtworkCache[contentId]?.takeIf { it.isNotBlank() }?.let { return it }
+        val overridden = freeboxPosterOverrides[contentId]
+            ?: freeboxBackdropOverrides[contentId]
+            ?: videoArtworkCache[contentId]?.takeIf { it.isNotBlank() }
+        if (overridden != null) return overridden
         val images = tmdbService.fetchImagesForTitleQuery(
             query = freeboxTmdbSearchQuery(entry.name),
             mediaTypeHint = "movie"
@@ -543,8 +565,11 @@ class FreeboxBrowserViewModel @Inject constructor(
         return imageUrl
     }
     private fun publishArtwork() {
-        _uiState.update { it.copy(videoArtwork = videoArtworkCache.toMap()) }
+        _uiState.update { it.copy(videoArtwork = mergedVideoArtwork()) }
     }
+
+    private fun mergedVideoArtwork(): Map<String, String> =
+        videoArtworkCache.toMap() + freeboxBackdropOverrides + freeboxPosterOverrides
 
     private fun publishMetadata() {
         _uiState.update { it.copy(videoMetadata = videoMetadataCache.toMap()) }

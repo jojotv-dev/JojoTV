@@ -89,9 +89,13 @@ fun GridHomeContent(
     gridFocusState: HomeScreenFocusState,
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
+    onContinueWatchingDetails: (ContinueWatchingItem) -> Unit = { item ->
+        onNavigateToDetail(item.contentId(), item.contentType(), "")
+    },
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit = {},
     showContinueWatchingManualPlayOption: Boolean = false,
+    onSearchContinueWatchingPoster: ((ContinueWatchingItem) -> Unit)? = null,
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onRemoveContinueWatching: (String, Int?, Int?, Boolean) -> Unit,
@@ -99,6 +103,7 @@ fun GridHomeContent(
     onRenameFreeboxProgress: (ContinueWatchingItem, String) -> Unit = { _, _ -> },
     onMarkFreeboxUnwatched: (ContinueWatchingItem) -> Unit = {},
     onRenameFreeboxVideo: (FreeboxFileEntry, String) -> Unit = { _, _ -> },
+    onDeleteFreeboxVideo: (FreeboxFileEntry) -> Unit = {},
     onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
     continueWatchingPortraitMode: Boolean = false,
@@ -126,6 +131,25 @@ fun GridHomeContent(
     val seriesFavoritesPosterCardStyle = remember(posterCardStyle, seriesFavoritesPortraitMode) {
         if (seriesFavoritesPortraitMode) posterCardStyle
         else posterCardStyle.copy(height = posterCardStyle.width * 9f / 16f)
+    }
+    val movieFavoritesFocusedPosterCardStyle = remember(movieFavoritesPosterCardStyle, movieFavoritesPortraitMode) {
+        if (movieFavoritesPortraitMode) {
+            movieFavoritesPosterCardStyle.copy(width = movieFavoritesPosterCardStyle.height * 16f / 9f)
+        } else {
+            null
+        }
+    }
+    val seriesFavoritesFocusedPosterCardStyle = remember(seriesFavoritesPosterCardStyle, seriesFavoritesPortraitMode) {
+        if (seriesFavoritesPortraitMode) {
+            seriesFavoritesPosterCardStyle.copy(width = seriesFavoritesPosterCardStyle.height * 16f / 9f)
+        } else {
+            null
+        }
+    }
+
+    fun isIptvFavoriteCatalog(catalogId: String): Boolean {
+        return catalogId == HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID ||
+            catalogId == HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID
     }
 
     // Scroll to top when triggered from sidebar Home button.
@@ -206,10 +230,14 @@ fun GridHomeContent(
     }
     val heroFocusRequester = remember { FocusRequester() }
     val firstGridItemFocusRequester = remember { FocusRequester() }
+    val firstGridRowEntryFocusRequester = remember { FocusRequester() }
+    val continueWatchingEntryFocusRequester = remember { FocusRequester() }
     val hasContinueWatching = continueWatchingItems.isNotEmpty()
     val hasStandaloneFocusableGridItem = remember(gridItems) {
         gridItems.any { it is GridItem.Content || it is GridItem.SeeAll }
     }
+
+    val firstVideoCardFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(
         shouldRequestInitialFocus,
@@ -294,6 +322,7 @@ fun GridHomeContent(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             var firstGridFocusableAssigned = false
+            var firstGridRowEntryAssigned = false
 
             // Emit pre-section items (Hero)
             if (preItems.isNotEmpty()) {
@@ -352,6 +381,7 @@ fun GridHomeContent(
                         modifier = Modifier.fillMaxWidth(),
                         fullWidth = gridWidth,
                         items = continueWatchingItems,
+                        entryFocusRequester = continueWatchingEntryFocusRequester,
                         focusedItemIndex = if (shouldRequestInitialFocus && !hasHero) 0 else -1,
                         onItemClick = onContinueWatchingClick,
                         onDeleteFromFreebox = onDeleteFromFreebox,
@@ -362,19 +392,8 @@ fun GridHomeContent(
                         onStartFromBeginning = onContinueWatchingStartFromBeginning,
                         showManualPlayOption = showContinueWatchingManualPlayOption,
                         onPlayManually = onContinueWatchingPlayManually,
-                        onDetailsClick = { item ->
-                            onNavigateToDetail(
-                                when (item) {
-                                    is ContinueWatchingItem.InProgress -> item.progress.contentId
-                                    is ContinueWatchingItem.NextUp -> item.info.contentId
-                                },
-                                when (item) {
-                                    is ContinueWatchingItem.InProgress -> item.progress.contentType
-                                    is ContinueWatchingItem.NextUp -> item.info.contentType
-                                },
-                                ""
-                            )
-                        },
+                        downFocusRequester = if (uiState.freeboxVideoEntries.isNotEmpty()) firstVideoCardFocusRequester else firstGridRowEntryFocusRequester,
+                        onDetailsClick = onContinueWatchingDetails,
                         onRemoveItem = { item ->
                             val contentId = when (item) {
                                 is ContinueWatchingItem.InProgress -> item.progress.contentId
@@ -422,32 +441,17 @@ fun GridHomeContent(
                         horizontalPadding = 0.dp,
                         itemSpacing = 12.dp,
                         focusBorderPadding = 3.dp,
+                        entryFocusRequester = firstVideoCardFocusRequester,
+                        upFocusRequester = if (continueWatchingItems.isNotEmpty()) continueWatchingEntryFocusRequester else null,
+                        downFocusRequester = postItems.any { it.first is GridItem.Content }.let {
+                            if (it) firstGridRowEntryFocusRequester else null
+                        },
                         onShowDetails = { entry ->
                             onNavigateToDetail(freeboxContentIdForEntry(entry), "freebox", "")
                         },
                         onRenameFreebox = onRenameFreeboxVideo,
-                        onDeleteFromFreebox = { entry ->
-                            val contentId = freeboxContentIdForEntry(entry)
-                            onDeleteFromFreebox?.invoke(
-                                ContinueWatchingItem.InProgress(
-                                    progress = WatchProgress(
-                                        contentId = contentId,
-                                        contentType = "freebox",
-                                        name = entry.name,
-                                        poster = uiState.freeboxVideoArtwork[contentId],
-                                        backdrop = uiState.freeboxVideoArtwork[contentId],
-                                        logo = null,
-                                        videoId = contentId,
-                                        season = null,
-                                        episode = null,
-                                        episodeTitle = null,
-                                        position = 0L,
-                                        duration = entry.durationMs ?: 0L,
-                                        lastWatched = 0L
-                                    )
-                                )
-                            )
-                        },
+                        onDeleteFromFreebox = onDeleteFreeboxVideo,
+                        onItemFocused = { _, item -> onItemFocus(item) }
                     )
                 }
             }
@@ -513,24 +517,38 @@ fun GridHomeContent(
                     }
 
                     is GridItem.Content -> {
-                        val focusRequester = if (
+                        val focusRequester = when {
+                            !firstGridRowEntryAssigned && (hasContinueWatching || uiState.freeboxVideoEntries.isNotEmpty()) -> {
+                                firstGridRowEntryAssigned = true
+                                firstGridRowEntryFocusRequester
+                            }
                             shouldRequestInitialFocus &&
-                            !hasHero &&
-                            !hasContinueWatching &&
-                            !firstGridFocusableAssigned
-                        ) {
-                            firstGridFocusableAssigned = true
-                            firstGridItemFocusRequester
-                        } else {
-                            null
+                                !hasHero &&
+                                !hasContinueWatching &&
+                                !firstGridFocusableAssigned -> {
+                                firstGridFocusableAssigned = true
+                                firstGridItemFocusRequester
+                            }
+                            else -> focusRequesters.getOrPut(itemKey) { FocusRequester() }
                         }
                         GridContentCard(
                             item = gridItem.item,
-                            focusRequester = focusRequester ?: focusRequesters.getOrPut(itemKey) { FocusRequester() },
-                            posterCardStyle = when (gridItem.catalogId) {
-                                HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID -> movieFavoritesPosterCardStyle
-                                HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID -> seriesFavoritesPosterCardStyle
+                            focusRequester = focusRequester,
+                            posterCardStyle = when {
+                                isIptvFavoriteCatalog(gridItem.catalogId) -> when (gridItem.catalogId) {
+                                    HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID -> movieFavoritesPosterCardStyle
+                                    HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID -> seriesFavoritesPosterCardStyle
+                                    else -> posterCardStyle
+                                }
                                 else -> posterCardStyle
+                            },
+                            focusedPosterCardStyle = when {
+                                isIptvFavoriteCatalog(gridItem.catalogId) -> when (gridItem.catalogId) {
+                                    HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID -> movieFavoritesFocusedPosterCardStyle
+                                    HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID -> seriesFavoritesFocusedPosterCardStyle
+                                    else -> null
+                                }
+                                else -> null
                             },
                             showLabel = uiState.posterLabelsEnabled,
                             isWatched = isCatalogItemWatched(gridItem.item),
@@ -558,16 +576,19 @@ fun GridHomeContent(
                     }
 
                     is GridItem.SeeAll -> {
-                        val focusRequester = if (
+                        val focusRequester = when {
+                            !firstGridRowEntryAssigned && (hasContinueWatching || uiState.freeboxVideoEntries.isNotEmpty()) -> {
+                                firstGridRowEntryAssigned = true
+                                firstGridRowEntryFocusRequester
+                            }
                             shouldRequestInitialFocus &&
-                            !hasHero &&
-                            !hasContinueWatching &&
-                            !firstGridFocusableAssigned
-                        ) {
-                            firstGridFocusableAssigned = true
-                            firstGridItemFocusRequester
-                        } else {
-                            null
+                                !hasHero &&
+                                !hasContinueWatching &&
+                                !firstGridFocusableAssigned -> {
+                                firstGridFocusableAssigned = true
+                                firstGridItemFocusRequester
+                            }
+                            else -> null
                         }
                         SeeAllGridCard(
                             posterCardStyle = posterCardStyle,
@@ -588,12 +609,18 @@ fun GridHomeContent(
                     }
 
                     is GridItem.CollectionFolder -> {
+                        val focusRequester = if (!firstGridRowEntryAssigned && (hasContinueWatching || uiState.freeboxVideoEntries.isNotEmpty())) {
+                            firstGridRowEntryAssigned = true
+                            firstGridRowEntryFocusRequester
+                        } else {
+                            focusRequesters.getOrPut(itemKey) { FocusRequester() }
+                        }
                         GridCollectionFolderCard(
                             folder = gridItem.folder,
                             collectionTitle = gridItem.collectionTitle,
                             focusGlowEnabled = gridItem.focusGlowEnabled,
                             posterCardStyle = posterCardStyle,
-                            focusRequester = focusRequesters.getOrPut(itemKey) { FocusRequester() },
+                            focusRequester = focusRequester,
                             onFocused = remember(itemKey) { { lastFocusedGridItemKey.value = itemKey } },
                             onClick = remember(gridItem.collectionId, gridItem.folder.id) {
                                 {
@@ -796,7 +823,7 @@ private fun GridCollectionFolderCard(
         scale = CardDefaults.scale(focusedScale = posterCardStyle.focusedScale),
         glow = cardGlow
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().clip(cardShape)) {
             val activeImageUrl = collectionFolderCardImageUrl(folder, isFocused)
             if (!activeImageUrl.isNullOrBlank()) {
                 AsyncImage(

@@ -149,6 +149,7 @@ internal fun PlayerRuntimeController.initializePlayer(
             }
             autoSubtitleSelected = false
             hasScannedTextTracksOnce = false
+            deferResumeSeekUntilPlaybackStarts = false
             resetLoadingOverlayForNewStream()
             if (startPaused) {
                 userPausedManually = true
@@ -896,6 +897,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _uiState.update { it.copy(isPlaying = isPlaying) }
                         if (isPlaying) {
+                            applyDeferredResumeSeekAfterPlaybackStart()
                             userPausedManually = false
                             cancelPauseOverlay()
                             startProgressUpdates()
@@ -928,9 +930,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                         // Start playback now that the first video frame is
                         // visible: audio and video begin in sync.
                           tryApplyPendingResumeProgress(this@apply)
-                          _uiState.value.pendingSeekPosition?.let { position ->
-                              seekTo(position)
-                              _uiState.update { it.copy(pendingSeekPosition = null) }
+                          if (!deferResumeSeekUntilPlaybackStarts) {
+                              _uiState.value.pendingSeekPosition?.let { position ->
+                                  seekTo(position)
+                                  _uiState.update { it.copy(pendingSeekPosition = null) }
+                              }
                           }
                           if (!startPaused && !userPausedManually) {
                               playWhenReady = true

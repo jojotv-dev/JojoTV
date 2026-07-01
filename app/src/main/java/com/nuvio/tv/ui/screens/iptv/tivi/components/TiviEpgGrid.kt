@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -28,9 +27,6 @@ import java.util.*
 
 private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
 private val SLOT_WIDTH_DP = 160.dp
-internal val TIVI_EPG_BACKGROUND = Color(0xFF0F0F1A)
-internal val TIVI_EPG_SURFACE = Color(0xFF1A1A2E)
-internal val TIVI_EPG_MUTED_TEXT = Color(0xFF4A4A6A)
 internal val TIVI_EPG_ROW_HEIGHT = 56.dp
 internal val TIVI_EPG_HEADER_HEIGHT = 28.dp
 internal val TIVI_EPG_VERTICAL_PADDING = 4.dp
@@ -62,14 +58,14 @@ fun TiviEpgGrid(
         }
     }
 
-    Column(modifier = modifier.background(TIVI_EPG_BACKGROUND)) {
+    Column(modifier = modifier.background(NuvioColors.Background)) {
 
         // ── Time ruler ───────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(TIVI_EPG_HEADER_HEIGHT)
-                .background(TIVI_EPG_SURFACE)
+                .background(NuvioColors.BackgroundElevated)
                 .horizontalScroll(sharedScroll),
         ) {
             Spacer(Modifier.width(LOGO_WIDTH))
@@ -122,7 +118,7 @@ private fun TiviEpgChannelRow(
             .fillMaxWidth()
             .height(TIVI_EPG_ROW_HEIGHT)
             .background(
-                if (isFocused) selectedBackground else TIVI_EPG_BACKGROUND
+                if (isFocused) selectedBackground else NuvioColors.Background
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -131,7 +127,7 @@ private fun TiviEpgChannelRow(
             modifier = Modifier
                 .width(LOGO_WIDTH)
                 .fillMaxHeight()
-                .background(if (isFocused) selectedBackground else TIVI_EPG_SURFACE),
+                .background(if (isFocused) selectedBackground else NuvioColors.BackgroundElevated),
             contentAlignment = Alignment.Center,
         ) {
             if (!row.channel.logoUrl.isNullOrBlank()) {
@@ -163,7 +159,7 @@ private fun TiviEpgChannelRow(
                         .fillMaxHeight()
                         .padding(2.dp)
                         .background(
-                            if (isFocused) focusedCellBackground else TIVI_EPG_SURFACE,
+                            if (isFocused) focusedCellBackground else NuvioColors.BackgroundCard,
                             RoundedCornerShape(3.dp),
                         )
                         .then(
@@ -178,7 +174,7 @@ private fun TiviEpgChannelRow(
                     Text(
                         "\u2014",
                         fontSize = 14.sp,
-                        color = TIVI_EPG_MUTED_TEXT,
+                        color = NuvioColors.TextDisabled,
                     )
                 }
             } else {
@@ -216,8 +212,8 @@ private fun TiviProgramBlock(
             .background(
                 when {
                     isFocusedRow -> accent.copy(alpha = 0.12f)
-                    isNow -> TIVI_EPG_SURFACE
-                    else -> TIVI_EPG_BACKGROUND
+                    isNow -> NuvioColors.BackgroundCard
+                    else -> NuvioColors.Background
                 },
                 RoundedCornerShape(3.dp)
             )

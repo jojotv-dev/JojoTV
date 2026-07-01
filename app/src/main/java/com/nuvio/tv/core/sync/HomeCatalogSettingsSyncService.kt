@@ -80,6 +80,10 @@ class HomeCatalogSettingsSyncService @Inject constructor(
             val profileId = profileManager.activeProfileId.value
             val payload = loadLocalPayload()
             Log.d(TAG, "Push start profile=$profileId reason=$reason ${payload.summary()}")
+            if (!payload.hasEnabledItems()) {
+                Log.w(TAG, "Push skipped profile=$profileId reason=$reason because payload would disable every home row")
+                return@withContext Result.success(Unit)
+            }
             pushPayload(profileId, payload)
 
             Log.d(TAG, "Push success profile=$profileId reason=$reason")
@@ -138,6 +142,10 @@ class HomeCatalogSettingsSyncService @Inject constructor(
 
             if (remotePayload.items.isEmpty()) {
                 Log.d(TAG, "Remote payload empty profile=$profileId; preserving local (startup is pull-only)")
+                return@withContext Result.success(false)
+            }
+            if (!remotePayload.hasEnabledItems()) {
+                Log.w(TAG, "Remote payload disables every home row profile=$profileId; preserving local")
                 return@withContext Result.success(false)
             }
 
@@ -207,3 +215,6 @@ private fun SyncHomeCatalogPayload.summary(): String {
     }
     return "payload(items=${items.size}, disabled=$disabledCount, collections=$collectionCount, sample=[$sample])"
 }
+
+private fun SyncHomeCatalogPayload.hasEnabledItems(): Boolean =
+    items.any { it.enabled }

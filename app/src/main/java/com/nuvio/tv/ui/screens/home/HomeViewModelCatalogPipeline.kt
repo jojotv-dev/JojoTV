@@ -73,6 +73,18 @@ internal fun HomeViewModel.loadDisabledHomeCatalogPreferencePipeline() {
         layoutPreferenceDataStore.disabledHomeCatalogKeys.collectLatest { keys ->
             val newKeys = keys.toSet()
             if (newKeys == disabledHomeCatalogKeys) return@collectLatest
+            if (newKeys.isNotEmpty() && addonsCache.homeCatalogsAllDisabledBy(newKeys)) {
+                Log.w("HomeViewModel", "All home catalogs are disabled; clearing disabled catalog keys to restore home")
+                layoutPreferenceDataStore.setDisabledHomeCatalogKeys(emptyList())
+                disabledHomeCatalogKeys = emptySet()
+                rebuildCatalogOrder(addonsCache)
+                if (addonsCache.isNotEmpty()) {
+                    loadAllCatalogsPipeline(addonsCache, forceReload = true)
+                } else {
+                    scheduleUpdateCatalogRows()
+                }
+                return@collectLatest
+            }
             disabledHomeCatalogKeys = newKeys
             rebuildCatalogOrder(addonsCache)
             if (addonsCache.isNotEmpty()) {
@@ -82,6 +94,22 @@ internal fun HomeViewModel.loadDisabledHomeCatalogPreferencePipeline() {
             }
         }
     }
+}
+
+private fun List<Addon>.homeCatalogsAllDisabledBy(disabledKeys: Set<String>): Boolean {
+    val visibleCatalogs = enabledAddons().flatMap { addon ->
+        addon.catalogs
+            .filter(CatalogDescriptor::shouldShowOnHome)
+            .map { catalog ->
+                val stableKey = "${addon.id}_${catalog.apiType}_${catalog.id}"
+                val legacyKey = "${addon.baseUrl}_${catalog.apiType}_${catalog.id}_${catalog.name}"
+                stableKey to legacyKey
+            }
+    }
+    return visibleCatalogs.isNotEmpty() &&
+        visibleCatalogs.all { (stableKey, legacyKey) ->
+            stableKey in disabledKeys || legacyKey in disabledKeys
+        }
 }
 
 internal fun HomeViewModel.loadCustomCatalogTitlesPipeline() {
@@ -182,7 +210,7 @@ internal suspend fun HomeViewModel.loadAllCatalogsPipeline(
     try {
         if (addons.isEmpty()) {
             catalogsLoadInProgress = false
-            _uiState.update { it.copy(isLoading = false, error = appContext.getString(R.string.home_error_no_addons)) }
+            _uiState.update { it.copy(isLoading = false, error = null, installedAddonsCount = 0) }
             return
         }
 
@@ -199,7 +227,7 @@ internal suspend fun HomeViewModel.loadAllCatalogsPipeline(
 
         if (isCatalogOrderEmpty() && !hasHeroSelections) {
             catalogsLoadInProgress = false
-            _uiState.update { it.copy(isLoading = false, error = appContext.getString(R.string.home_error_no_catalog_addons)) }
+            _uiState.update { it.copy(isLoading = false, error = null) }
             return
         }
 
@@ -243,7 +271,7 @@ internal suspend fun HomeViewModel.loadAllCatalogsPipeline(
             if (hasCatalogOrderEntries()) {
                 scheduleUpdateCatalogRows()
             } else {
-                _uiState.update { it.copy(isLoading = false, error = appContext.getString(R.string.home_error_no_catalog_addons)) }
+                _uiState.update { it.copy(isLoading = false, error = null) }
             }
             return
         }

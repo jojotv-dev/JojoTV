@@ -25,8 +25,10 @@ interface MovieRepository {
     fun browseMovies(query: LibraryBrowseQuery): Flow<PagedResult<Movie>>
     fun searchMovies(providerId: Long, query: String): Flow<List<Movie>>
     suspend fun getMovie(movieId: Long): Movie?
+    suspend fun getMovieByStreamId(providerId: Long, streamId: Long): Movie?
     suspend fun getMovieDetails(providerId: Long, movieId: Long): Result<Movie>
     suspend fun getStreamInfo(movie: Movie): Result<StreamInfo>
     suspend fun refreshMovies(providerId: Long): Result<Unit>
+    suspend fun updateMovieArtwork(movieId: Long, posterUrl: String?, backdropUrl: String?): Result<Unit>
     suspend fun getWatchProgress(movieId: Long): Long? = null
 }

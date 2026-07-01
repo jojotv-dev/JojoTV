@@ -171,6 +171,8 @@
     <string name="hero_play_episode">Play S%1$d E%2$d</string>
     <string name="hero_add_to_library">Add to library</string>
     <string name="hero_remove_from_library">Remove from library</string>
+    <string name="hero_add_to_favorites">Add to favorites</string>
+    <string name="hero_remove_from_favorites">Remove from favorites</string>
     <string name="hero_mark_watched">Mark as watched</string>
     <string name="hero_mark_unwatched">Mark as unwatched</string>
     <string name="hero_play_trailer">Play trailer</string>
@@ -195,6 +197,7 @@
     <string name="freebox_rename_dialog_subtitle">Enter the new file name to apply on the Freebox.</string>
     <string name="cw_action_mark_unwatched">Mark as unwatched</string>
     <string name="cw_action_rename">Rename</string>
+    <string name="search_poster">Search for thumbnail</string>
     <string name="freebox_choose_poster">Choose thumbnail</string>
     <string name="freebox_poster_none">No TMDB thumbnail is available for this title.</string>
     <string name="freebox_poster_save_error">Unable to save this thumbnail. Please try again.</string>
@@ -2603,6 +2606,7 @@
     <string name="layout_thumbnail_orientation_series">Series</string>
     <string name="home_iptv_favorite_movies">Movies</string>
     <string name="home_iptv_favorite_series">Series</string>
+    <string name="home_add_to_favorites">Add to favorites</string>
     <string name="home_remove_from_favorites">Remove from favorites</string>
     <string name="layout_thumbnail_orientation_portrait">Portrait</string>
     <string name="layout_thumbnail_orientation_landscape">Landscape</string>

@@ -33,6 +33,8 @@ internal class GainAudioProcessor : BaseAudioProcessor() {
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return when (inputAudioFormat.encoding) {
             C.ENCODING_PCM_16BIT,
+            C.ENCODING_PCM_24BIT,
+            C.ENCODING_PCM_32BIT,
             C.ENCODING_PCM_FLOAT -> inputAudioFormat
             else -> AudioProcessor.AudioFormat.NOT_SET
         }

@@ -304,7 +304,7 @@ class ChannelRepositoryImpl @Inject constructor(
                     settings = settings
                 )
             }.flowOn(Dispatchers.Default)
-        }
+        }.withFavoriteStateForProviders()
     }
 
     override suspend fun incrementChannelErrorCount(channelId: Long): Result<Unit> = try {
@@ -840,4 +840,20 @@ class ChannelRepositoryImpl @Inject constructor(
             logicalGroupId = logicalGroupId,
             errorCount = errorCount
         )
+
+    private fun Flow<List<Channel>>.withFavoriteStateForProviders(): Flow<List<Channel>> =
+        flatMapLatest { channels ->
+            val providerIds = channels.map { it.providerId }.distinct()
+            if (providerIds.isEmpty()) {
+                flowOf(channels)
+            } else {
+                favoriteDao.getGlobalByTypeForProviders(providerIds, ContentType.LIVE.name)
+                    .map { favorites ->
+                        val favoriteKeys = favorites.map { it.providerId to it.contentId }.toSet()
+                        channels.map { channel ->
+                            channel.copy(isFavorite = (channel.providerId to channel.id) in favoriteKeys)
+                        }
+                    }
+            }
+        }
 }

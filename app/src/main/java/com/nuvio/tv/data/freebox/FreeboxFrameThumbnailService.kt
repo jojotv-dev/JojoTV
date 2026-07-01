@@ -26,8 +26,17 @@ class FreeboxFrameThumbnailService @Inject constructor(
 ) {
     private val extractionLocks = ConcurrentHashMap<String, Mutex>()
 
-    suspend fun thumbnailUri(entry: FreeboxFileEntry): String? = withContext(Dispatchers.IO) {
-        val cacheKey = freeboxContentIdForEntry(entry).sha256()
+    suspend fun thumbnailUri(entry: FreeboxFileEntry): String? =
+        thumbnailUri(entry = entry, positionUs = 10_000_000L)
+
+    suspend fun thumbnailUris(entry: FreeboxFileEntry, positionsUs: List<Long>): List<String> =
+        positionsUs
+            .distinct()
+            .mapNotNull { positionUs -> thumbnailUri(entry = entry, positionUs = positionUs) }
+            .distinct()
+
+    private suspend fun thumbnailUri(entry: FreeboxFileEntry, positionUs: Long): String? = withContext(Dispatchers.IO) {
+        val cacheKey = "${freeboxContentIdForEntry(entry)}@$positionUs".sha256()
         val cacheDirectory = File(context.cacheDir, "freebox-video-thumbnails").apply { mkdirs() }
         val thumbnailFile = File(cacheDirectory, "$cacheKey.jpg")
         if (thumbnailFile.length() > 0L) return@withContext Uri.fromFile(thumbnailFile).toString()
@@ -51,7 +60,7 @@ class FreeboxFrameThumbnailService @Inject constructor(
                     freeboxOsClient.downloadUrl(settingsWithToken, entry.path, entry.encodedPath),
                     freeboxOsClient.sessionHeaders(sessionToken)
                 )
-                frame = retriever.getFrameAtTime(10_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                frame = retriever.getFrameAtTime(positionUs.coerceAtLeast(0L), MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                     ?: retriever.frameAtTime
                     ?: return@withLock null
                 scaledFrame = frame.scaleDown(maxWidth = 720)

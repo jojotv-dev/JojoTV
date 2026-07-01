@@ -14,11 +14,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.tv.material3.*
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.screens.iptv.tivi.TiviProviderNode
@@ -35,6 +39,9 @@ fun TiviProviderTree(
     onGroupFocus: (Long, Long) -> Unit,
     onProviderLongClick: (Long) -> Unit,
     onGroupLongClick: (Long, Long) -> Unit,
+    firstGroupFocusRequester: FocusRequester? = null,
+    selectedGroupFocusRequester: FocusRequester? = null,
+    onDirectionRight: (() -> Boolean)? = null,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -44,6 +51,7 @@ fun TiviProviderTree(
             .background(NuvioColors.Background),
         contentPadding = PaddingValues(vertical = 8.dp),
     ) {
+        var firstVisibleGroup = true
         providerNodes.forEach { node ->
             item(key = "provider_${node.provider.id}") {
                 TiviProviderHeader(
@@ -53,16 +61,26 @@ fun TiviProviderTree(
                     onClick = { onProviderClick(node.provider.id) },
                     onFocus = { onProviderFocus(node.provider.id) },
                     onLongClick = { onProviderLongClick(node.provider.id) },
+                    onDirectionRight = onDirectionRight,
                 )
             }
             if (node.isExpanded) {
                 items(node.groups, key = { "group_${node.provider.id}_${it.id}" }) { group ->
+                    val isFirstGroup = firstVisibleGroup
+                    firstVisibleGroup = false
+                    val groupFocusRequester = when {
+                        group.id == selectedGroupId -> selectedGroupFocusRequester
+                        isFirstGroup -> firstGroupFocusRequester
+                        else -> null
+                    }
                     TiviGroupItem(
                         label = group.name,
                         isSelected = group.id == selectedGroupId,
                         onClick = { onGroupClick(node.provider.id, group.id) },
                         onFocus = { onGroupFocus(node.provider.id, group.id) },
                         onLongClick = { onGroupLongClick(node.provider.id, group.id) },
+                        focusRequester = groupFocusRequester,
+                        onDirectionRight = onDirectionRight,
                     )
                 }
             }
@@ -79,6 +97,7 @@ private fun TiviProviderHeader(
     onClick: () -> Unit,
     onFocus: () -> Unit,
     onLongClick: () -> Unit,
+    onDirectionRight: (() -> Boolean)?,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val rotation by animateFloatAsState(
@@ -95,13 +114,19 @@ private fun TiviProviderHeader(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (isFocused) Modifier.border(2.dp, accent, shape) else Modifier)
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                native.action == AndroidKeyEvent.ACTION_DOWN &&
+                    native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT &&
+                    onDirectionRight?.invoke() == true
+            }
             .onFocusChanged {
                 isFocused = it.isFocused
                 if (it.isFocused) onFocus()
             },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) selectedBackground else TIVI_EPG_BACKGROUND,
-            focusedContainerColor = TIVI_EPG_BACKGROUND,
+            containerColor = if (isSelected) selectedBackground else NuvioColors.Background,
+            focusedContainerColor = NuvioColors.Background,
             pressedContainerColor = accent.copy(alpha = 0.12f),
         ),
         shape = ClickableSurfaceDefaults.shape(shape),
@@ -144,6 +169,8 @@ private fun TiviGroupItem(
     onClick: () -> Unit,
     onFocus: () -> Unit,
     onLongClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
+    onDirectionRight: (() -> Boolean)?,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val accent = MaterialTheme.colorScheme.primary
@@ -155,14 +182,21 @@ private fun TiviGroupItem(
         onLongClick = onLongClick,
         modifier = Modifier
             .fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(if (isFocused) Modifier.border(2.dp, accent, shape) else Modifier)
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                native.action == AndroidKeyEvent.ACTION_DOWN &&
+                    native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT &&
+                    onDirectionRight?.invoke() == true
+            }
             .onFocusChanged {
                 isFocused = it.isFocused
                 if (it.isFocused) onFocus()
             },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) selectedBackground else TIVI_EPG_BACKGROUND,
-            focusedContainerColor = TIVI_EPG_BACKGROUND,
+            containerColor = if (isSelected) selectedBackground else NuvioColors.Background,
+            focusedContainerColor = NuvioColors.Background,
             pressedContainerColor = accent.copy(alpha = 0.12f),
         ),
         shape = ClickableSurfaceDefaults.shape(shape),

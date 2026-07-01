@@ -323,7 +323,6 @@ private fun HeroTitleContent(
 ) {
     val preview = previewProvider() ?: return
     val highlighterEnabled = LocalRecompositionHighlighterEnabled.current
-    val descriptionMaxLines = 4
     val descriptionScale = if (portraitMode) 0.90f else 1f
     val titleScale = if (portraitMode) 0.92f else 1f
     val metaScale = 1f
@@ -600,8 +599,6 @@ private fun HeroTitleContent(
                 text = description,
                 style = scaledDescriptionStyle,
                 color = NuvioColors.TextPrimary,
-                maxLines = descriptionMaxLines,
-                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.graphicsLayer { alpha = metaAlpha }
             )
         }

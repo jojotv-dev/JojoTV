@@ -4,6 +4,10 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.core.network.NetworkResult
+import com.nuvio.tv.data.freebox.freeboxDisplayName
+import com.nuvio.tv.data.freebox.freeboxFileNameOnly
+import com.nuvio.tv.data.freebox.freeboxLegacyContentIdFor
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
@@ -56,6 +60,12 @@ private data class ProgressSnapshot(
     val items: List<WatchProgress>,
     val nextUpSeeds: List<WatchProgress>,
     val hasLoadedRemoteProgress: Boolean
+)
+
+private data class ContinueWatchingDetailTarget(
+    val contentId: String,
+    val contentType: String,
+    val addonBaseUrl: String = ""
 )
 
 private data class ContinueWatchingSettingsSnapshot(
@@ -400,7 +410,10 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                 }
                 val inProgressOnly = buildList {
                     val liveInProgress = deduplicateInProgress(
-                        recentItems.filter { shouldTreatAsInProgressForContinueWatching(it) }
+                        recentItems.filter {
+                            shouldTreatAsInProgressForContinueWatching(it) &&
+                                nextUpDismissKey(it.contentId, it.season, it.episode) !in dismissedNextUp
+                        }
                     )
                     if (liveInProgress.isNotEmpty()) {
                         liveInProgress.forEach { progress ->
@@ -430,33 +443,37 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                     }
                     // For Trakt: show cached in-progress until Trakt responds (items non-empty).
                     if (liveInProgress.isEmpty() && useTraktProgress && cachedInProgress.isNotEmpty() && items.isEmpty()) {
-                        cachedInProgress.forEach { cached ->
-                            add(
-                                ContinueWatchingItem.InProgress(
-                                    progress = WatchProgress(
-                                        contentId = cached.contentId,
-                                        contentType = cached.contentType,
-                                        name = cached.name,
-                                        poster = cached.poster,
-                                        backdrop = cached.backdrop,
-                                        logo = cached.logo,
-                                        videoId = cached.videoId,
-                                        season = cached.season,
-                                        episode = cached.episode,
-                                        episodeTitle = cached.episodeTitle,
-                                        position = cached.position,
-                                        duration = cached.duration,
-                                        lastWatched = cached.lastWatched,
-                                        progressPercent = cached.progressPercent
-                                    ),
-                                    episodeThumbnail = cached.episodeThumbnail,
-                                    episodeDescription = cached.episodeDescription,
-                                    episodeImdbRating = cached.episodeImdbRating,
-                                    genres = cached.genres,
-                                    releaseInfo = cached.releaseInfo
+                        cachedInProgress
+                            .filter { cached ->
+                                nextUpDismissKey(cached.contentId, cached.season, cached.episode) !in dismissedNextUp
+                            }
+                            .forEach { cached ->
+                                add(
+                                    ContinueWatchingItem.InProgress(
+                                        progress = WatchProgress(
+                                            contentId = cached.contentId,
+                                            contentType = cached.contentType,
+                                            name = cached.name,
+                                            poster = cached.poster,
+                                            backdrop = cached.backdrop,
+                                            logo = cached.logo,
+                                            videoId = cached.videoId,
+                                            season = cached.season,
+                                            episode = cached.episode,
+                                            episodeTitle = cached.episodeTitle,
+                                            position = cached.position,
+                                            duration = cached.duration,
+                                            lastWatched = cached.lastWatched,
+                                            progressPercent = cached.progressPercent
+                                        ),
+                                        episodeThumbnail = cached.episodeThumbnail,
+                                        episodeDescription = cached.episodeDescription,
+                                        episodeImdbRating = cached.episodeImdbRating,
+                                        genres = cached.genres,
+                                        releaseInfo = cached.releaseInfo
+                                    )
                                 )
-                            )
-                        }
+                            }
                     }
                 }
                 debug.recordInProgressCount(inProgressOnly.size)
@@ -1713,6 +1730,7 @@ private suspend fun HomeViewModel.enrichInProgressItem(
     metaCache: MutableMap<String, CwMetaSummary?>,
     debug: CwDebugSession? = null
 ): ContinueWatchingItem.InProgress = coroutineScope {
+    enrichLocalHomeProgress(item)?.let { return@coroutineScope it }
     val shouldEnrichTmdb = currentTmdbSettings.enabled && currentTmdbSettings.enrichContinueWatching
 
     // Start TMDB ID resolve early (cache hit = instant, cache miss = network)
@@ -2812,7 +2830,39 @@ internal fun nextUpDismissKey(
     season: Int?,
     episode: Int?
 ): String {
-    return contentId.trim()
+    val trimmed = contentId.trim()
+    return if (trimmed.startsWith("freebox:", ignoreCase = true)) {
+        freeboxLegacyContentIdFor(trimmed)
+    } else {
+        trimmed
+    }
+}
+
+private suspend fun HomeViewModel.enrichLocalHomeProgress(
+    item: ContinueWatchingItem.InProgress
+): ContinueWatchingItem.InProgress? {
+    val progress = item.progress
+    val metadata = when {
+        progress.contentId.startsWith("freebox:", ignoreCase = true) ->
+            _uiState.value.freeboxVideoMetadata[progress.contentId]
+        progress.contentId.startsWith("iptv_", ignoreCase = true) ->
+            fetchIptvProviderMetadata(progress.contentId)
+        else -> null
+    } ?: return null
+
+    val runtimeMs = metadata.runtimeMinutes?.takeIf { it > 0 }?.times(60_000L)
+    return item.copy(
+        progress = progress.copy(
+            poster = progress.poster ?: metadata.posterUrl,
+            backdrop = metadata.backdropUrl ?: progress.backdrop,
+            duration = progress.duration.takeIf { it > 0L } ?: runtimeMs ?: 0L
+        ),
+        episodeDescription = metadata.overview?.takeIf { it.isNotBlank() }
+            ?: item.episodeDescription,
+        genres = metadata.genres.takeIf { it.isNotEmpty() } ?: item.genres,
+        releaseInfo = metadata.year ?: item.releaseInfo,
+        episodeImdbRating = metadata.voteAverage?.toFloat() ?: item.episodeImdbRating
+    )
 }
 
 internal fun HomeViewModel.removeContinueWatchingPipeline(
@@ -2844,6 +2894,7 @@ internal fun HomeViewModel.removeContinueWatchingPipeline(
         return
     }
     viewModelScope.launch {
+        traktSettingsDataStore.addDismissedNextUpKey(nextUpDismissKey(contentId, season, episode))
         // Optimistic UI: remove the item from the CW list immediately
         // so the user sees instant feedback while the DataStore write propagates.
         _uiState.update { state ->
@@ -2865,3 +2916,118 @@ internal fun HomeViewModel.removeContinueWatchingPipeline(
         )
     }
 }
+
+internal fun HomeViewModel.openContinueWatchingDetails(
+    item: ContinueWatchingItem,
+    onNavigateToDetail: (String, String, String) -> Unit
+) {
+    viewModelScope.launch {
+        val target = resolveContinueWatchingDetailTarget(item) ?: return@launch
+        onNavigateToDetail(target.contentId, target.contentType, target.addonBaseUrl)
+    }
+}
+
+private suspend fun HomeViewModel.resolveContinueWatchingDetailTarget(
+    item: ContinueWatchingItem
+): ContinueWatchingDetailTarget? {
+    val rawContentId = item.contentId()
+    val rawContentType = item.contentType()
+    val isIptvSeries = rawContentId.startsWith("iptv_series:", ignoreCase = true) ||
+        rawContentId.startsWith("iptv_series_remote:", ignoreCase = true) ||
+        rawContentType.equals("iptv_series", ignoreCase = true)
+
+    if (!rawContentId.startsWith("freebox:", ignoreCase = true)) {
+        return ContinueWatchingDetailTarget(
+            contentId = rawContentId,
+            contentType = if (isIptvSeries) "iptv_series" else rawContentType
+        )
+    }
+
+    val progress = (item as? ContinueWatchingItem.InProgress)?.progress ?: return null
+    val titleQuery = progress.freeboxDetailsTitleQuery()
+    if (titleQuery.isBlank()) return null
+
+    val meta = withContext(Dispatchers.IO) {
+        runCatching {
+            tmdbService.fetchMetadataForTitleQuery(titleQuery, mediaTypeHint = "movie")
+        }.getOrNull()
+    } ?: return null
+
+    val tmdbId = meta.tmdbId ?: return null
+    val mediaType = when (meta.mediaType?.lowercase(Locale.ROOT)) {
+        "series", "tv", "show", "tvshow" -> "series"
+        else -> "movie"
+    }
+    return ContinueWatchingDetailTarget(
+        contentId = "tmdb:$tmdbId",
+        contentType = mediaType
+    )
+}
+
+private fun WatchProgress.freeboxDetailsTitleQuery(): String {
+    val rawName = name.takeUnless { it.isLikelyGeneratedFreeboxDetailsLabel() }
+        ?: freeboxPathFromContentId(contentId).takeUnless { it.isLikelyGeneratedFreeboxDetailsLabel() }
+        ?: freeboxPathFromContentId(videoId).takeUnless { it.isLikelyGeneratedFreeboxDetailsLabel() }
+        ?: videoId
+    val displayName = freeboxDisplayName(freeboxFileNameOnly(rawName))
+    return displayName
+        .substringBeforeLast('.', displayName)
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+}
+
+private fun String.isLikelyGeneratedFreeboxDetailsLabel(): Boolean {
+    val value = trim()
+    return value.isBlank() || value.matches(Regex("\\d{10,}"))
+}
+
+internal fun HomeViewModel.updateIptvContinueWatchingPoster(
+    item: ContinueWatchingItem.InProgress,
+    posterUrl: String
+) = updateIptvContinueWatchingPoster(
+    item,
+    com.nuvio.tv.core.tmdb.TmdbPosterCandidate(url = posterUrl, language = null)
+)
+
+internal fun HomeViewModel.updateIptvContinueWatchingPoster(
+    item: ContinueWatchingItem.InProgress,
+    candidate: com.nuvio.tv.core.tmdb.TmdbPosterCandidate
+) {
+    if (!item.progress.isIptvPosterEditableForHome()) return
+    val artwork = applyIptvArtworkSelection(
+        currentPoster = item.progress.poster,
+        currentBackdrop = item.progress.backdrop,
+        candidate = candidate
+    )
+    val updatedProgress = item.progress.copy(
+        poster = artwork.posterUrl,
+        backdrop = artwork.backdropUrl
+    )
+    viewModelScope.launch {
+        watchProgressRepository.saveProgress(updatedProgress, syncRemote = false)
+        _uiState.update { state ->
+            state.copy(
+                continueWatchingItems = state.continueWatchingItems.map { current ->
+                    if (current is ContinueWatchingItem.InProgress &&
+                        current.progress.contentId == item.progress.contentId &&
+                        current.progress.videoId == item.progress.videoId &&
+                        current.progress.season == item.progress.season &&
+                        current.progress.episode == item.progress.episode
+                    ) {
+                        current.copy(progress = updatedProgress)
+                    } else {
+                        current
+                    }
+                }
+            )
+        }
+    }
+}
+
+private fun WatchProgress.isIptvPosterEditableForHome(): Boolean =
+    contentId.startsWith("iptv_movie:", ignoreCase = true) ||
+        contentId.startsWith("iptv_movie_stream:", ignoreCase = true) ||
+        contentId.startsWith("iptv_series:", ignoreCase = true) ||
+        contentId.startsWith("iptv_series_remote:", ignoreCase = true) ||
+        contentType.equals("iptv_movie", ignoreCase = true) ||
+        contentType.equals("iptv_series", ignoreCase = true)

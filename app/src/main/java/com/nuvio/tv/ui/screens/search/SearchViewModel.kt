@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.search
+﻿package com.nuvio.tv.ui.screens.search
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
@@ -991,6 +991,38 @@ class SearchViewModel @Inject constructor(
         }
 
         return allSearchTargets
+    }
+    fun toggleFavoriteSilently(item: MetaPreview, addonBaseUrl: String?) {
+        viewModelScope.launch {
+            val isNowFavorite = posterOptions.toggleFavoriteSilently(item, addonBaseUrl)
+
+            // Mise a jour de l'etat en memoire pour declencher l'etoile jaune immediatement
+            _uiState.update { current ->
+                val updatedRows = current.catalogRows.map { row ->
+                    val updatedItems = row.items.map { rowItem ->
+                        if (rowItem.id == item.id) {
+                            rowItem.copy(isFavorite = isNowFavorite)
+                        } else {
+                            rowItem
+                        }
+                    }
+                    row.copy(items = updatedItems)
+                }
+
+                val updatedDiscoverResults = current.discoverResults.map { discoverItem ->
+                    if (discoverItem.id == item.id) {
+                        discoverItem.copy(isFavorite = isNowFavorite)
+                    } else {
+                        discoverItem
+                    }
+                }
+
+                current.copy(
+                    catalogRows = updatedRows,
+                    discoverResults = updatedDiscoverResults
+                )
+            }
+        }
     }
 
     private fun catalogKey(addonId: String, type: String, catalogId: String): String {

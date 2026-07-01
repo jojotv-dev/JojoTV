@@ -1,10 +1,8 @@
 package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,33 +10,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Button
-import androidx.tv.material3.Card
-import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.theme.NuvioColors
 
 internal val IptvVodPosterWidth = 120.dp
 
-internal data class IptvFocusedMediaDetails(
+data class IptvFocusedMediaDetails(
     val title: String,
     val year: String?,
     val rating: Float,
@@ -55,20 +41,14 @@ internal fun IptvFocusedMediaPanel(
     modifier: Modifier = Modifier,
 ) {
     val fullPlot = details.plot?.takeIf { it.isNotBlank() }
-    var showFullPlot by remember(details.title, fullPlot) { mutableStateOf(false) }
-    val summaryScrollState = rememberScrollState()
-    Card(
-        onClick = { if (fullPlot != null) showFullPlot = true },
+
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(198.dp)
+            .heightIn(min = 198.dp)
             .padding(horizontal = 48.dp, vertical = 8.dp)
-            .onFocusChanged { focusState ->
-                if (focusState.isFocused && fullPlot != null) showFullPlot = true
-            },
-        shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundElevated, focusedContainerColor = NuvioColors.BackgroundElevated),
-        scale = CardDefaults.scale(focusedScale = 1f),
+            .clip(RoundedCornerShape(8.dp))
+            .background(NuvioColors.BackgroundElevated),
     ) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
             Text(buildTitle(details.title, details.year), color = NuvioColors.TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -82,23 +62,7 @@ internal fun IptvFocusedMediaPanel(
                 color = NuvioColors.TextSecondary,
                 fontSize = 12.sp,
                 lineHeight = 16.sp,
-                modifier = Modifier.heightIn(max = 96.dp).verticalScroll(summaryScrollState),
             )
-        }
-    }
-    if (showFullPlot && fullPlot != null) {
-        val plotFocusRequester = remember { FocusRequester() }
-        val plotScrollState = rememberScrollState()
-        LaunchedEffect(Unit) { plotFocusRequester.requestFocus() }
-        NuvioDialog(onDismiss = { showFullPlot = false }, title = buildTitle(details.title, details.year), width = 680.dp) {
-            Text(
-                text = fullPlot,
-                color = NuvioColors.TextSecondary,
-                fontSize = 16.sp,
-                lineHeight = 23.sp,
-                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(plotScrollState).focusRequester(plotFocusRequester).focusable(),
-            )
-            Button(onClick = { showFullPlot = false }, modifier = Modifier.fillMaxWidth()) { Text("Fermer") }
         }
     }
 }

@@ -84,6 +84,7 @@ fun CatalogRowSection(
     onItemFocus: (MetaPreview) -> Unit = {},
     isItemWatched: (MetaPreview) -> Boolean = { false },
     onItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> },
+    focusedPosterCardStyle: PosterCardStyle? = null,
     modifier: Modifier = Modifier,
     enableRowFocusRestorer: Boolean = true,
     initialScrollIndex: Int = 0,
@@ -324,6 +325,7 @@ fun CatalogRowSection(
                 ContentCard(
                     item = item,
                     posterCardStyle = posterCardStyle,
+                    focusedPosterCardStyle = focusedPosterCardStyle,
                     showLabels = showPosterLabels,
                     placeholderShimmerOffsetState = placeholderShimmerOffsetState,
                     focusedPosterBackdropExpandEnabled = focusedPosterBackdropExpandEnabled,

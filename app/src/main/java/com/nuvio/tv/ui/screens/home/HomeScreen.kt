@@ -40,18 +40,24 @@ import com.nuvio.tv.ui.screens.settings.FreeboxBrowserViewModel
 import com.nuvio.tv.ui.screens.settings.LayoutSettingsViewModel
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
+import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.data.freebox.freeboxPathFromContentId
+import com.nuvio.tv.ui.components.freeboxposter.FreeboxPosterPickerViewModel
+import com.nuvio.tv.ui.components.freeboxposter.FreeboxPosterPickerDialog
+import com.nuvio.tv.ui.components.freeboxposter.FreeboxPosterPickerState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.nuvio.tv.core.tmdb.TmdbPosterCandidate
 import com.nuvio.tv.domain.model.HomeLayout
 import com.nuvio.tv.domain.model.LibraryListTab
 import com.nuvio.tv.domain.model.LibrarySourceMode
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.ThumbnailOrientation
+import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.components.ErrorState
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.NuvioDialog
@@ -61,7 +67,11 @@ import androidx.compose.ui.res.stringResource
 import com.nuvio.tv.R
 import com.nuvio.tv.data.local.StartupAuthNotice
 import com.nuvio.tv.ui.theme.NuvioColors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private data class HomePosterOptionsTarget(
@@ -70,6 +80,21 @@ private data class HomePosterOptionsTarget(
 )
 
 private const val HOME_STABLE_GATE_TIMEOUT_MS = 1_000L
+
+private fun ContinueWatchingItem.InProgress.toFreeboxEntry(uiState: HomeUiState): FreeboxFileEntry {
+    val path = freeboxPathFromContentId(progress.contentId)
+    val existing = uiState.freeboxVideoEntries.firstOrNull { entry ->
+        entry.path == path || freeboxPathFromContentId(freeboxContentIdForEntry(entry)) == path
+    }
+    return existing ?: FreeboxFileEntry(
+        name = progress.name.ifBlank { path.substringAfterLast('/') },
+        path = path,
+        encodedPath = null,
+        isDirectory = false,
+        size = null,
+        durationMs = progress.duration
+    )
+}
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -93,6 +118,7 @@ fun HomeScreen(
     },
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit = onContinueWatchingClick,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit = onContinueWatchingClick,
+    onSearchContinueWatchingPoster: ((ContinueWatchingItem) -> Unit)? = null,
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit = { _, _, _ -> },
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
@@ -119,16 +145,60 @@ fun HomeScreen(
     val effectiveAutoplayEnabled by viewModel.effectiveAutoplayEnabled.collectAsStateWithLifecycle(
         initialValue = false
     )
+    val freeboxPosterPickerViewModel: FreeboxPosterPickerViewModel = hiltViewModel()
+    val posterOverrides by viewModel.freeboxPosterOverrideDataStore.overrides.collectAsStateWithLifecycle(emptyMap())
+    val backdropOverrides by viewModel.freeboxPosterOverrideDataStore.backdropOverrides.collectAsStateWithLifecycle(emptyMap())
+    var iptvPosterPickerItem by remember { mutableStateOf<ContinueWatchingItem.InProgress?>(null) }
+    var iptvCatalogPosterPickerTarget by remember { mutableStateOf<HomePosterOptionsTarget?>(null) }
+    var iptvPosterCandidates by remember { mutableStateOf<List<TmdbPosterCandidate>>(emptyList()) }
+    var iptvPosterPickerLoading by remember { mutableStateOf(false) }
+    var iptvPosterPickerSaveFailed by remember { mutableStateOf(false) }
+    val defaultSearchContinueWatchingPoster = remember(freeboxPosterPickerViewModel, uiState.freeboxVideoEntries, uiState.freeboxVideoArtwork) {
+        { item: ContinueWatchingItem ->
+            if (item is ContinueWatchingItem.InProgress && item.progress.contentId.startsWith("freebox:")) {
+                val entry = item.toFreeboxEntry(uiState)
+                freeboxPosterPickerViewModel.open(
+                    entry = entry,
+                    currentPosterUrl = uiState.freeboxVideoArtwork[item.progress.contentId] ?: item.progress.poster,
+                    currentBackdropUrl = uiState.freeboxVideoBackdrops[item.progress.contentId] ?: item.progress.backdrop
+                )
+            } else if (item is ContinueWatchingItem.InProgress && item.progress.isIptvPosterEditable()) {
+                iptvPosterPickerItem = item
+            }
+        }
+    }
+    val onSearchContinueWatchingPosterEffective = onSearchContinueWatchingPoster ?: defaultSearchContinueWatchingPoster
+    val deleteFreeboxProgressFromHome = remember(viewModel, uiState.freeboxVideoEntries) {
+        { item: ContinueWatchingItem ->
+            if (item is ContinueWatchingItem.InProgress && item.progress.contentId.startsWith("freebox:")) {
+                viewModel.deleteFreeboxVideoFromHome(item.toFreeboxEntry(uiState))
+            }
+        }
+    }
+    val deleteFreeboxVideoFromHome = remember(viewModel) {
+        { entry: FreeboxFileEntry -> viewModel.deleteFreeboxVideoFromHome(entry) }
+    }
     val hasCatalogContent = uiState.catalogRows.any { it.items.isNotEmpty() }
     val hasCollectionContent = uiState.homeRows.any { it is HomeRow.CollectionRow }
     val hasHeroContent = uiState.heroItems.isNotEmpty()
+    val hasFreeboxContent = uiState.freeboxVideoEntries.isNotEmpty()
+    val hasModernRowsContent = uiState.modernHomePresentation.rows.list.isNotEmpty()
+    val canRenderHomeWithoutCatalogAddons =
+        uiState.homeLayout == HomeLayout.MODERN ||
+            uiState.installedAddonsCount == 0 ||
+            hasFreeboxContent ||
+            hasModernRowsContent
     val hasAnyContent = uiState.catalogRows.isNotEmpty() ||
         uiState.continueWatchingItems.isNotEmpty() ||
         uiState.heroItems.isNotEmpty() ||
-        hasCollectionContent
+        hasCollectionContent ||
+        hasFreeboxContent ||
+        hasModernRowsContent
     val modernPresentationReady =
         uiState.homeLayout != HomeLayout.MODERN ||
-            uiState.modernHomePresentation.rows.list.isNotEmpty() ||
+            hasModernRowsContent ||
+            uiState.continueWatchingItems.isNotEmpty() ||
+            hasFreeboxContent ||
             (uiState.heroSectionEnabled && hasHeroContent && !hasCatalogContent && !hasCollectionContent)
     var showHomeContentWithAnimation by rememberSaveable { mutableStateOf(false) }
     var hasShownInitialHomeContent by rememberSaveable { mutableStateOf(false) }
@@ -144,6 +214,45 @@ fun HomeScreen(
         }
     }
 
+    LaunchedEffect(iptvPosterPickerItem, iptvCatalogPosterPickerTarget) {
+        val item = iptvPosterPickerItem
+        val catalogTarget = iptvCatalogPosterPickerTarget
+        if (item == null && catalogTarget == null) {
+            iptvPosterCandidates = emptyList()
+            iptvPosterPickerLoading = false
+            iptvPosterPickerSaveFailed = false
+            return@LaunchedEffect
+        }
+        iptvPosterPickerLoading = true
+        iptvPosterPickerSaveFailed = false
+        val (framePosters, tmdbPosters) = coroutineScope {
+            val frameDeferred = async(Dispatchers.IO) {
+                runCatching {
+                    when {
+                        item != null -> viewModel.iptvFramePosterCandidates(item.progress)
+                        catalogTarget != null -> viewModel.iptvFramePosterCandidates(catalogTarget.item)
+                        else -> emptyList()
+                    }
+                }.getOrDefault(emptyList())
+            }
+            val tmdbDeferred = async(Dispatchers.IO) {
+                runCatching {
+                    viewModel.tmdbService.fetchPosterCandidatesForTitleQuery(
+                        query = cleanHomePosterSearchQuery(item?.progress?.name ?: catalogTarget?.item?.name.orEmpty()),
+                        mediaTypeHint = when {
+                            item?.progress?.contentType.equals("iptv_series", ignoreCase = true) -> "tv"
+                            catalogTarget?.item?.rawType == "iptv_series" -> "tv"
+                            else -> "movie"
+                        }
+                    )
+                }.getOrDefault(emptyList())
+            }
+            frameDeferred.await() to tmdbDeferred.await()
+        }
+        iptvPosterCandidates = framePosters + tmdbPosters
+        iptvPosterPickerLoading = false
+    }
+
     // Notify ViewModel of locale changes after activity recreation
     LaunchedEffect(Unit) {
         viewModel.notifyLocaleChanged()
@@ -155,7 +264,13 @@ fun HomeScreen(
     // value without forcing downstream recomposition from lambda identity change.
     val latestMovieWatchedStatus = androidx.compose.runtime.rememberUpdatedState(movieWatchedStatus)
     val isCatalogItemWatched: (MetaPreview) -> Boolean = remember {
-        { item: MetaPreview -> latestMovieWatchedStatus.value[homeItemStatusKey(item.id, item.apiType)] == true }
+        { item: MetaPreview ->
+            if (item.rawType == "iptv_movie" || item.rawType == "iptv_series") {
+                item.isFavorite
+            } else {
+                latestMovieWatchedStatus.value[homeItemStatusKey(item.id, item.apiType)] == true
+            }
+        }
     }
     val onCatalogItemLongPress: (MetaPreview, String) -> Unit = remember {
         { item, addonBaseUrl -> posterOptionsTarget = HomePosterOptionsTarget(item, addonBaseUrl) }
@@ -163,6 +278,11 @@ fun HomeScreen(
 
     val onNavigateToDetailStable = remember(onNavigateToDetail) { onNavigateToDetail }
     val onContinueWatchingClickStable = remember(onContinueWatchingClick) { onContinueWatchingClick }
+    val onContinueWatchingDetailsStable = remember(viewModel, onNavigateToDetailStable) {
+        { item: ContinueWatchingItem ->
+            viewModel.openContinueWatchingDetails(item, onNavigateToDetailStable)
+        }
+    }
     val onContinueWatchingStartFromBeginningStable = remember(onContinueWatchingStartFromBeginning) { onContinueWatchingStartFromBeginning }
     val onContinueWatchingPlayManuallyStable = remember(onContinueWatchingPlayManually) { onContinueWatchingPlayManually }
     val onNavigateToCatalogSeeAllStable = remember(onNavigateToCatalogSeeAll) { onNavigateToCatalogSeeAll }
@@ -225,6 +345,9 @@ fun HomeScreen(
 
     val noAddonsError = stringResource(R.string.home_error_no_addons)
     val noCatalogAddonsError = stringResource(R.string.home_error_no_catalog_addons)
+    val blockingHomeError = uiState.error?.takeUnless { error ->
+        error == noAddonsError || error == noCatalogAddonsError
+    }
 
     Box(
         modifier = Modifier.fillMaxSize()
@@ -239,7 +362,7 @@ fun HomeScreen(
                 }
             }
 
-            uiState.isLoading && !hasAnyContent -> {
+            uiState.isLoading && !hasAnyContent && !canRenderHomeWithoutCatalogAddons -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -248,38 +371,14 @@ fun HomeScreen(
                 }
             }
 
-            uiState.error == noAddonsError && uiState.catalogRows.isEmpty() -> {
-                if (!homeStableGateReleased) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        LoadingIndicator()
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = stringResource(R.string.home_no_addons),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = NuvioColors.TextSecondary
-                        )
-                    }
-                }
-            }
-
-            uiState.error == noCatalogAddonsError && uiState.catalogRows.isEmpty() && !hasCollectionContent && !hasHeroContent -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    LoadingIndicator()
-                }
-            }
-            uiState.error != null && uiState.catalogRows.isEmpty() -> {
+            blockingHomeError != null && uiState.catalogRows.isEmpty() -> {
                 ErrorState(
-                    message = uiState.error ?: stringResource(R.string.error_generic),
+                    message = blockingHomeError,
                     onRetry = { viewModel.onEvent(HomeEvent.OnRetry) }
                 )
             }
 
-            !uiState.isLoading && !hasAnyContent -> {
+            !uiState.isLoading && !hasAnyContent && !canRenderHomeWithoutCatalogAddons -> {
                 // Don't show "no catalogs" until the stable gate has released â€”
                 // addons may still be loading from remote after a cache clear.
                 if (!homeStableGateReleased) {
@@ -375,27 +474,17 @@ fun HomeScreen(
                                 posterCardStyle = posterCardStyle,
                                 onNavigateToDetail = onNavigateToDetailStable,
                                 onContinueWatchingClick = onContinueWatchingClickStable,
+                                onContinueWatchingDetails = onContinueWatchingDetailsStable,
                                 onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginningStable,
                                 onContinueWatchingPlayManually = onContinueWatchingPlayManuallyStable,
+                                onSearchContinueWatchingPoster = onSearchContinueWatchingPosterEffective,
                                 showContinueWatchingManualPlayOption = effectiveAutoplayEnabled,
                                 onNavigateToCatalogSeeAll = onNavigateToCatalogSeeAllStable,
                                 onNavigateToFolderDetail = onNavigateToFolderDetailStable,
                                 isCatalogItemWatched = isCatalogItemWatched,
                                 onCatalogItemLongPress = onCatalogItemLongPress,
-                                onDeleteFreeboxProgress = { item ->
-                                    if (item is ContinueWatchingItem.InProgress) {
-                                        val freeboxPath = freeboxPathFromContentId(item.progress.contentId)
-                                        val entry = FreeboxFileEntry(
-                                            name = item.progress.name,
-                                            path = freeboxPath,
-                                            encodedPath = null,
-                                            isDirectory = false,
-                                            size = null,
-                                            durationMs = item.progress.duration
-                                        )
-                                        freeboxViewModel.deleteFromFreebox(entry)
-                                    }
-                                },
+                                onDeleteFreeboxProgress = deleteFreeboxProgressFromHome,
+                                onDeleteFreeboxVideo = deleteFreeboxVideoFromHome,
                                 onNavigateToFreebox = onNavigateToFreebox,
                             )
 
@@ -405,25 +494,17 @@ fun HomeScreen(
                                 posterCardStyle = posterCardStyle,
                                 onNavigateToDetail = onNavigateToDetailStable,
                                 onContinueWatchingClick = onContinueWatchingClickStable,
+                                onContinueWatchingDetails = onContinueWatchingDetailsStable,
                                 onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginningStable,
                                 onContinueWatchingPlayManually = onContinueWatchingPlayManuallyStable,
+                                onSearchContinueWatchingPoster = onSearchContinueWatchingPosterEffective,
                                 showContinueWatchingManualPlayOption = effectiveAutoplayEnabled,
                                 onNavigateToCatalogSeeAll = onNavigateToCatalogSeeAllStable,
                                 onNavigateToFolderDetail = onNavigateToFolderDetailStable,
                                 isCatalogItemWatched = isCatalogItemWatched,
                                 onCatalogItemLongPress = onCatalogItemLongPress,
-                                onDeleteFreeboxProgress = { item ->
-                                    if (item is ContinueWatchingItem.InProgress) {
-                                        val freeboxPath = freeboxPathFromContentId(item.progress.contentId)
-                                        val entry = FreeboxFileEntry(
-                                            name = item.progress.name,
-                                            path = freeboxPath,
-                                            isDirectory = false,
-                                            durationMs = item.progress.duration
-                                        )
-                                        freeboxViewModel.deleteFromFreebox(entry)
-                                    }
-                                },
+                                onDeleteFreeboxProgress = deleteFreeboxProgressFromHome,
+                                onDeleteFreeboxVideo = deleteFreeboxVideoFromHome,
                                 continueWatchingPortraitMode =
                                     layoutUiState.continueWatchingThumbnailOrientation ==
                                         ThumbnailOrientation.PORTRAIT,
@@ -444,12 +525,16 @@ fun HomeScreen(
                                   uiState = uiState,
                                   onNavigateToDetail = onNavigateToDetailStable,
                                   onContinueWatchingClick = onContinueWatchingClickStable,
+                                  onContinueWatchingDetails = onContinueWatchingDetailsStable,
                                   onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginningStable,
                                   onContinueWatchingPlayManually = onContinueWatchingPlayManuallyStable,
                                   showContinueWatchingManualPlayOption = effectiveAutoplayEnabled,
+                                  onSearchContinueWatchingPoster = onSearchContinueWatchingPosterEffective,
                                   onNavigateToFolderDetail = onNavigateToFolderDetailStable,
                                   isCatalogItemWatched = isCatalogItemWatched,
                                   onCatalogItemLongPress = onCatalogItemLongPress,
+                                  onDeleteFreeboxProgress = deleteFreeboxProgressFromHome,
+                                  onDeleteFreeboxVideo = deleteFreeboxVideoFromHome,
                                   continueWatchingPortraitMode =
                                       layoutUiState.continueWatchingThumbnailOrientation ==
                                           ThumbnailOrientation.PORTRAIT,
@@ -499,7 +584,8 @@ fun HomeScreen(
     if (selectedPoster != null) {
         val item = selectedPoster.item
         val statusKey = homeItemStatusKey(item.id, item.apiType)
-        val isIptvFavorite = item.rawType == "iptv_movie" || item.rawType == "iptv_series"
+        val isIptvContent = item.rawType == "iptv_movie" || item.rawType == "iptv_series"
+        val isIptvFavorite = isIptvContent && item.isFavorite
         val isMovie = item.apiType.equals("movie", ignoreCase = true)
         val isSeries = item.apiType.equals("series", ignoreCase = true) ||
             item.apiType.equals("tv", ignoreCase = true) ||
@@ -513,6 +599,7 @@ fun HomeScreen(
             isSeries = isSeries,
             isWatched = movieWatchedStatus[statusKey] == true,
             isWatchedPending = statusKey in uiState.movieWatchedPending,
+            isIptvContent = isIptvContent,
             isIptvFavorite = isIptvFavorite,
             onDismiss = { posterOptionsTarget = null },
             onDetails = {
@@ -521,6 +608,10 @@ fun HomeScreen(
             },
             onRemoveIptvFavorite = {
                 viewModel.removeIptvFavorite(item)
+                posterOptionsTarget = null
+            },
+            onAddIptvFavorite = {
+                viewModel.addIptvFavorite(item)
                 posterOptionsTarget = null
             },
             onToggleLibrary = {
@@ -538,6 +629,14 @@ fun HomeScreen(
                     viewModel.togglePosterSeriesWatched(item)
                 }
                 posterOptionsTarget = null
+            },
+            onSearchPoster = if (isIptvContent) {
+                {
+                    iptvCatalogPosterPickerTarget = selectedPoster
+                    posterOptionsTarget = null
+                }
+            } else {
+                null
             }
         )
     }
@@ -554,6 +653,80 @@ fun HomeScreen(
             onDismiss = { viewModel.dismissPosterListPicker() }
         )
     }
+
+    val selectedIptvPosterItem = iptvPosterPickerItem
+    val selectedIptvCatalogPosterTarget = iptvCatalogPosterPickerTarget
+    if (selectedIptvPosterItem != null || selectedIptvCatalogPosterTarget != null) {
+        val dialogTitle = selectedIptvPosterItem?.progress?.name
+            ?: selectedIptvCatalogPosterTarget?.item?.name
+            ?: ""
+        val dialogContentId = selectedIptvPosterItem?.progress?.contentId
+            ?: selectedIptvCatalogPosterTarget?.item?.id
+            ?: ""
+        val dialogPoster = selectedIptvPosterItem?.progress?.poster
+            ?: posterOverrides[dialogContentId]
+            ?: selectedIptvCatalogPosterTarget?.item?.poster
+        val dialogBackdrop = selectedIptvPosterItem?.progress?.backdrop
+            ?: backdropOverrides[dialogContentId]
+            ?: selectedIptvCatalogPosterTarget?.item?.background
+            ?: selectedIptvCatalogPosterTarget?.item?.landscapePoster
+        FreeboxPosterPickerDialog(
+            state = FreeboxPosterPickerState(
+                entry = FreeboxFileEntry(
+                    name = dialogTitle,
+                    path = dialogContentId,
+                    encodedPath = null,
+                    isDirectory = false,
+                    size = null,
+                    durationMs = selectedIptvPosterItem?.progress?.duration
+                ),
+                posters = iptvPosterCandidates,
+                currentPosterUrl = dialogPoster,
+                currentBackdropUrl = dialogBackdrop,
+                isLoading = iptvPosterPickerLoading,
+                isSaving = false,
+                saveFailed = iptvPosterPickerSaveFailed
+            ),
+            onSelect = { poster ->
+                iptvPosterPickerSaveFailed = false
+                if (selectedIptvPosterItem != null) {
+                    viewModel.updateIptvContinueWatchingPoster(selectedIptvPosterItem, poster)
+                    iptvPosterPickerItem = null
+                } else if (selectedIptvCatalogPosterTarget != null) {
+                    viewModel.updateIptvFavoriteArtwork(selectedIptvCatalogPosterTarget.item, poster)
+                    iptvCatalogPosterPickerTarget = null
+                }
+            },
+            onDismiss = {
+                iptvPosterPickerItem = null
+                iptvCatalogPosterPickerTarget = null
+            }
+        )
+    }
+}
+
+private fun WatchProgress.isIptvPosterEditable(): Boolean =
+    contentId.startsWith("iptv_movie:", ignoreCase = true) ||
+        contentId.startsWith("iptv_movie_stream:", ignoreCase = true) ||
+        contentId.startsWith("iptv_series:", ignoreCase = true) ||
+        contentId.startsWith("iptv_series_remote:", ignoreCase = true) ||
+        contentType.equals("iptv_movie", ignoreCase = true) ||
+        contentType.equals("iptv_series", ignoreCase = true)
+
+private fun cleanHomePosterSearchQuery(rawTitle: String): String {
+    return rawTitle
+        .replace(Regex("""\[[^\]]*]"""), " ")
+        .replace(Regex("""\((?:19|20)\d{2}\)"""), " ")
+        .replace(
+            Regex(
+                """\b(?:4k|uhd|hdr10\+?|hdr|dv|dolby\s*vision|hevc|x265|x264|h\.?264|h\.?265|multi|vostfr|vf|truefrench|french|web-?dl|bluray|brrip|webrip|hdtv|aac|ac3|eac3|atmos|dts)\b""",
+                RegexOption.IGNORE_CASE
+            ),
+            " "
+        )
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .ifBlank { rawTitle.trim() }
 }
 
 @Composable
@@ -564,14 +737,17 @@ private fun ClassicHomeRoute(
     posterCardStyle: PosterCardStyle,
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
+    onContinueWatchingDetails: (ContinueWatchingItem) -> Unit,
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit,
+    onSearchContinueWatchingPoster: ((ContinueWatchingItem) -> Unit)? = null,
     showContinueWatchingManualPlayOption: Boolean,
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
     onCatalogItemLongPress: (MetaPreview, String) -> Unit,
     onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
+    onDeleteFreeboxVideo: (FreeboxFileEntry) -> Unit = {},
     onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     continueWatchingPortraitMode: Boolean = false,
     videoPortraitMode: Boolean = false,
@@ -590,8 +766,10 @@ private fun ClassicHomeRoute(
         trailerPreviewAudioUrls = viewModel.trailerPreviewAudioUrls,
         onNavigateToDetail = onNavigateToDetail,
         onContinueWatchingClick = onContinueWatchingClick,
+        onContinueWatchingDetails = onContinueWatchingDetails,
         onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginning,
         onContinueWatchingPlayManually = onContinueWatchingPlayManually,
+        onSearchContinueWatchingPoster = onSearchContinueWatchingPoster,
         showContinueWatchingManualPlayOption = showContinueWatchingManualPlayOption,
         onNavigateToCatalogSeeAll = onNavigateToCatalogSeeAll,
         onNavigateToFolderDetail = onNavigateToFolderDetail,
@@ -620,6 +798,7 @@ private fun ClassicHomeRoute(
         onRenameFreeboxProgress = { item, newName -> viewModel.renameFreeboxContinueWatching(item, newName) },
         onMarkFreeboxUnwatched = { item -> viewModel.markFreeboxAsUnwatched(item) },
         onRenameFreeboxVideo = { entry, newName -> viewModel.renameFreeboxVideo(entry, newName) },
+        onDeleteFreeboxVideo = onDeleteFreeboxVideo,
         onNavigateToFreebox = onNavigateToFreebox,
     )
 }
@@ -631,14 +810,17 @@ private fun GridHomeRoute(
     posterCardStyle: PosterCardStyle,
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
+    onContinueWatchingDetails: (ContinueWatchingItem) -> Unit,
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit,
     showContinueWatchingManualPlayOption: Boolean,
+    onSearchContinueWatchingPoster: ((ContinueWatchingItem) -> Unit)? = null,
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
     onCatalogItemLongPress: (MetaPreview, String) -> Unit,
     onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
+    onDeleteFreeboxVideo: (FreeboxFileEntry) -> Unit = {},
     onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     continueWatchingThumbnailSize: com.nuvio.tv.domain.model.ThumbnailSize = com.nuvio.tv.domain.model.ThumbnailSize.DEFAULT,
     continueWatchingPortraitMode: Boolean = false,
@@ -655,9 +837,11 @@ private fun GridHomeRoute(
         scrollToTopTrigger = scrollToTopTrigger,
         onNavigateToDetail = onNavigateToDetail,
         onContinueWatchingClick = onContinueWatchingClick,
+        onContinueWatchingDetails = onContinueWatchingDetails,
         onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginning,
         onContinueWatchingPlayManually = onContinueWatchingPlayManually,
         showContinueWatchingManualPlayOption = showContinueWatchingManualPlayOption,
+        onSearchContinueWatchingPoster = onSearchContinueWatchingPoster,
         onNavigateToCatalogSeeAll = onNavigateToCatalogSeeAll,
         onNavigateToFolderDetail = onNavigateToFolderDetail,
         onRemoveContinueWatching = remember(viewModel) {
@@ -686,6 +870,7 @@ private fun GridHomeRoute(
         onRenameFreeboxProgress = { item, newName -> viewModel.renameFreeboxContinueWatching(item, newName) },
         onMarkFreeboxUnwatched = { item -> viewModel.markFreeboxAsUnwatched(item) },
         onRenameFreeboxVideo = { entry, newName -> viewModel.renameFreeboxVideo(entry, newName) },
+        onDeleteFreeboxVideo = onDeleteFreeboxVideo,
         onNavigateToFreebox = onNavigateToFreebox,
     )
 }
@@ -696,13 +881,16 @@ private fun ModernHomeRoute(
     uiState: HomeUiState,
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
+    onContinueWatchingDetails: (ContinueWatchingItem) -> Unit,
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit,
     showContinueWatchingManualPlayOption: Boolean,
+    onSearchContinueWatchingPoster: ((ContinueWatchingItem) -> Unit)? = null,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
     onCatalogItemLongPress: (MetaPreview, String) -> Unit,
     onDeleteFreeboxProgress: ((ContinueWatchingItem) -> Unit)? = null,
+    onDeleteFreeboxVideo: (FreeboxFileEntry) -> Unit = {},
     onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     continueWatchingPortraitMode: Boolean = false,
     videoPortraitMode: Boolean = false,
@@ -753,9 +941,11 @@ private fun ModernHomeRoute(
         trailerPreviewAudioUrls = viewModel.trailerPreviewAudioUrls,
         onNavigateToDetail = onNavigateToDetail,
         onContinueWatchingClick = onContinueWatchingClick,
+        onContinueWatchingDetails = onContinueWatchingDetails,
         onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginning,
         onContinueWatchingPlayManually = onContinueWatchingPlayManually,
         showContinueWatchingManualPlayOption = showContinueWatchingManualPlayOption,
+        onSearchContinueWatchingPoster = onSearchContinueWatchingPoster,
         onRequestTrailerPreview = requestTrailerPreview,
         onLoadMoreCatalog = loadMoreCatalog,
         onRemoveContinueWatching = removeContinueWatching,
@@ -776,6 +966,7 @@ private fun ModernHomeRoute(
         onRenameFreeboxProgress = { item, newName -> viewModel.renameFreeboxContinueWatching(item, newName) },
         onMarkFreeboxUnwatched = { item -> viewModel.markFreeboxAsUnwatched(item) },
         onRenameFreeboxVideo = { entry, newName -> viewModel.renameFreeboxVideo(entry, newName) },
+        onDeleteFreeboxVideo = onDeleteFreeboxVideo,
         onNavigateToFreebox = onNavigateToFreebox,
         onRequestLazyCatalogLoad = remember(viewModel) {
             { catalogKey: String -> viewModel.requestLazyCatalogLoad(catalogKey) }
@@ -794,12 +985,15 @@ private fun HomePosterOptionsDialog(
     isSeries: Boolean = false,
     isWatched: Boolean,
     isWatchedPending: Boolean,
+    isIptvContent: Boolean,
     isIptvFavorite: Boolean,
     onDismiss: () -> Unit,
     onDetails: () -> Unit,
     onRemoveIptvFavorite: () -> Unit,
+    onAddIptvFavorite: () -> Unit,
     onToggleLibrary: () -> Unit,
-    onToggleWatched: () -> Unit
+    onToggleWatched: () -> Unit,
+    onSearchPoster: (() -> Unit)? = null
 ) {
     val primaryFocusRequester = remember { FocusRequester() }
 
@@ -825,16 +1019,36 @@ private fun HomePosterOptionsDialog(
             Text(stringResource(R.string.cw_action_go_to_details))
         }
 
-        if (isIptvFavorite) {
+        if (isIptvContent) {
             Button(
-                onClick = onRemoveIptvFavorite,
+                onClick = if (isIptvFavorite) onRemoveIptvFavorite else onAddIptvFavorite,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.colors(
                     containerColor = NuvioColors.BackgroundCard,
                     contentColor = NuvioColors.TextPrimary
                 )
             ) {
-                Text(stringResource(R.string.home_remove_from_favorites))
+                Text(
+                    stringResource(
+                        if (isIptvFavorite) {
+                            R.string.home_remove_from_favorites
+                        } else {
+                            R.string.home_add_to_favorites
+                        }
+                    )
+                )
+            }
+            onSearchPoster?.let { searchPoster ->
+                Button(
+                    onClick = searchPoster,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.colors(
+                        containerColor = NuvioColors.BackgroundCard,
+                        contentColor = NuvioColors.TextPrimary
+                    )
+                ) {
+                    Text(stringResource(R.string.freebox_choose_poster))
+                }
             }
         } else {
             Button(
@@ -861,7 +1075,7 @@ private fun HomePosterOptionsDialog(
 
             }
 
-        if (!isIptvFavorite && (isMovie || isSeries)) {
+        if (!isIptvContent && (isMovie || isSeries)) {
             Button(
                 onClick = onToggleWatched,
                 enabled = !isWatchedPending,

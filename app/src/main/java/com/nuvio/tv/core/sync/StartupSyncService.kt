@@ -261,7 +261,6 @@ class StartupSyncService @Inject constructor(
             }
 
             Log.d(TAG, "Pulling remote data for profile $profileId")
-            pullBroadRemoteData(profileId, includeProfileSettings)
 
             val isTraktConnected = traktAuthDataStore.isEffectivelyAuthenticated.first()
             val shouldUseSupabaseWatchProgressSync = watchProgressSyncService.shouldUseSupabaseWatchProgressSync()
@@ -290,6 +289,7 @@ class StartupSyncService @Inject constructor(
                 libraryRepository.hasCompletedInitialPull = true
                 Log.d(TAG, "Skipping Supabase watched items, watch progress, and library sync for profile $profileId because Trakt is connected and watch progress source is Trakt")
             }
+            pullBroadRemoteData(profileId, includeProfileSettings)
             startupSyncPreferences.markFullPull(
                 profileId = profileId,
                 userId = userId,
@@ -313,7 +313,6 @@ class StartupSyncService @Inject constructor(
     ): Result<Unit> {
         try {
             Log.d(TAG, "Running warm remote sync for profile $profileId")
-            pullBroadRemoteData(profileId, includeProfileSettings)
             val isTraktConnected = traktAuthDataStore.isEffectivelyAuthenticated.first()
             val shouldUseSupabaseWatchProgressSync = watchProgressSyncService.shouldUseSupabaseWatchProgressSync()
             watchProgressSyncService.restoreLastPushTimestamp()
@@ -341,6 +340,7 @@ class StartupSyncService @Inject constructor(
                 watchProgressRepository.hasCompletedInitialPull = true
                 Log.d(TAG, "Skipping warm Supabase watch progress sync for profile $profileId because Trakt is connected and watch progress source is Trakt")
             }
+            pullBroadRemoteData(profileId, includeProfileSettings)
             startupSyncPreferences.markFullPull(
                 profileId = profileId,
                 userId = userId,

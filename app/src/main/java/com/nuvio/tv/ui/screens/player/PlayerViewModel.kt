@@ -198,7 +198,7 @@ class PlayerViewModel @Inject constructor(
         val metadata = com.nuvio.tv.core.player.ExternalPlaybackMetadata(
             contentId = controller.contentId ?: return,
             contentType = controller.contentType ?: "movie",
-            contentName = controller.contentName ?: controller.title,
+            contentName = controller.displayTitleForPlayback(),
             poster = controller.poster,
             backdrop = controller.backdrop,
             logo = controller.logo,
@@ -226,7 +226,7 @@ class PlayerViewModel @Inject constructor(
         externalPlaybackTracker.launchPlayer(
             metadata = metadata,
             url = url,
-            title = controller.contentName ?: controller.title,
+            title = controller.displayTitleForPlayback(),
             headers = controller.getCurrentHeaders(),
             resumePositionMs = resumePositionMs,
             subtitles = subtitleInputs,

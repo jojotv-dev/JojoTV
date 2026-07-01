@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.iptv
+﻿package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -60,6 +60,8 @@ import com.nuvio.tv.ui.theme.NuvioColors
 import com.streamvault.domain.model.Movie
 import com.streamvault.domain.model.Result
 import com.streamvault.domain.repository.MovieRepository
+import com.nuvio.tv.data.local.IptvSettingsDataStore
+import com.nuvio.tv.domain.model.IptvPosterSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -68,15 +70,26 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.nuvio.tv.core.tmdb.TmdbService
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 
 @HiltViewModel
 class IptvMovieListViewModel @Inject constructor(
     private val movieRepository: MovieRepository,
+    private val tmdbService: TmdbService,
+    private val iptvSettingsDataStore: IptvSettingsDataStore,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+    val posterSize: StateFlow<IptvPosterSize> = iptvSettingsDataStore.vodPosterSize
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), IptvPosterSize.DEFAULT)
     val providerId: Long = savedStateHandle.get<String>("providerId")?.toLongOrNull() ?: -1L
     val categoryId: Long? = savedStateHandle.get<String>("categoryId")?.toLongOrNull()
     val categoryName: String = savedStateHandle.get<String>("categoryName") ?: "Tous les films"
+
+    private val _focusedMovieDetails = MutableStateFlow<IptvFocusedMediaDetails?>(null)
+    val focusedMovieDetails: StateFlow<IptvFocusedMediaDetails?> = _focusedMovieDetails.asStateFlow()
+    private var enrichJob: Job? = null
 
     val movies: StateFlow<List<Movie>> = (
         if (categoryId == null) movieRepository.getMovies(providerId)
@@ -101,6 +114,24 @@ class IptvMovieListViewModel @Inject constructor(
             else -> Result.Error("Erreur inconnue")
         }
     }
+
+    fun onMovieFocused(movie: Movie) {
+        _focusedMovieDetails.value = movie.toFocusedDetails()
+        enrichJob?.cancel()
+        enrichJob = viewModelScope.launch {
+            delay(IPTV_FOCUS_ENRICH_DEBOUNCE_MS)
+            val enriched = enrichIptvFocusFromMovie(movieRepository, tmdbService, providerId, movie)
+                ?: return@launch
+            val base = movie.toFocusedDetails()
+            _focusedMovieDetails.value = base.copy(
+                plot = enriched.plot?.takeIf { it.isNotBlank() } ?: base.plot,
+                genre = enriched.genre?.takeIf { it.isNotBlank() } ?: base.genre,
+                year = enriched.year?.takeIf { it.isNotBlank() } ?: base.year,
+                rating = enriched.rating ?: base.rating,
+                duration = enriched.durationMinutes?.let { m -> if (m >= 60) "${m/60}h ${m%60}min" else "${m}min" } ?: base.duration,
+            )
+        }
+    }
 }
 
 @Composable
@@ -109,10 +140,12 @@ fun IptvMovieListScreen(
     viewModel: IptvMovieListViewModel = hiltViewModel()
 ) {
     val movies by viewModel.movies.collectAsStateWithLifecycle()
+    val posterSize by viewModel.posterSize.collectAsStateWithLifecycle()
     val loadingMovieId by viewModel.loadingMovieId.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var viewMode by remember { mutableStateOf(IptvViewMode.GRID) }
     var focusedMovie by remember(movies) { mutableStateOf(movies.firstOrNull()) }
+    val focusedMovieDetails by viewModel.focusedMovieDetails.collectAsStateWithLifecycle()
 
     Column(modifier = Modifier.fillMaxSize().background(NuvioColors.Background)) {
         Row(
@@ -143,13 +176,13 @@ fun IptvMovieListScreen(
         } else {
             focusedMovie?.let { movie ->
                 IptvFocusedMediaPanel(
-                    details = movie.toFocusedDetails(),
+                    details = focusedMovieDetails ?: movie.toFocusedDetails(),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
             if (viewMode == IptvViewMode.GRID) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(IptvVodPosterWidth),
+                    columns = GridCells.Adaptive(posterSize.cardWidth),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -158,8 +191,9 @@ fun IptvMovieListScreen(
                     items(movies, key = { it.id }) { movie ->
                         MovieCard(
                             movie = movie,
+                            cardWidth = posterSize.cardWidth,
                             isLoading = loadingMovieId == movie.id,
-                            onFocused = { focusedMovie = movie },
+                            onFocused = { focusedMovie = movie; viewModel.onMovieFocused(movie) },
                             onClick = {
                                 scope.launch {
                                     val result = viewModel.resolveStream(movie)
@@ -182,7 +216,7 @@ fun IptvMovieListScreen(
                         MovieListRow(
                             movie = movie,
                             isLoading = loadingMovieId == movie.id,
-                            onFocused = { focusedMovie = movie },
+                            onFocused = { focusedMovie = movie; viewModel.onMovieFocused(movie) },
                             onClick = {
                                 scope.launch {
                                     val result = viewModel.resolveStream(movie)
@@ -211,7 +245,7 @@ private fun MovieListRow(movie: Movie, isLoading: Boolean, onFocused: () -> Unit
             if (it.hasFocus) onFocused()
         },
         shape = CardDefaults.shape(shape),
-        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
+        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.BackgroundCard),
         border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.97f)
     ) {
@@ -271,17 +305,17 @@ private fun MovieListRow(movie: Movie, isLoading: Boolean, onFocused: () -> Unit
 }
 
 @Composable
-private fun MovieCard(movie: Movie, isLoading: Boolean, onFocused: () -> Unit, onClick: () -> Unit) {
+private fun MovieCard(movie: Movie, cardWidth: androidx.compose.ui.unit.Dp, isLoading: Boolean, onFocused: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Card(
         onClick = onClick,
-        modifier = Modifier.width(IptvVodPosterWidth).onFocusChanged {
+        modifier = Modifier.width(cardWidth).onFocusChanged {
             isFocused = it.hasFocus
             if (it.hasFocus) onFocused()
         },
         shape = CardDefaults.shape(shape),
-        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
+        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.BackgroundCard),
         border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.97f)
     ) {

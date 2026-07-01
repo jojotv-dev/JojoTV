@@ -69,6 +69,12 @@ class AddonRepositoryImpl @Inject constructor(
 
     private fun normalizeUrl(url: String): String = canonicalizeUrl(url).lowercase()
 
+    private fun isBlockedAutomaticAddonUrl(url: String): Boolean {
+        val normalized = normalizeUrl(url)
+        return normalized == "https://v3-cinemeta.strem.io" ||
+            normalized == "https://opensubtitles-v3.strem.io"
+    }
+
     private fun triggerRemoteSync() {
         if (isSyncingFromRemote) {
             Log.d(TAG, "triggerRemoteSync: skipped (syncing from remote)")
@@ -259,6 +265,7 @@ class AddonRepositoryImpl @Inject constructor(
         val normalizedRemote = remoteUrls
             .map { canonicalizeUrl(it) }
             .filter { it.isNotBlank() }
+            .filterNot(::isBlockedAutomaticAddonUrl)
             .distinctBy { normalizeUrl(it) }
         val remoteSet = normalizedRemote.map { normalizeUrl(it) }.toSet()
 
@@ -290,12 +297,13 @@ class AddonRepositoryImpl @Inject constructor(
             val extras = initialLocalUrls
                 .map { canonicalizeUrl(it) }
                 .filter { normalizeUrl(it) !in remoteSet }
+                .filterNot(::isBlockedAutomaticAddonUrl)
             remoteOrdered + extras
         }
 
         if (shouldRemoveMissingLocal) {
             initialLocalUrls
-                .filter { normalizeUrl(it) !in remoteSet }
+                .filter { normalizeUrl(it) !in remoteSet || isBlockedAutomaticAddonUrl(it) }
                 .forEach { manifestCache.remove(canonicalizeUrl(it)) }
         }
 

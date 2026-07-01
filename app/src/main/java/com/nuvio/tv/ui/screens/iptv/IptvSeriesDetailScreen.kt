@@ -115,7 +115,19 @@ class IptvSeriesDetailViewModel @Inject constructor(
 
 @Composable
 fun IptvSeriesDetailScreen(
-    onPlayEpisode: (streamUrl: String, title: String, headers: Map<String, String>, posterUrl: String?) -> Unit,
+    onPlayEpisode: (
+        streamUrl: String,
+        title: String,
+        headers: Map<String, String>,
+        contentId: String,
+        contentName: String,
+        videoId: String,
+        posterUrl: String?,
+        backdropUrl: String?,
+        season: Int?,
+        episode: Int?,
+        episodeTitle: String?,
+    ) -> Unit,
     viewModel: IptvSeriesDetailViewModel = hiltViewModel()
 ) {
     val series by viewModel.series.collectAsStateWithLifecycle()
@@ -213,7 +225,19 @@ fun IptvSeriesDetailScreen(
                                     val result = viewModel.resolveEpisodeStream(episode)
                                     if (result is Result.Success) {
                                         val (url, headers) = result.data
-                                        onPlayEpisode(url, "${s.name} � ${episode.title}", headers, episode.coverUrl ?: s.posterUrl)
+                                        onPlayEpisode(
+                                            url,
+                                            "${s.name} - ${episode.title}",
+                                            headers,
+                                            s.stableIptvProgressId(),
+                                            s.name,
+                                            episode.id.toString(),
+                                            episode.coverUrl ?: s.posterUrl,
+                                            s.backdropUrl,
+                                            currentSeason.seasonNumber,
+                                            episode.episodeNumber,
+                                            episode.title,
+                                        )
                                     }
                                 }
                             }

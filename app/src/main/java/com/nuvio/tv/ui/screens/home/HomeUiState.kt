@@ -13,6 +13,7 @@ import com.nuvio.tv.domain.model.LibrarySourceMode
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
+import com.nuvio.tv.core.tmdb.FreeboxVideoMeta
 
 @Immutable
 data class HomeUiState(
@@ -21,6 +22,7 @@ data class HomeUiState(
     val freeboxVideoEntries: List<FreeboxFileEntry> = emptyList(),
     val freeboxVideoArtwork: Map<String, String> = emptyMap(),
     val freeboxVideoBackdrops: Map<String, String> = emptyMap(),
+    val freeboxVideoMetadata: Map<String, FreeboxVideoMeta> = emptyMap(),
     val freeboxVideoProbedDurations: Map<String, Long> = emptyMap(),
     val isLoading: Boolean = true,
     val layoutPreferencesReady: Boolean = false,

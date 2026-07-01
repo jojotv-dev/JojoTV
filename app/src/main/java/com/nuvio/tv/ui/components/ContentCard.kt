@@ -33,6 +33,8 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,13 +84,14 @@ private const val TRAILER_PREVIEW_REQUEST_FOCUS_DEBOUNCE_MS = 140L
 private val YEAR_REGEX = Regex("""\b(19|20)\d{2}\b""")
 private val YEAR_RANGE_REGEX = Regex("""^((19|20)\d{2})\s*[-–]\s*((19|20)\d{2})?$""")
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ContentCard(
     item: MetaPreview,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     posterCardStyle: PosterCardStyle = PosterCardDefaults.Style,
+    focusedPosterCardStyle: PosterCardStyle? = null,
     showLabels: Boolean = true,
     placeholderShimmerOffsetState: State<Float>? = null,
     focusedPosterBackdropExpandEnabled: Boolean = false,
@@ -106,20 +109,26 @@ fun ContentCard(
     onLongPress: (() -> Unit)? = null,
     onClick: () -> Unit = {}
 ) {
-    val cardShape = remember(posterCardStyle.cornerRadius) { RoundedCornerShape(posterCardStyle.cornerRadius) }
+    var isFocused by remember { mutableStateOf(false) }
+    val resolvedPosterCardStyle = if (isFocused && focusedPosterCardStyle != null) {
+        focusedPosterCardStyle
+    } else {
+        posterCardStyle
+    }
+    val cardShape = remember(resolvedPosterCardStyle.cornerRadius) {
+        RoundedCornerShape(resolvedPosterCardStyle.cornerRadius)
+    }
     val baseCardWidth = when (item.posterShape) {
-        PosterShape.POSTER -> posterCardStyle.width
+        PosterShape.POSTER -> resolvedPosterCardStyle.width
         PosterShape.LANDSCAPE -> 260.dp
         PosterShape.SQUARE -> 170.dp
     }
     val baseCardHeight = when (item.posterShape) {
-        PosterShape.POSTER -> posterCardStyle.height
+        PosterShape.POSTER -> resolvedPosterCardStyle.height
         PosterShape.LANDSCAPE -> 148.dp
         PosterShape.SQUARE -> 170.dp
     }
     val expandedCardWidth = baseCardHeight * BACKDROP_ASPECT_RATIO
-
-    var isFocused by remember { mutableStateOf(false) }
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
     var interactionNonce by remember { mutableIntStateOf(0) }
@@ -345,11 +354,11 @@ fun ContentCard(
             ),
             border = CardDefaults.border(
                 focusedBorder = Border(
-                    border = BorderStroke(posterCardStyle.focusedBorderWidth, NuvioColors.FocusRing),
+                    border = BorderStroke(resolvedPosterCardStyle.focusedBorderWidth, NuvioColors.FocusRing),
                     shape = cardShape
                 )
             ),
-            scale = CardDefaults.scale(focusedScale = posterCardStyle.focusedScale)
+            scale = CardDefaults.scale(focusedScale = resolvedPosterCardStyle.focusedScale)
         ) {
             Box(
                 modifier = Modifier
@@ -375,7 +384,7 @@ fun ContentCard(
                     AsyncImage(
                         model = imageModel,
                         contentDescription = item.name,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().clip(cardShape),
                         placeholder = backgroundPainter,
                         error = backgroundPainter,
                         fallback = backgroundPainter,
@@ -487,7 +496,7 @@ fun ContentCard(
                     }
                 }
 
-                if (item.rawType == "iptv_movie" || item.rawType == "iptv_series") {
+                if ((item.rawType == "iptv_movie" || item.rawType == "iptv_series" || item.rawType == "iptv_live") && item.isFavorite) {
                     Icon(
                         imageVector = Icons.Default.Star,
                         tint = Color(0xFFFFD700),
@@ -527,7 +536,14 @@ fun ContentCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp)
+                    .background(
+                        color = NuvioColors.Secondary.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(
+                            bottomStart = resolvedPosterCardStyle.cornerRadius,
+                            bottomEnd = resolvedPosterCardStyle.cornerRadius
+                        )
+                    )
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
                 if (isBackdropExpanded) {
                     if (metaTokens.isNotEmpty()) {
@@ -555,7 +571,8 @@ fun ContentCard(
                         style = MaterialTheme.typography.titleMedium,
                         color = NuvioColors.TextPrimary,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = if (isFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
                     )
                     item.releaseInfo?.let { info ->
                         Text(

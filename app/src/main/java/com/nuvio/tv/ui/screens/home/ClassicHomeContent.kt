@@ -75,9 +75,13 @@ fun ClassicHomeContent(
     trailerPreviewAudioUrls: Map<String, String>,
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
+    onContinueWatchingDetails: (ContinueWatchingItem) -> Unit = { item ->
+        onNavigateToDetail(item.contentId(), item.contentType(), "")
+    },
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit = {},
     showContinueWatchingManualPlayOption: Boolean = false,
+    onSearchContinueWatchingPoster: ((ContinueWatchingItem) -> Unit)? = null,
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     onRemoveContinueWatching: (String, Int?, Int?, Boolean) -> Unit,
@@ -85,6 +89,7 @@ fun ClassicHomeContent(
     onRenameFreeboxProgress: (ContinueWatchingItem, String) -> Unit = { _, _ -> },
     onMarkFreeboxUnwatched: (ContinueWatchingItem) -> Unit = {},
     onRenameFreeboxVideo: (FreeboxFileEntry, String) -> Unit = { _, _ -> },
+    onDeleteFreeboxVideo: (FreeboxFileEntry) -> Unit = {},
     onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean = { false },
     onCatalogItemLongPress: (MetaPreview, String) -> Unit = { _, _ -> },
@@ -130,6 +135,20 @@ fun ClassicHomeContent(
         if (seriesFavoritesPortraitMode) classicCatalogPosterCardStyle
         else classicCatalogPosterCardStyle.copy(height = classicCatalogPosterCardStyle.width * 9f / 16f)
     }
+    val movieFavoritesFocusedPosterCardStyle = remember(movieFavoritesPosterCardStyle, movieFavoritesPortraitMode) {
+        if (movieFavoritesPortraitMode) {
+            movieFavoritesPosterCardStyle.copy(width = movieFavoritesPosterCardStyle.height * 16f / 9f)
+        } else {
+            null
+        }
+    }
+    val seriesFavoritesFocusedPosterCardStyle = remember(seriesFavoritesPosterCardStyle, seriesFavoritesPortraitMode) {
+        if (seriesFavoritesPortraitMode) {
+            seriesFavoritesPosterCardStyle.copy(width = seriesFavoritesPosterCardStyle.height * 16f / 9f)
+        } else {
+            null
+        }
+    }
     val classicSecondaryPosterCardStyle = remember(posterCardStyle) {
         posterCardStyle.copy(
             width = posterCardStyle.width * CLASSIC_SECONDARY_ROW_POSTER_SCALE,
@@ -156,6 +175,11 @@ fun ClassicHomeContent(
         (189f * classicPortraitScale).dp
     } else {
         continueWatchingThumbnailSize.imageHeight
+    }
+
+    fun isIptvFavoriteCatalog(catalogId: String): Boolean {
+        return catalogId == HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID ||
+            catalogId == HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID
     }
 
     // Nested prefetch: when LazyColumn prefetches a row ahead of scrolling,
@@ -228,6 +252,9 @@ fun ClassicHomeContent(
             }
         }
     }
+
+    val freeboxEntryFocusRequester = remember { FocusRequester() }
+    val continueWatchingEntryFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(visibleRowKeys) {
         rowStates.keys.retainAll(visibleRowKeys)
@@ -473,28 +500,23 @@ fun ClassicHomeContent(
                         is HomeRow.PlaceholderCatalog -> row.catalogKey
                     }
                 }
-                val cwDownRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
+                val firstRowRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
+                val cwDownRequester = if (uiState.freeboxVideoEntries.isNotEmpty()) {
+                    freeboxEntryFocusRequester
+                } else {
+                    firstRowRequester
+                }
                 ContinueWatchingSection(
                     items = uiState.continueWatchingItems,
                     onItemClick = { item ->
                         onContinueWatchingClick(item)
                     },
+                    entryFocusRequester = continueWatchingEntryFocusRequester,
                     onStartFromBeginning = onContinueWatchingStartFromBeginning,
                     showManualPlayOption = showContinueWatchingManualPlayOption,
                     onPlayManually = onContinueWatchingPlayManually,
-                    onDetailsClick = { item ->
-                        onNavigateToDetail(
-                            when (item) {
-                                is ContinueWatchingItem.InProgress -> item.progress.contentId
-                                is ContinueWatchingItem.NextUp -> item.info.contentId
-                            },
-                            when (item) {
-                                is ContinueWatchingItem.InProgress -> item.progress.contentType
-                                is ContinueWatchingItem.NextUp -> item.info.contentType
-                            },
-                            ""
-                        )
-                    },
+                    onSearchPoster = onSearchContinueWatchingPoster,
+                    onDetailsClick = onContinueWatchingDetails,
                     onRemoveItem = { item ->
                         val contentId = when (item) {
                             is ContinueWatchingItem.InProgress -> item.progress.contentId
@@ -538,6 +560,14 @@ fun ClassicHomeContent(
 
         if (uiState.freeboxVideoEntries.isNotEmpty()) {
             item(key = "freebox_videos", contentType = "freebox_videos") {
+                val firstRowKey = visibleHomeRows.firstOrNull()?.let { row ->
+                    when (row) {
+                        is HomeRow.Catalog -> "${row.row.addonId}_${row.row.apiType}_${row.row.catalogId}"
+                        is HomeRow.CollectionRow -> "collection_${row.collection.id}"
+                        is HomeRow.PlaceholderCatalog -> row.catalogKey
+                    }
+                }
+                val firstRowRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
                 FreeboxVideosSection(
                     entries = uiState.freeboxVideoEntries,
                     probedDurations = uiState.freeboxVideoProbedDurations,
@@ -552,28 +582,18 @@ fun ClassicHomeContent(
                         onNavigateToDetail(freeboxContentIdForEntry(entry), "freebox", "")
                     },
                     onRenameFreebox = onRenameFreeboxVideo,
-                    onDeleteFromFreebox = { entry ->
-                        val contentId = freeboxContentIdForEntry(entry)
-                        onDeleteFreeboxProgress?.invoke(
-                            ContinueWatchingItem.InProgress(
-                                progress = WatchProgress(
-                                    contentId = contentId,
-                                    contentType = "freebox",
-                                    name = entry.name,
-                                    poster = uiState.freeboxVideoArtwork[contentId],
-                                    backdrop = uiState.freeboxVideoArtwork[contentId],
-                                    logo = null,
-                                    videoId = contentId,
-                                    season = null,
-                                    episode = null,
-                                    episodeTitle = null,
-                                    position = 0L,
-                                    duration = entry.durationMs ?: 0L,
-                                    lastWatched = 0L
-                                )
-                            )
-                        )
+                    onDeleteFromFreebox = onDeleteFreeboxVideo,
+                    onItemFocused = { index, item ->
+                        currentFocusSnapshot.rowIndex = -1
+                        currentFocusSnapshot.itemIndex = index
+                        if (uiState.classicFocusGradientEnabled) {
+                            focusedArtwork = item.toClassicFocusArtwork(uiState.focusedPosterBackdropExpandEnabled)
+                        }
+                        onItemFocus(item)
                     },
+                    entryFocusRequester = freeboxEntryFocusRequester,
+                    upFocusRequester = if (uiState.continueWatchingItems.isNotEmpty()) continueWatchingEntryFocusRequester else null,
+                    downFocusRequester = firstRowRequester
                 )
             }
         }
@@ -625,9 +645,11 @@ fun ClassicHomeContent(
 
                     CatalogRowSection(
                         catalogRow = catalogRow,
-                        posterCardStyle = when (catalogRow.catalogId) {
-                            HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID -> movieFavoritesPosterCardStyle
-                            HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID -> seriesFavoritesPosterCardStyle
+                        posterCardStyle = when {
+                            isIptvFavoriteCatalog(catalogRow.catalogId) -> classicVideoCardWidth.let {
+                                if (catalogRow.catalogId == HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID) movieFavoritesPosterCardStyle
+                                else seriesFavoritesPosterCardStyle
+                            }
                             else -> classicCatalogPosterCardStyle
                         },
                         showPosterLabels = uiState.posterLabelsEnabled,
@@ -643,6 +665,10 @@ fun ClassicHomeContent(
                         onItemFocus = handleMetaFocus,
                         isItemWatched = isCatalogItemWatched,
                         onItemLongPress = onCatalogItemLongPress,
+                        focusedPosterCardStyle = when {
+                            isIptvFavoriteCatalog(catalogRow.catalogId) -> if (catalogRow.catalogId == HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID) movieFavoritesFocusedPosterCardStyle else seriesFavoritesFocusedPosterCardStyle
+                            else -> null
+                        },
                         seeAllLabel = catalogSeeAllLabel,
                         onItemClick = { id, type, addonBaseUrl ->
                             onNavigateToDetail(id, type, addonBaseUrl)

@@ -2,8 +2,11 @@ package com.nuvio.tv.data.local
 
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import com.nuvio.tv.domain.model.IptvPosterSize
 import androidx.datastore.preferences.core.edit
 import com.nuvio.tv.core.profile.ProfileManager
+import com.streamvault.domain.model.ContentType
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -23,6 +26,10 @@ data class IptvVisibilitySettings(
     val hiddenChannelIds: Set<String> = emptySet()
 )
 
+data class IptvDnsSettings(
+    val providerId: String = "system"
+)
+
 @Singleton
 @OptIn(ExperimentalCoroutinesApi::class)
 class IptvSettingsDataStore @Inject constructor(
@@ -40,8 +47,12 @@ class IptvSettingsDataStore @Inject constructor(
     private val showMoviesKey = booleanPreferencesKey("iptv_show_movies_in_sidebar")
     private val showSeriesKey = booleanPreferencesKey("iptv_show_series_in_sidebar")
     private val showRecordingsKey = booleanPreferencesKey("iptv_show_recordings_in_sidebar")
+    private val vodPosterSizeKey = stringPreferencesKey("iptv_vod_poster_size")
+    private val dnsProviderKey = stringPreferencesKey("iptv_dns_provider")
 
-    private fun hiddenGroupsKey(providerId: Long) = stringSetPreferencesKey("iptv_hidden_groups_$providerId")
+    private fun legacyHiddenGroupsKey(providerId: Long) = stringSetPreferencesKey("iptv_hidden_groups_$providerId")
+    private fun hiddenGroupsKey(providerId: Long, contentType: ContentType) =
+        stringSetPreferencesKey("iptv_hidden_groups_${providerId}_${contentType.name}")
     private fun hiddenChannelsKey(providerId: Long) = stringSetPreferencesKey("iptv_hidden_channels_$providerId")
     private fun groupRenamesKey(providerId: Long) = stringSetPreferencesKey("iptv_group_renames_$providerId")
 
@@ -57,10 +68,15 @@ class IptvSettingsDataStore @Inject constructor(
     }
 
     fun visibilitySettings(providerId: Long): Flow<IptvVisibilitySettings> =
+        visibilitySettings(providerId, ContentType.LIVE)
+
+    fun visibilitySettings(providerId: Long, contentType: ContentType): Flow<IptvVisibilitySettings> =
         profileManager.activeProfileId.flatMapLatest { pid ->
             factory.get(pid, FEATURE).data.map { prefs ->
+                val legacyHiddenGroups = prefs[legacyHiddenGroupsKey(providerId)] ?: emptySet()
+                val typedHiddenGroups = prefs[hiddenGroupsKey(providerId, contentType)] ?: emptySet()
                 IptvVisibilitySettings(
-                    hiddenGroupIds = prefs[hiddenGroupsKey(providerId)] ?: emptySet(),
+                    hiddenGroupIds = legacyHiddenGroups + typedHiddenGroups,
                     hiddenChannelIds = prefs[hiddenChannelsKey(providerId)] ?: emptySet()
                 )
             }
@@ -78,12 +94,39 @@ class IptvSettingsDataStore @Inject constructor(
         }
 
     suspend fun setGroupVisible(providerId: Long, groupId: String, visible: Boolean) {
+        setGroupVisible(providerId, ContentType.LIVE, groupId, visible)
+    }
+
+    suspend fun setGroupVisible(providerId: Long, contentType: ContentType, groupId: String, visible: Boolean) {
         if (groupId.isBlank()) return
         store().edit { prefs ->
-            val key = hiddenGroupsKey(providerId)
+            val legacyKey = legacyHiddenGroupsKey(providerId)
+            val legacyUpdated = (prefs[legacyKey] ?: emptySet()).toMutableSet()
+            legacyUpdated.remove(groupId)
+            if (legacyUpdated.isEmpty()) prefs.remove(legacyKey) else prefs[legacyKey] = legacyUpdated
+
+            val key = hiddenGroupsKey(providerId, contentType)
             val updated = (prefs[key] ?: emptySet()).toMutableSet()
             if (visible) updated.remove(groupId) else updated.add(groupId)
-            prefs[key] = updated
+            if (updated.isEmpty()) prefs.remove(key) else prefs[key] = updated
+        }
+    }
+
+    suspend fun setHiddenGroupIds(
+        providerId: Long,
+        contentType: ContentType,
+        hiddenGroupIds: Set<String>,
+        replaceGroupIds: Set<String> = hiddenGroupIds
+    ) {
+        store().edit { prefs ->
+            val key = hiddenGroupsKey(providerId, contentType)
+            if (hiddenGroupIds.isEmpty()) prefs.remove(key) else prefs[key] = hiddenGroupIds
+
+            val legacyKey = legacyHiddenGroupsKey(providerId)
+            val legacyUpdated = (prefs[legacyKey] ?: emptySet())
+                .filterNot { it in replaceGroupIds }
+                .toSet()
+            if (legacyUpdated.isEmpty()) prefs.remove(legacyKey) else prefs[legacyKey] = legacyUpdated
         }
     }
 
@@ -122,5 +165,33 @@ class IptvSettingsDataStore @Inject constructor(
 
     suspend fun setShowRecordings(enabled: Boolean) {
         store().edit { it[showRecordingsKey] = enabled }
+    }
+
+    val vodPosterSize: Flow<IptvPosterSize> = profileManager.activeProfileId.flatMapLatest { pid ->
+        factory.get(pid, FEATURE).data.map { prefs ->
+            IptvPosterSize.fromName(prefs[vodPosterSizeKey])
+        }
+    }
+
+    suspend fun setVodPosterSize(size: IptvPosterSize) {
+        store().edit { it[vodPosterSizeKey] = size.name }
+    }
+
+    val dnsSettings: Flow<IptvDnsSettings> = profileManager.activeProfileId.flatMapLatest { pid ->
+        factory.get(pid, FEATURE).data.map { prefs ->
+            IptvDnsSettings(
+                providerId = prefs[dnsProviderKey]?.takeIf { it.isNotBlank() } ?: "system"
+            )
+        }
+    }
+
+    suspend fun setDnsProvider(providerId: String) {
+        store().edit { prefs ->
+            if (providerId.isBlank() || providerId == "system") {
+                prefs.remove(dnsProviderKey)
+            } else {
+                prefs[dnsProviderKey] = providerId
+            }
+        }
     }
 }

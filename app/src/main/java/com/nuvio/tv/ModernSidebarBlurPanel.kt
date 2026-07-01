@@ -37,6 +37,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -87,6 +88,7 @@ internal fun ModernSidebarBlurPanel(
     activeProfileName: String,
     activeProfileColorHex: String,
     activeProfileAvatarImageUrl: String?,
+    showProfileInSidebar: Boolean,
     showProfileSelector: Boolean,
     onSwitchProfile: () -> Unit
 ) {
@@ -142,9 +144,13 @@ internal fun ModernSidebarBlurPanel(
             .border(width = 1.dp, color = panelBorderColor, shape = panelShape)
             .padding(horizontal = 8.dp, vertical = 12.dp)
     ) {
-        if (showProfileSelector && activeProfileName.isNotEmpty()) {
-            val firstNavRequester = drawerItemFocusRequesters.values.firstOrNull()
-            val lastNavRequester = drawerItemFocusRequesters.values.lastOrNull()
+        val profileFocusRequester = remember { FocusRequester() }
+        val firstNavRequestRoute = drawerItems.firstOrNull()?.route
+        val lastNavRequestRoute = drawerItems.lastOrNull()?.route
+        val firstNavRequester = firstNavRequestRoute?.let(drawerItemFocusRequesters::get)
+        val lastNavRequester = lastNavRequestRoute?.let(drawerItemFocusRequesters::get)
+
+        if (showProfileInSidebar && activeProfileName.isNotEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -161,21 +167,12 @@ internal fun ModernSidebarBlurPanel(
                         if (focused) onDrawerItemFocused(0)
                     },
                     onClick = onSwitchProfile,
+                    downFocusRequester = firstNavRequester,
+                    upFocusRequester = lastNavRequester,
                     modifier = Modifier
                         .fillMaxWidth(0.96f)
                         .height(SidebarRowHeight)
-                        .onKeyEvent { keyEvent ->
-                            if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
-                            when (keyEvent.key) {
-                                Key.DirectionDown -> {
-                                    firstNavRequester?.requestFocus(); true
-                                }
-                                Key.DirectionUp -> {
-                                    lastNavRequester?.requestFocus(); true
-                                }
-                                else -> false
-                            }
-                        }
+                        .focusRequester(profileFocusRequester)
                 )
             }
         } else {
@@ -204,8 +201,8 @@ internal fun ModernSidebarBlurPanel(
                 .weight(1f)
                 .onKeyEvent { keyEvent ->
                     if (keyEvent.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onKeyEvent false
-                    val firstRequester = drawerItemFocusRequesters.values.firstOrNull()
-                    val lastRequester = drawerItemFocusRequesters.values.lastOrNull()
+                    val firstRequester = drawerItems.firstOrNull()?.route?.let(drawerItemFocusRequesters::get)
+                    val lastRequester = drawerItems.lastOrNull()?.route?.let(drawerItemFocusRequesters::get)
                     when (keyEvent.key) {
                         androidx.compose.ui.input.key.Key.DirectionDown -> {
                             if (focusedItemIndex == drawerItems.lastIndex + 1) {
@@ -214,7 +211,10 @@ internal fun ModernSidebarBlurPanel(
                             } else false
                         }
                         androidx.compose.ui.input.key.Key.DirectionUp -> {
-                            if (focusedItemIndex == 1) {
+                            if (focusedItemIndex == 1 && showProfileInSidebar && activeProfileName.isNotEmpty()) {
+                                profileFocusRequester.requestFocus()
+                                true
+                            } else if (focusedItemIndex == 1) {
                                 lastRequester?.requestFocus()
                                 true
                             } else false
@@ -232,8 +232,9 @@ internal fun ModernSidebarBlurPanel(
             ) { index, item ->
                 val isFirst = index == 0
                 val isLast = index == drawerItems.lastIndex
-                val firstRequester = drawerItemFocusRequesters.values.firstOrNull()
-                val lastRequester = drawerItemFocusRequesters.values.lastOrNull()
+                val firstRequester = drawerItems.firstOrNull()?.route?.let(drawerItemFocusRequesters::get)
+                val lastRequester = drawerItems.lastOrNull()?.route?.let(drawerItemFocusRequesters::get)
+                val itemUpFocusRequester = if (isFirst && showProfileInSidebar && activeProfileName.isNotEmpty()) profileFocusRequester else null
                 SidebarNavigationItem(
                     label = item.label,
                     iconRes = item.iconRes,
@@ -248,11 +249,13 @@ internal fun ModernSidebarBlurPanel(
                         }
                     },
                     onClick = { onDrawerItemClick(item.route) },
+                    upFocusRequester = itemUpFocusRequester,
                     modifier = Modifier
                         .fillMaxWidth(0.96f)
                         .height(SidebarRowHeight)
                         .focusRequester(drawerItemFocusRequesters.getValue(item.route))
                         .focusProperties {
+                            if (itemUpFocusRequester != null) up = itemUpFocusRequester
                             if (isLast && firstRequester != null) down = firstRequester
                         }
                 )
@@ -272,6 +275,7 @@ private fun SidebarNavigationItem(
     iconScale: Float,
     onFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    upFocusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
@@ -300,7 +304,10 @@ private fun SidebarNavigationItem(
                 isFocused = it.hasFocus
                 onFocusChanged(it.hasFocus)
             }
-            .focusProperties { canFocus = focusEnabled },
+            .focusProperties {
+                canFocus = focusEnabled
+                if (upFocusRequester != null) up = upFocusRequester
+            },
         colors = CardDefaults.colors(
             containerColor = backgroundColor,
             focusedContainerColor = backgroundColor,
@@ -375,17 +382,19 @@ private fun SidebarProfileItem(
     labelAlpha: Float,
     onFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    downFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(999.dp)
     val backgroundColor by animateColorAsState(
-        targetValue = if (isFocused) Color.White.copy(alpha = 0.18f) else Color.Transparent,
+        targetValue = if (isFocused) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.06f),
         animationSpec = tween(durationMillis = 180),
         label = "profileItemBackground"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (isFocused) Color.White.copy(alpha = 0.4f) else Color.Transparent,
+        targetValue = if (isFocused) Color.White.copy(alpha = 0.28f) else Color.Transparent,
         animationSpec = tween(durationMillis = 180),
         label = "profileItemBorder"
     )
@@ -396,7 +405,25 @@ private fun SidebarProfileItem(
                 isFocused = it.hasFocus
                 onFocusChanged(it.hasFocus)
             }
-            .focusProperties { canFocus = focusEnabled },
+            .focusProperties {
+                canFocus = focusEnabled
+                if (downFocusRequester != null) down = downFocusRequester
+                if (upFocusRequester != null) up = upFocusRequester
+            }
+            .onPreviewKeyEvent {
+                if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (it.key) {
+                    Key.DirectionDown -> {
+                        downFocusRequester?.requestFocus()
+                        true
+                    }
+                    Key.DirectionUp -> {
+                        upFocusRequester?.requestFocus()
+                        true
+                    }
+                    else -> false
+                }
+            },
         colors = CardDefaults.colors(
             containerColor = backgroundColor,
             focusedContainerColor = backgroundColor,
@@ -413,7 +440,7 @@ private fun SidebarProfileItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 14.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
         Box(
@@ -424,7 +451,8 @@ private fun SidebarProfileItem(
                 name = profileName,
                 colorHex = profileColorHex,
                 size = SidebarLeadingVisualSize,
-                avatarImageUrl = profileAvatarImageUrl
+                avatarImageUrl = profileAvatarImageUrl,
+                isSelected = isFocused
             )
         }
         Spacer(modifier = Modifier.width(SidebarProfileContentGap))

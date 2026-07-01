@@ -8,6 +8,8 @@ import com.streamvault.domain.repository.CategoryRepository
 import com.streamvault.domain.repository.ChannelRepository
 import com.streamvault.domain.repository.MovieRepository
 import com.streamvault.domain.repository.SeriesRepository
+import com.streamvault.domain.model.Category
+import com.streamvault.domain.model.ContentType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
@@ -55,6 +57,13 @@ data class VisibilityUiState(
     val allSeriesCategoriesVisible: Boolean = true,
 )
 
+private data class CategoryVisibilityData(
+    val movieVisibility: Set<String>,
+    val seriesVisibility: Set<String>,
+    val movieCategories: List<Category>,
+    val seriesCategories: List<Category>,
+)
+
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class IptvProviderVisibilityViewModel @Inject constructor(
@@ -76,7 +85,7 @@ class IptvProviderVisibilityViewModel @Inject constructor(
         viewModelScope.launch {
             // combine max 5 flows -> on imbrique
             val liveData = combine(
-                dataStore.visibilitySettings(providerId),
+                dataStore.visibilitySettings(providerId, ContentType.LIVE),
                 channelRepository.getCategories(providerId),
                 channelRepository.getChannels(providerId),
             ) { vis, liveCategories, channels ->
@@ -84,17 +93,24 @@ class IptvProviderVisibilityViewModel @Inject constructor(
             }
 
             val catData = combine(
+                dataStore.visibilitySettings(providerId, ContentType.MOVIE),
+                dataStore.visibilitySettings(providerId, ContentType.SERIES),
                 movieRepository.getCategories(providerId),
                 seriesRepository.getCategories(providerId),
-            ) { movieCats, seriesCats ->
-                Pair(movieCats, seriesCats)
+            ) { movieVis, seriesVis, movieCats, seriesCats ->
+                CategoryVisibilityData(
+                    movieVisibility = movieVis.hiddenGroupIds,
+                    seriesVisibility = seriesVis.hiddenGroupIds,
+                    movieCategories = movieCats,
+                    seriesCategories = seriesCats,
+                )
             }
 
             combine(
                 _tab,
                 liveData,
                 catData,
-            ) { tab, (vis, liveCategories, channels), (movieCats, seriesCats) ->
+            ) { tab, (vis, liveCategories, channels), categoryData ->
 
                 val hiddenGroups: Set<String> = vis.hiddenGroupIds
                 val hiddenChannelIds: Set<Long> = vis.hiddenChannelIds
@@ -119,21 +135,21 @@ class IptvProviderVisibilityViewModel @Inject constructor(
                     )
                 }
 
-                val movieCategories = movieCats.map { cat ->
+                val movieCategories = categoryData.movieCategories.map { cat ->
                     CategoryVisibilityItem(
                         id = cat.id,
                         name = cat.name,
                         count = cat.count,
-                        isVisible = cat.id.toString() !in hiddenGroups,
+                        isVisible = cat.id.toString() !in categoryData.movieVisibility,
                     )
                 }
 
-                val seriesCategories = seriesCats.map { cat ->
+                val seriesCategories = categoryData.seriesCategories.map { cat ->
                     CategoryVisibilityItem(
                         id = cat.id,
                         name = cat.name,
                         count = cat.count,
-                        isVisible = cat.id.toString() !in hiddenGroups,
+                        isVisible = cat.id.toString() !in categoryData.seriesVisibility,
                     )
                 }
 
@@ -156,11 +172,11 @@ class IptvProviderVisibilityViewModel @Inject constructor(
     fun selectTab(tab: VisibilityTab) { _tab.value = tab }
 
     fun toggleGroup(groupId: String, visible: Boolean) {
-        viewModelScope.launch { dataStore.setGroupVisible(providerId, groupId, visible) }
+        viewModelScope.launch { dataStore.setGroupVisible(providerId, ContentType.LIVE, groupId, visible) }
     }
     fun toggleAllGroups(visible: Boolean) {
         viewModelScope.launch {
-            _uiState.value.liveGroups.forEach { dataStore.setGroupVisible(providerId, it.id, visible) }
+            _uiState.value.liveGroups.forEach { dataStore.setGroupVisible(providerId, ContentType.LIVE, it.id, visible) }
         }
     }
     fun toggleChannel(channelId: Long, visible: Boolean) {
@@ -172,19 +188,19 @@ class IptvProviderVisibilityViewModel @Inject constructor(
         }
     }
     fun toggleMovieCategory(categoryId: Long, visible: Boolean) {
-        viewModelScope.launch { dataStore.setGroupVisible(providerId, categoryId.toString(), visible) }
+        viewModelScope.launch { dataStore.setGroupVisible(providerId, ContentType.MOVIE, categoryId.toString(), visible) }
     }
     fun toggleAllMovieCategories(visible: Boolean) {
         viewModelScope.launch {
-            _uiState.value.movieCategories.forEach { dataStore.setGroupVisible(providerId, it.id.toString(), visible) }
+            _uiState.value.movieCategories.forEach { dataStore.setGroupVisible(providerId, ContentType.MOVIE, it.id.toString(), visible) }
         }
     }
     fun toggleSeriesCategory(categoryId: Long, visible: Boolean) {
-        viewModelScope.launch { dataStore.setGroupVisible(providerId, categoryId.toString(), visible) }
+        viewModelScope.launch { dataStore.setGroupVisible(providerId, ContentType.SERIES, categoryId.toString(), visible) }
     }
     fun toggleAllSeriesCategories(visible: Boolean) {
         viewModelScope.launch {
-            _uiState.value.seriesCategories.forEach { dataStore.setGroupVisible(providerId, it.id.toString(), visible) }
+            _uiState.value.seriesCategories.forEach { dataStore.setGroupVisible(providerId, ContentType.SERIES, it.id.toString(), visible) }
         }
     }
 }

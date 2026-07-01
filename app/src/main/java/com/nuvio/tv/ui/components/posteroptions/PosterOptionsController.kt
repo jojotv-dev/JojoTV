@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.components.posteroptions
+﻿package com.nuvio.tv.ui.components.posteroptions
 
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
@@ -15,6 +15,11 @@ import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.repository.LibraryRepository
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.domain.repository.WatchProgressRepository
+import com.nuvio.tv.ui.screens.search.IPTV_MOVIE_SEARCH_TYPE
+import com.nuvio.tv.ui.screens.search.IPTV_SERIES_SEARCH_TYPE
+import com.nuvio.tv.ui.screens.search.parseIptvSearchItemId
+import com.streamvault.domain.model.ContentType as IptvContentType
+import com.streamvault.domain.repository.FavoriteRepository
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -44,7 +49,8 @@ class PosterOptionsController @Inject constructor(
     private val watchProgressRepository: WatchProgressRepository,
     private val metaRepository: MetaRepository,
     private val watchedSeriesStateHolder: WatchedSeriesStateHolder,
-    private val tmdbService: TmdbService
+    private val tmdbService: TmdbService,
+    private val favoriteRepository: FavoriteRepository
 ) {
     private val _state = MutableStateFlow(PosterOptionsState())
     val state: StateFlow<PosterOptionsState> = _state.asStateFlow()
@@ -132,6 +138,40 @@ class PosterOptionsController @Inject constructor(
     fun show(item: MetaPreview, addonBaseUrl: String?) {
         val launchScope = this.scope ?: return
         showJob?.cancel()
+
+        if (item.rawType == IPTV_MOVIE_SEARCH_TYPE || item.rawType == IPTV_SERIES_SEARCH_TYPE) {
+            showJob = launchScope.launch {
+                val parsed = parseIptvSearchItemId(item.id)
+                val initialFavorite = if (parsed != null) {
+                    val (_, providerId, contentId) = parsed
+                    val contentType = if (item.rawType == IPTV_MOVIE_SEARCH_TYPE) {
+                        IptvContentType.MOVIE
+                    } else {
+                        IptvContentType.SERIES
+                    }
+                    runCatching {
+                        favoriteRepository.isFavorite(providerId, contentId, contentType)
+                    }.getOrDefault(false)
+                } else {
+                    false
+                }
+
+                _state.update { current ->
+                    current.copy(
+                        target = item,
+                        addonBaseUrl = addonBaseUrl.orEmpty(),
+                        isInLibrary = initialFavorite,
+                        isWatched = false,
+                        isLibraryPending = false,
+                        isWatchedPending = false,
+                        isIptvItem = true
+                    )
+                }
+                targetFlow.value = null
+            }
+            return
+        }
+
         showJob = launchScope.launch {
             val canonical = canonicalize(item)
             val isSeries = canonical.apiType.equals("series", ignoreCase = true) ||
@@ -155,7 +195,8 @@ class PosterOptionsController @Inject constructor(
                     isInLibrary = initialIsInLibrary,
                     isWatched = initialIsWatched,
                     isLibraryPending = false,
-                    isWatchedPending = false
+                    isWatchedPending = false,
+                    isIptvItem = false
                 )
             }
             targetFlow.value = canonical
@@ -183,11 +224,76 @@ class PosterOptionsController @Inject constructor(
         return canonical
     }
 
+    suspend fun toggleFavoriteSilently(item: MetaPreview, addonBaseUrl: String?): Boolean {
+        if (item.rawType == IPTV_MOVIE_SEARCH_TYPE || item.rawType == IPTV_SERIES_SEARCH_TYPE) {
+            val parsed = parseIptvSearchItemId(item.id) ?: return false
+            val (_, providerId, contentId) = parsed
+            val contentType = if (item.rawType == IPTV_MOVIE_SEARCH_TYPE) {
+                IptvContentType.MOVIE
+            } else {
+                IptvContentType.SERIES
+            }
+            val currentlyFavorite = runCatching {
+                favoriteRepository.isFavorite(providerId, contentId, contentType)
+            }.getOrDefault(false)
+
+            runCatching {
+                if (currentlyFavorite) {
+                    favoriteRepository.removeFavorite(providerId, contentId, contentType)
+                } else {
+                    favoriteRepository.addFavorite(providerId, contentId, contentType)
+                }
+            }
+            return !currentlyFavorite
+        } else {
+            val canonical = canonicalize(item)
+            val input = canonical.toLibraryEntryInput(addonBaseUrl.takeIf { !it.isNullOrBlank() })
+            runCatching {
+                libraryRepository.toggleDefault(input)
+            }
+            val isInLib = runCatching {
+                libraryRepository.isInLibrary(canonical.id, canonical.apiType).first()
+            }.getOrDefault(false)
+            return isInLib
+        }
+    }
+
     fun dismiss() {
         showJob?.cancel()
         showJob = null
         targetFlow.value = null
-        _state.update { it.copy(target = null) }
+        _state.update { it.copy(target = null, isIptvItem = false) }
+    }
+
+    fun toggleIptvFavorite() {
+        val state = _state.value
+        val item = state.target ?: return
+        if (!state.isIptvItem) return
+        if (state.isLibraryPending) return
+        val scope = this.scope ?: return
+
+        val parsed = parseIptvSearchItemId(item.id) ?: return
+        val (_, providerId, contentId) = parsed
+        val contentType = if (item.rawType == IPTV_MOVIE_SEARCH_TYPE) {
+            IptvContentType.MOVIE
+        } else {
+            IptvContentType.SERIES
+        }
+
+        _state.update { it.copy(isLibraryPending = true) }
+        scope.launch {
+            val currentlyFavorite = _state.value.isInLibrary
+            runCatching {
+                if (currentlyFavorite) {
+                    favoriteRepository.removeFavorite(providerId, contentId, contentType)
+                } else {
+                    favoriteRepository.addFavorite(providerId, contentId, contentType)
+                }
+            }.onFailure { error ->
+                Log.w(TAG, "Failed to toggle IPTV favorite for $contentId: ${error.message}")
+            }
+            _state.update { it.copy(isLibraryPending = false, isInLibrary = !currentlyFavorite) }
+        }
     }
 
     fun toggleLibrary() {

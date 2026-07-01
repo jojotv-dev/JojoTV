@@ -13,6 +13,8 @@ import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.data.freebox.freeboxTmdbSearchQuery
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
+import com.nuvio.tv.data.freebox.freeboxLegacyContentIdFor
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.model.WatchedItem
 import com.nuvio.tv.core.tmdb.TmdbService
@@ -666,11 +668,8 @@ class WatchProgressRepositoryImpl @Inject constructor(
     }
 
     override suspend fun saveProgress(progress: WatchProgress, syncRemote: Boolean) {
-        // Clear any CW dismiss keys for this series so it reappears in Continue Watching.
-        if (progress.contentType.equals("series", ignoreCase = true) ||
-            progress.contentType.equals("tv", ignoreCase = true)) {
-            traktSettingsDataStore.removeDismissedNextUpKeysForContent(progress.contentId)
-        }
+        // Clear any CW dismiss key when playback creates fresh progress again.
+        traktSettingsDataStore.removeDismissedNextUpKeysForContent(progress.contentId)
         // Capture profile ID now so async operations target the correct profile.
         val profileId = profileManager.activeProfileId.value
         if (shouldUseTraktProgress()) {
@@ -1028,7 +1027,14 @@ class WatchProgressRepositoryImpl @Inject constructor(
             hydratedProgressIds.add(progress.contentId)
             runCatching {
                 if (progress.isFreeboxProgress()) {
-                    val fileName = freeboxFileNameOnly(progress.name.ifBlank { progress.videoId })
+                    val rawFreeboxName = progress.name
+                        .takeUnless { it.isLikelyGeneratedFreeboxArtworkLabel() }
+                        ?: freeboxPathFromContentId(progress.contentId)
+                            .takeUnless { it.isLikelyGeneratedFreeboxArtworkLabel() }
+                        ?: freeboxPathFromContentId(progress.videoId)
+                            .takeUnless { it.isLikelyGeneratedFreeboxArtworkLabel() }
+                        ?: progress.videoId
+                    val fileName = freeboxFileNameOnly(rawFreeboxName)
                     val tmdbImages = tmdbService.fetchImagesForTitleQuery(
                         query = freeboxTmdbSearchQuery(fileName),
                         mediaTypeHint = "movie"
@@ -1089,6 +1095,11 @@ class WatchProgressRepositoryImpl @Inject constructor(
     private fun WatchProgress.isFreeboxProgress(): Boolean =
         contentId.startsWith("freebox:") || videoId.startsWith("freebox:") || contentType.equals("freebox", ignoreCase = true)
 
+    private fun String.isLikelyGeneratedFreeboxArtworkLabel(): Boolean {
+        val value = trim()
+        return value.isBlank() || value.matches(Regex("\\d{10,}"))
+    }
+
     private fun parseRuntimeToMs(raw: String?): Long {
         val minutes = raw?.trim()?.toLongOrNull() ?: return 0L
         return minutes * 60_000L
@@ -1112,18 +1123,57 @@ class WatchProgressRepositoryImpl @Inject constructor(
             listOf("${contentId}_s${season}e${episode}", contentId)
         } else {
             val matchingLocalKeys = rawEntries
-                .keys
-                .filter { key ->
-                    key == contentId || key.startsWith("${contentId}_")
+                .filter { (key, progress) ->
+                    key == contentId ||
+                        key.startsWith("${contentId}_") ||
+                        isSameFreeboxProgressTarget(key, progress, contentId)
                 }
+                .keys
             matchingLocalKeys + contentId
         }
-        val resolvedKeys = keys
+        val freeboxLegacyKeys = if (contentId.startsWith("freebox:", ignoreCase = true)) {
+            val legacyContentId = freeboxLegacyContentIdFor(contentId)
+            if (season != null && episode != null) {
+                listOf("${legacyContentId}_s${season}e${episode}", legacyContentId)
+            } else {
+                listOf(legacyContentId)
+            }
+        } else {
+            emptyList()
+        }
+        val resolvedKeys = (keys + freeboxLegacyKeys)
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
         return resolvedKeys
     }
+
+    private fun isSameFreeboxProgressTarget(
+        key: String,
+        progress: WatchProgress,
+        targetContentId: String
+    ): Boolean {
+        if (!targetContentId.startsWith("freebox:", ignoreCase = true)) return false
+        val targetPath = freeboxPathFromContentId(targetContentId)
+        if (targetPath.isBlank()) return false
+        val keyPath = if (key.startsWith("freebox:", ignoreCase = true)) {
+            freeboxPathFromContentId(key.withoutEpisodeProgressSuffix())
+        } else {
+            null
+        }
+        val progressContentPath = progress.contentId
+            .takeIf { it.startsWith("freebox:", ignoreCase = true) }
+            ?.let(::freeboxPathFromContentId)
+        val progressVideoPath = progress.videoId
+            .takeIf { it.startsWith("freebox:", ignoreCase = true) }
+            ?.let(::freeboxPathFromContentId)
+        return keyPath == targetPath ||
+            progressContentPath == targetPath ||
+            progressVideoPath == targetPath
+    }
+
+    private fun String.withoutEpisodeProgressSuffix(): String =
+        replace(Regex("_s\\d+e\\d+$"), "")
 
 }
 

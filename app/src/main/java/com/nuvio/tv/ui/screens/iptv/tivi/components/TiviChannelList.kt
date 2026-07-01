@@ -13,7 +13,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.font.FontWeight
@@ -24,6 +27,7 @@ import androidx.tv.material3.*
 import coil3.compose.AsyncImage
 import com.streamvault.domain.model.Channel
 import com.nuvio.tv.ui.theme.NuvioColors
+import android.view.KeyEvent as AndroidKeyEvent
 
 private val CHANNEL_QUALITY_REGEX = Regex("\\b(HEVC|4K|FHD|HD|SD)\\b", RegexOption.IGNORE_CASE)
 private val CHANNEL_COUNTRY_PREFIX_REGEX = Regex("\\bFR\\s*\\|\\s*", RegexOption.IGNORE_CASE)
@@ -54,6 +58,8 @@ fun TiviChannelList(
     onChannelFocused: (Channel) -> Unit,
     onChannelClick: (Channel) -> Unit,
     onFocusChanged: (Boolean) -> Unit = {},
+    firstChannelFocusRequester: FocusRequester? = null,
+    onDirectionLeft: (() -> Boolean)? = null,
     listState: LazyListState = rememberLazyListState(),
     modifier: Modifier = Modifier,
 ) {
@@ -62,7 +68,7 @@ fun TiviChannelList(
             modifier = Modifier
                 .width(280.dp)
                 .fillMaxHeight()
-                .background(TIVI_EPG_BACKGROUND),
+                .background(NuvioColors.Background),
         ) {
             Spacer(Modifier.height(TIVI_EPG_HEADER_HEIGHT))
             LazyColumn(
@@ -74,11 +80,14 @@ fun TiviChannelList(
                 ),
             ) {
                 items(channels, key = { it.id }) { channel ->
+                    val isFirst = channels.firstOrNull()?.id == channel.id
                     TiviChannelRow(
                         channel = channel,
                         isActive = channel.id == focusedChannelId,
                         onFocused = { onChannelFocused(channel) },
                         onClick = { onChannelClick(channel) },
+                        focusRequester = if (isFirst) firstChannelFocusRequester else null,
+                        onDirectionLeft = onDirectionLeft,
                     )
                 }
             }
@@ -93,6 +102,8 @@ private fun TiviChannelRow(
     isActive: Boolean,
     onFocused: () -> Unit,
     onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
+    onDirectionLeft: (() -> Boolean)? = null,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val label = remember(channel.name) { tiviChannelLabel(channel.name) }
@@ -111,15 +122,22 @@ private fun TiviChannelRow(
             .fillMaxWidth()
             .height(TIVI_EPG_ROW_HEIGHT)
             .scale(focusScale)
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(
                 if (isFocused) Modifier.border(2.dp, accent, shape) else Modifier
             )
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                native.action == AndroidKeyEvent.ACTION_DOWN &&
+                    native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT &&
+                    onDirectionLeft?.invoke() == true
+            }
             .onFocusChanged {
                 isFocused = it.isFocused
                 if (it.isFocused) onFocused()
             },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isActive) selectedBackground else TIVI_EPG_BACKGROUND,
+            containerColor = if (isActive) selectedBackground else NuvioColors.Background,
             focusedContainerColor = selectedBackground,
             pressedContainerColor = accent.copy(alpha = 0.12f),
         ),
@@ -147,7 +165,7 @@ private fun TiviChannelRow(
                 Box(
                     modifier = Modifier
                         .size(width = 50.dp, height = 28.dp)
-                        .background(TIVI_EPG_SURFACE, RoundedCornerShape(4.dp)),
+                        .background(NuvioColors.BackgroundElevated, RoundedCornerShape(4.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (!channel.logoUrl.isNullOrBlank()) {

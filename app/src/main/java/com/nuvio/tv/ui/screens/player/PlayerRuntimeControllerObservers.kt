@@ -461,9 +461,11 @@ internal fun PlayerRuntimeController.loadSavedProgressFor(season: Int?, episode:
                     }
                 } else {
                     _exoPlayer?.let { player ->
-                        if (player.playbackState == Player.STATE_READY) {
-                            tryApplyPendingResumeProgress(player)
-                        }
+                        // Désactivé pour éviter les blocages de flux réseau (IPTV) lors d'un seek précoce.
+                        // Le seek se fera de manière sécurisée dans onRenderedFirstFrame().
+                        // if (player.playbackState == Player.STATE_READY) {
+                        //     tryApplyPendingResumeProgress(player)
+                        // }
                     }
                 }
             }
@@ -560,6 +562,7 @@ internal fun PlayerRuntimeController.tryApplyPendingResumeProgress(player: Playe
     val saved = pendingResumeProgress ?: return
     if (!player.isCurrentMediaItemSeekable) {
         pendingResumeProgress = null
+        deferResumeSeekUntilPlaybackStarts = false
         _uiState.update { it.copy(pendingSeekPosition = null) }
         return
     }
@@ -571,11 +574,46 @@ internal fun PlayerRuntimeController.tryApplyPendingResumeProgress(player: Playe
     }
 
     if (target > 0L) {
+        if (shouldDeferResumeSeekUntilPlaybackStarts()) {
+            deferResumeSeekUntilPlaybackStarts = true
+            pendingResumeProgress = null
+            _uiState.update { it.copy(pendingSeekPosition = target) }
+            Log.d(
+                PlayerRuntimeController.TAG,
+                "IPTV resume: delaying seek to ${target}ms until playback starts"
+            )
+            return
+        }
         player.seekTo(target)
         _uiState.update { it.copy(pendingSeekPosition = null) }
         pendingResumeProgress = null
+        deferResumeSeekUntilPlaybackStarts = false
     }
 }
+
+internal fun PlayerRuntimeController.applyDeferredResumeSeekAfterPlaybackStart() {
+    if (!deferResumeSeekUntilPlaybackStarts) return
+    val player = _exoPlayer ?: return
+    val target = _uiState.value.pendingSeekPosition ?: return
+    deferResumeSeekUntilPlaybackStarts = false
+    _uiState.update { it.copy(pendingSeekPosition = null) }
+    scope.launch {
+        delay(IPTV_DEFERRED_RESUME_SEEK_DELAY_MS)
+        val livePlayer = _exoPlayer ?: return@launch
+        if (isReleasingPlayer) return@launch
+        if (livePlayer.playbackState == Player.STATE_IDLE || livePlayer.playbackState == Player.STATE_ENDED) return@launch
+        Log.d(PlayerRuntimeController.TAG, "IPTV resume: applying delayed seek to ${target}ms")
+        livePlayer.seekTo(target)
+    }
+}
+
+private fun PlayerRuntimeController.shouldDeferResumeSeekUntilPlaybackStarts(): Boolean {
+    val type = contentType?.lowercase().orEmpty()
+    val id = contentId.orEmpty()
+    return type.startsWith("iptv") || id.startsWith("iptv_", ignoreCase = true)
+}
+
+private const val IPTV_DEFERRED_RESUME_SEEK_DELAY_MS = 900L
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(UnstableApi::class)
@@ -583,6 +621,7 @@ internal fun PlayerRuntimeController.retryCurrentStreamFromStartAfter416() {
     if (hasRetriedCurrentStreamAfter416) return
     hasRetriedCurrentStreamAfter416 = true
     pendingResumeProgress = null
+    deferResumeSeekUntilPlaybackStarts = false
     scheduleDeferredPlayerReinitialize(fromPositionMs = 0L, clearResumeProgress = true)
 }
 
@@ -734,12 +773,13 @@ private fun PlayerRuntimeController.scheduleDeferredPlayerReinitialize(
 ) {
     cancelFirstFrameWatchdog()
     cancelStallWatchdog()
+    val recoveryPositionMs = fromPositionMs.takeIf { it > 1_000L } ?: recoveryResumePositionMs()
     if (clearResumeProgress) {
         pendingResumeProgress = null
     }
     _uiState.update {
         it.copy(
-            pendingSeekPosition = if (fromPositionMs > 0L) fromPositionMs else null,
+            pendingSeekPosition = if (recoveryPositionMs > 0L) recoveryPositionMs else null,
             error = null,
             showLoadingOverlay = it.loadingOverlayEnabled
         )

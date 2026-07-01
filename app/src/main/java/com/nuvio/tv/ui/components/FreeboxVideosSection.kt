@@ -14,8 +14,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -31,9 +40,15 @@ import com.nuvio.tv.LocalSidebarFocusHandler
 import com.nuvio.tv.R
 import com.nuvio.tv.data.freebox.FreeboxFileEntry
 import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
+import com.nuvio.tv.data.freebox.freeboxDisplayName
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
+import com.nuvio.tv.data.freebox.formatFreeboxDurationCompact
 import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
+import com.nuvio.tv.domain.model.ContentType
+import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.domain.model.WatchProgress
+import com.nuvio.tv.core.tmdb.FreeboxVideoMeta
 import com.nuvio.tv.ui.navigation.Screen
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.ui.theme.NuvioColors
@@ -47,6 +62,7 @@ fun FreeboxVideosSection(
     onItemClick: (FreeboxFileEntry) -> Unit,
     artworkMap: Map<String, String> = emptyMap(),
     backdropMap: Map<String, String> = emptyMap(),
+    metadataMap: Map<String, FreeboxVideoMeta> = emptyMap(),
     probedDurations: Map<String, Long> = emptyMap(),
     continueWatchingIds: Set<String> = emptySet(),
     cardWidth: Dp = 126.dp,
@@ -57,7 +73,12 @@ fun FreeboxVideosSection(
     onShowDetails: (FreeboxFileEntry) -> Unit = {},
     onRenameFreebox: (FreeboxFileEntry, String) -> Unit = { _, _ -> },
     onDeleteFromFreebox: (FreeboxFileEntry) -> Unit = {},
+    onItemFocused: (index: Int, item: MetaPreview) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
+    entryFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
+    onMoveUp: (() -> Boolean)? = null,
     posterPickerViewModel: FreeboxPosterPickerViewModel = hiltViewModel()
 ) {
     val requestSidebarFocus = LocalSidebarFocusHandler.current
@@ -73,6 +94,10 @@ fun FreeboxVideosSection(
     }
     if (filteredEntries.isEmpty()) return
 
+    val focusRequesters = remember(filteredEntries.size) {
+        List(filteredEntries.size) { FocusRequester() }
+    }
+
     var optionsEntry by remember { mutableStateOf<FreeboxFileEntry?>(null) }
     var renameEntry by remember { mutableStateOf<FreeboxFileEntry?>(null) }
 
@@ -83,8 +108,27 @@ fun FreeboxVideosSection(
             color = NuvioColors.TextPrimary,
             modifier = Modifier.padding(start = horizontalPadding, end = horizontalPadding, bottom = 16.dp)
         )
+        val rowFocusModifier = if (entryFocusRequester != null) {
+            Modifier
+                .focusRequester(entryFocusRequester)
+                .focusRestorer(focusRequesters.firstOrNull() ?: FocusRequester.Default)
+                .focusGroup()
+                .then(
+                    if (upFocusRequester != null || downFocusRequester != null) {
+                        Modifier.focusProperties {
+                            if (upFocusRequester != null) up = upFocusRequester
+                            if (downFocusRequester != null) down = downFocusRequester
+                        }
+                    } else Modifier
+                )
+        } else {
+            Modifier
+        }
+
         LazyRow(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(rowFocusModifier),
             contentPadding = PaddingValues(
                 start = horizontalPadding + focusBorderPadding,
                 end = horizontalPadding + focusBorderPadding,
@@ -97,12 +141,14 @@ fun FreeboxVideosSection(
                 val contentId = freeboxContentIdForEntry(entry)
                 val artwork = artworkMap[contentId]
                 val backdrop = backdropMap[contentId] ?: artwork
-                val cwItem = remember(entry, artwork, backdrop, probedDurations[entry.path]) {
+                val metadata = metadataMap[contentId]
+                val displayName = freeboxDisplayName(entry.name)
+                val cwItem = remember(entry, artwork, backdrop, metadata, probedDurations[entry.path]) {
                     ContinueWatchingItem.InProgress(
                         progress = WatchProgress(
                             contentId = contentId,
                             contentType = "freebox",
-                            name = entry.name,
+                            name = displayName,
                             poster = artwork,
                             backdrop = backdrop,
                             logo = null,
@@ -113,15 +159,66 @@ fun FreeboxVideosSection(
                             position = 0L,
                             duration = entry.durationMs ?: probedDurations[entry.path] ?: 0L,
                             lastWatched = 0L
-                        )
+                        ),
+                        episodeDescription = metadata?.overview,
+                        genres = metadata?.genres.orEmpty(),
+                        releaseInfo = metadata?.year
                     )
+                }
+                val freeboxMetaPreview = remember(entry, artwork, backdrop, metadata) {
+                    MetaPreview(
+                        id = contentId,
+                        type = ContentType.UNKNOWN,
+                        rawType = "freebox",
+                        name = displayName,
+                        poster = artwork,
+                        posterShape = PosterShape.POSTER,
+                        background = backdrop,
+                        logo = null,
+                        description = metadata?.overview,
+                        releaseInfo = metadata?.year,
+                        imdbRating = null,
+                        genres = metadata?.genres.orEmpty(),
+                        runtime = formatFreeboxDurationCompact(entry.durationMs ?: probedDurations[entry.path])
+                    )
+                }
+                val focusModifier = if (index < focusRequesters.size) {
+                    Modifier.focusRequester(focusRequesters[index])
+                } else {
+                    Modifier
+                }
+                val directionalFocusModifier = if (upFocusRequester != null || downFocusRequester != null) {
+                    Modifier.focusProperties {
+                        if (upFocusRequester != null) up = upFocusRequester
+                        if (downFocusRequester != null) down = downFocusRequester
+                    }
+                } else {
+                    Modifier
+                }
+                var isItemFocused by remember { mutableStateOf(false) }
+                val effectiveCardWidth = if (isItemFocused && cardWidth < imageHeight) {
+                    imageHeight * (16f / 9f)
+                } else {
+                    cardWidth
                 }
                 ContinueWatchingCard(
                     item = cwItem,
                     onClick = { onItemClick(entry) },
                     onLongPress = { optionsEntry = entry },
-                    modifier = Modifier,
-                    cardWidth = cardWidth,
+                    modifier = focusModifier
+                        .onPreviewKeyEvent { event ->
+                            event.type == KeyEventType.KeyDown &&
+                                event.key == Key.DirectionUp &&
+                                onMoveUp?.invoke() == true
+                        }
+                        .onFocusChanged { focusState ->
+                            isItemFocused = focusState.isFocused
+                            if (focusState.isFocused) {
+                                onItemFocused(index, freeboxMetaPreview)
+                            }
+                        }
+                        .then(directionalFocusModifier),
+                    cardWidth = effectiveCardWidth,
                     imageHeight = imageHeight,
                     showBadge = false,
                     showProgressBar = false,
@@ -148,7 +245,8 @@ fun FreeboxVideosSection(
             onChoosePoster = {
                 posterPickerViewModel.open(
                     entry = menuEntry,
-                    currentPosterUrl = artworkMap[freeboxContentIdForEntry(menuEntry)]
+                    currentPosterUrl = artworkMap[freeboxContentIdForEntry(menuEntry)],
+                    currentBackdropUrl = backdropMap[freeboxContentIdForEntry(menuEntry)]
                 )
                 optionsEntry = null
             },

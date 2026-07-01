@@ -36,6 +36,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.nuvio.tv.R
+import com.nuvio.tv.core.tmdb.TmdbArtworkType
 import com.nuvio.tv.core.tmdb.TmdbPosterCandidate
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.theme.NuvioColors
@@ -53,8 +54,11 @@ fun FreeboxPosterPickerDialog(
 
     LaunchedEffect(state.isLoading, state.posters) {
         if (!state.isLoading) {
-            if (state.posters.isNotEmpty()) firstPosterFocusRequester.requestFocus()
-            else closeFocusRequester.requestFocus()
+            if (state.posters.isNotEmpty()) {
+                runCatching { firstPosterFocusRequester.requestFocus() }
+            } else {
+                runCatching { closeFocusRequester.requestFocus() }
+            }
         }
     }
 
@@ -105,10 +109,14 @@ fun FreeboxPosterPickerDialog(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    itemsIndexed(state.posters, key = { _, poster -> poster.url }) { index, poster ->
+                    itemsIndexed(
+                        items = state.posters,
+                        key = { index, poster -> "${poster.artworkType}:${poster.url}:$index" }
+                    ) { index, poster ->
                         PosterCandidateCard(
                             poster = poster,
-                            isSelected = poster.url == state.currentPosterUrl,
+                            isSelected = poster.url == state.currentPosterUrl ||
+                                poster.url == state.currentBackdropUrl,
                             enabled = !state.isSaving,
                             onClick = { onSelect(poster) },
                             modifier = if (index == 0) {
@@ -138,7 +146,11 @@ private fun PosterCandidateCard(
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Card(
             onClick = { if (enabled) onClick() },
-            modifier = modifier.fillMaxWidth().aspectRatio(2f / 3f),
+            modifier = modifier
+                .fillMaxWidth()
+                .aspectRatio(
+                    if (poster.artworkType == TmdbArtworkType.LANDSCAPE) 16f / 9f else 2f / 3f
+                ),
             shape = CardDefaults.shape(shape),
             colors = CardDefaults.colors(
                 containerColor = NuvioColors.BackgroundCard,
@@ -168,6 +180,16 @@ private fun PosterCandidateCard(
                 )
             }
         }
+        Text(
+            text = if (poster.artworkType == TmdbArtworkType.LANDSCAPE) {
+                "Format paysage"
+            } else {
+                "Format portrait"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1
+        )
         poster.title?.let { title ->
             Text(
                 text = title,

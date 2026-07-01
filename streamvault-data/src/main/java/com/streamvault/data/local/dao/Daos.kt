@@ -1430,7 +1430,7 @@ interface MovieDao {
     suspend fun getTmdbIdsByProvider(providerId: Long): List<TmdbIdMapping>
 
     @Query("SELECT * FROM movies WHERE id IN (:ids)")
-    fun getByIds(ids: List<Long>): Flow<List<MovieBrowseEntity>>
+    fun getByIds(ids: List<Long>): Flow<List<MovieEntity>>
 
     @Query("SELECT * FROM movies WHERE provider_id = :providerId AND stream_id = :streamId")
     suspend fun getByStreamId(providerId: Long, streamId: Long): MovieEntity?
@@ -1452,6 +1452,9 @@ interface MovieDao {
 
     @Update
     suspend fun updateAll(movies: List<MovieEntity>)
+
+    @Query("UPDATE movies SET poster_url = :posterUrl, backdrop_url = :backdropUrl WHERE id = :movieId")
+    suspend fun updateArtwork(movieId: Long, posterUrl: String?, backdropUrl: String?)
 
     @Query(
         """
@@ -2422,7 +2425,7 @@ interface SeriesDao {
     suspend fun getTmdbIdsByProvider(providerId: Long): List<TmdbIdMapping>
 
     @Query("SELECT * FROM series WHERE id IN (:ids)")
-    fun getByIds(ids: List<Long>): Flow<List<SeriesBrowseEntity>>
+    fun getByIds(ids: List<Long>): Flow<List<SeriesEntity>>
 
     @Query("SELECT * FROM series WHERE provider_id = :providerId AND series_id = :seriesId LIMIT 1")
     suspend fun getBySeriesId(providerId: Long, seriesId: Long): SeriesEntity?
@@ -2441,6 +2444,9 @@ interface SeriesDao {
 
     @Update
     suspend fun updateAll(series: List<SeriesEntity>)
+
+    @Query("UPDATE series SET poster_url = :posterUrl, backdrop_url = :backdropUrl WHERE id = :seriesId")
+    suspend fun updateArtwork(seriesId: Long, posterUrl: String?, backdropUrl: String?)
 
     @Query(
         """
@@ -3001,6 +3007,12 @@ data class FavoriteGroupConstraint(
 
 @Dao
 abstract class FavoriteDao {
+    @Query("SELECT * FROM favorites ORDER BY provider_id ASC, content_type ASC, group_key ASC, position ASC, id ASC")
+    abstract fun observeAllForSync(): Flow<List<FavoriteEntity>>
+
+    @Query("SELECT * FROM favorites ORDER BY provider_id ASC, content_type ASC, group_key ASC, position ASC, id ASC")
+    abstract suspend fun getAllSync(): List<FavoriteEntity>
+
     @Query("SELECT * FROM favorites WHERE provider_id = :providerId AND group_id IS NULL ORDER BY position ASC")
     abstract fun getAllGlobal(providerId: Long): Flow<List<FavoriteEntity>>
 
@@ -3119,6 +3131,12 @@ abstract class FavoriteDao {
 
 @Dao
 interface VirtualGroupDao {
+    @Query("SELECT * FROM virtual_groups ORDER BY provider_id ASC, content_type ASC, position ASC, id ASC")
+    fun observeAllForSync(): Flow<List<VirtualGroupEntity>>
+
+    @Query("SELECT * FROM virtual_groups ORDER BY provider_id ASC, content_type ASC, position ASC, id ASC")
+    suspend fun getAllSync(): List<VirtualGroupEntity>
+
     @Query("SELECT * FROM virtual_groups WHERE provider_id = :providerId AND content_type = :contentType ORDER BY position ASC")
     fun getByType(providerId: Long, contentType: String): Flow<List<VirtualGroupEntity>>
 

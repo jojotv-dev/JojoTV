@@ -141,6 +141,7 @@ class MovieRepositoryImpl @Inject constructor(
             if (level >= 3) movieDao.getByProviderUnprotected(providerId)
             else movieDao.getByProvider(providerId)
         }.map { list -> list.map { it.toDomain() } }
+            .withFavoriteState(providerId)
 
     override fun getMoviesByCategory(providerId: Long, categoryId: Long): Flow<List<Movie>> =
         flow {
@@ -150,6 +151,7 @@ class MovieRepositoryImpl @Inject constructor(
                     if (level >= 3) movieDao.getByCategoryUnprotected(providerId, categoryId)
                     else movieDao.getByCategory(providerId, categoryId)
                 }.map { list -> list.map { it.toDomain() } }
+                    .withFavoriteState(providerId)
             )
         }
 
@@ -171,6 +173,7 @@ class MovieRepositoryImpl @Inject constructor(
                     entities
                 }
             }.map { list -> list.map { it.toDomain() } }
+                .withFavoriteState(providerId)
         )
     }
 
@@ -311,7 +314,9 @@ class MovieRepositoryImpl @Inject constructor(
         }
 
     override fun getMoviesByIds(ids: List<Long>): Flow<List<Movie>> =
-        movieDao.getByIds(ids).map { entities -> entities.map { it.toDomain() } }
+        movieDao.getByIds(ids)
+            .map { entities -> entities.map { it.toDomain() } }
+            .withFavoriteStateForProviders()
 
     override fun getCategories(providerId: Long): Flow<List<Category>> =
         combine(
@@ -380,6 +385,9 @@ class MovieRepositoryImpl @Inject constructor(
 
     override suspend fun getMovie(movieId: Long): Movie? =
         movieDao.getById(movieId)?.toDomain()
+
+    override suspend fun getMovieByStreamId(providerId: Long, streamId: Long): Movie? =
+        movieDao.getByStreamId(providerId, streamId)?.toDomain()
 
     override suspend fun getMovieDetails(providerId: Long, movieId: Long): Result<Movie> {
         val movieEntity = movieDao.getById(movieId)
@@ -486,6 +494,13 @@ class MovieRepositoryImpl @Inject constructor(
 
     override suspend fun refreshMovies(providerId: Long): Result<Unit> =
         Result.success(Unit) // Handled by ProviderRepository
+
+    override suspend fun updateMovieArtwork(movieId: Long, posterUrl: String?, backdropUrl: String?): Result<Unit> = try {
+        movieDao.updateArtwork(movieId, posterUrl, backdropUrl)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.error(e.message ?: "Failed to update movie artwork", e)
+    }
 
     private fun buildRecommendations(
         movies: List<Movie>,
@@ -1480,6 +1495,30 @@ class MovieRepositoryImpl @Inject constructor(
 
     private fun movieAddedScore(movie: Movie): Long =
         movie.addedAt.takeIf { it > 0L } ?: 0L
+
+    private fun Flow<List<Movie>>.withFavoriteState(providerId: Long): Flow<List<Movie>> =
+        combine(favoriteDao.getAllByType(providerId, ContentType.MOVIE.name)) { movies, favorites ->
+            val favoriteIds = favorites.map { it.contentId }.toSet()
+            movies.map { movie -> movie.copy(isFavorite = movie.id in favoriteIds) }
+        }
+
+    private fun Flow<List<Movie>>.withFavoriteStateForProviders(): Flow<List<Movie>> =
+        flatMapLatest { movies ->
+            val providerIds = movies.map { it.providerId }.distinct()
+            android.util.Log.w("FAVDEBUG", "MOVIES providerIds=$providerIds movieIds=${movies.map { it.id }} movieProviderIds=${movies.map { it.providerId }}")
+            if (providerIds.isEmpty()) {
+                flowOf(movies)
+            } else {
+                favoriteDao.getGlobalByTypeForProviders(providerIds, ContentType.MOVIE.name)
+                    .map { favorites ->
+                        val favoriteKeys = favorites.map { it.providerId to it.contentId }.toSet()
+                        android.util.Log.w("FAVDEBUG", "MOVIES favoriteKeys=$favoriteKeys")
+                        movies.map { movie ->
+                            movie.copy(isFavorite = (movie.providerId to movie.id) in favoriteKeys)
+                        }
+                    }
+            }
+        }
 
     private suspend fun getOrCreateXtreamProvider(providerId: Long, provider: ProviderEntity): XtreamProvider {
         val enableBase64TextCompatibility = preferencesRepository.xtreamBase64TextCompatibility.first()

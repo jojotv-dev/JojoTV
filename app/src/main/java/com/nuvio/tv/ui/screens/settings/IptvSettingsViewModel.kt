@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.data.local.IptvSettingsDataStore
 import com.nuvio.tv.data.local.IptvSidebarSettings
+import com.nuvio.tv.domain.model.IptvPosterSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -35,5 +36,13 @@ class IptvSettingsViewModel @Inject constructor(
 
     fun setShowRecordings(enabled: Boolean) {
         viewModelScope.launch { dataStore.setShowRecordings(enabled) }
+    }
+    val vodPosterSize = dataStore.vodPosterSize.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = IptvPosterSize.DEFAULT
+    )
+    fun setVodPosterSize(size: IptvPosterSize) {
+        viewModelScope.launch { dataStore.setVodPosterSize(size) }
     }
 }

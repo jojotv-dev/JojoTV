@@ -55,19 +55,6 @@ private class LegacyAacMatroskaExtractor(
 
     @Throws(IOException::class)
     override fun sniff(input: ExtractorInput): Boolean {
-        val probe = ByteArray(LEGACY_HE_AAC_SCAN_BYTES)
-        val bytesRead = try {
-            var total = 0
-            while (total < probe.size) {
-                val count = input.peek(probe, total, probe.size - total)
-                if (count == -1) break
-                total += count
-            }
-            total
-        } finally {
-            input.resetPeekPosition()
-        }
-        if (!containsLegacyHeAacCodecId(probe.copyOf(bytesRead))) return false
         return delegate.sniff(input)
     }
 

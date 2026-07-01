@@ -576,7 +576,7 @@ private fun FreeboxVideoRow(
                         }
                         if (meta.genres.isNotEmpty()) {
                             androidx.tv.material3.Text(
-                                text = meta.genres.take(2).joinToString(" ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ "),
+                                text = meta.genres.take(2).joinToString(" - ") { it.cleanFreeboxUiText() },
                                 color = NuvioColors.TextSecondary,
                                 fontSize = 12.sp,
                                 maxLines = 1,
@@ -587,7 +587,7 @@ private fun FreeboxVideoRow(
                     if (!meta.overview.isNullOrBlank()) {
                         Spacer(Modifier.height(4.dp))
                         androidx.tv.material3.Text(
-                            text = meta.overview,
+                            text = meta.overview.cleanFreeboxUiText(),
                             color = NuvioColors.TextTertiary,
                             fontSize = 11.sp,
                             maxLines = 2,
@@ -761,6 +761,29 @@ private fun formatFreeboxRemaining(remainingMs: Long): String {
     return "reste ${hours}h${minutes.toString().padStart(2, '0')}m"
 
 }
+
+private fun String.cleanFreeboxUiText(): String {
+    val trimmed = trim()
+    if (!trimmed.looksMojibaked()) return trimmed
+    val candidates = listOf(
+        runCatching { String(trimmed.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8) }.getOrNull(),
+        runCatching { String(trimmed.toByteArray(Charsets.ISO_8859_1), charset("windows-1252")) }.getOrNull(),
+        runCatching { String(trimmed.toByteArray(charset("windows-1252")), Charsets.UTF_8) }.getOrNull()
+    ).filterNotNull()
+
+    return candidates
+        .filter { it.isNotBlank() }
+        .minByOrNull { it.mojibakeScore() }
+        ?.takeIf { it.mojibakeScore() < trimmed.mojibakeScore() }
+        ?: trimmed
+}
+
+private fun String.looksMojibaked(): Boolean =
+    contains('Ã') || contains('Â') || contains('�') || contains("â€") || contains("â€™") || contains("â€œ")
+
+private fun String.mojibakeScore(): Int =
+    count { it == 'Ã' || it == 'Â' || it == '�' } +
+        Regex("â[€€™€œ€�˜”œ¢]|Ã.|Â.").findAll(this).count() * 2
 
 private fun freeboxEntryComparator(
     sortMode: FreeboxSortMode,

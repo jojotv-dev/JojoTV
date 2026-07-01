@@ -105,7 +105,8 @@ private fun Channel.toSearchPreview() = MetaPreview(
     description = currentProgram?.title,
     releaseInfo = categoryName ?: groupTitle,
     imdbRating = null,
-    genres = listOfNotNull(categoryName ?: groupTitle)
+    genres = listOfNotNull(categoryName ?: groupTitle),
+    isFavorite = isFavorite
 )
 
 private fun Movie.toSearchPreview() = MetaPreview(
@@ -121,7 +122,8 @@ private fun Movie.toSearchPreview() = MetaPreview(
     releaseInfo = year ?: releaseDate?.take(4),
     imdbRating = rating.takeIf { it > 0f },
     genres = genre.toGenreList(),
-    runtime = duration
+    runtime = duration,
+    isFavorite = isFavorite
 )
 
 private fun Series.toSearchPreview() = MetaPreview(
@@ -136,7 +138,8 @@ private fun Series.toSearchPreview() = MetaPreview(
     description = plot,
     releaseInfo = releaseDate?.take(4),
     imdbRating = rating.takeIf { it > 0f },
-    genres = genre.toGenreList()
+    genres = genre.toGenreList(),
+    isFavorite = isFavorite
 )
 
 internal fun parseIptvSearchItemId(itemId: String): Triple<String, Long, Long>? {

@@ -17,8 +17,16 @@ import com.nuvio.tv.data.local.ExperienceModeDataStore
 import com.nuvio.tv.data.local.ProfileDataStoreFactory
 import com.nuvio.tv.data.remote.supabase.SupabaseProfileSettingsBlob
 import com.nuvio.tv.domain.model.DiscoverLocation
+import com.streamvault.data.local.dao.ChannelDao
+import com.streamvault.data.local.dao.FavoriteDao
+import com.streamvault.data.local.dao.MovieDao
 import com.streamvault.data.local.dao.ProviderDao
+import com.streamvault.data.local.dao.SeriesDao
+import com.streamvault.data.local.dao.VirtualGroupDao
+import com.streamvault.data.local.entity.FavoriteEntity
 import com.streamvault.data.local.entity.ProviderEntity
+import com.streamvault.data.local.entity.VirtualGroupEntity
+import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.model.ProviderType
 import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.CoroutineScope
@@ -68,8 +76,10 @@ private const val FOREGROUND_PULL_DELAY_MS = 2500L
 private const val FOREGROUND_PULL_MIN_INTERVAL_MS = 60_000L
 private const val SETTINGS_SYNC_PLATFORM = "tv"
 private const val IPTV_PROVIDERS_FEATURE = "iptv_providers"
+private const val IPTV_FAVORITES_FEATURE = "iptv_favorites"
 private const val IPTV_SYNC_SECRET_PREFIX = "syncenc:v1:"
 private const val IPTV_SYNC_KEY_CONTEXT = "nuvio:iptv-provider-sync:"
+private const val IPTV_FAVORITES_PENDING_MAX_MS = 10 * 60 * 1000L
 
 @Singleton
 class ProfileSettingsSyncService @Inject constructor(
@@ -78,6 +88,11 @@ class ProfileSettingsSyncService @Inject constructor(
     private val profileManager: ProfileManager,
     private val profileDataStoreFactory: ProfileDataStoreFactory,
     private val providerDao: ProviderDao,
+    private val favoriteDao: FavoriteDao,
+    private val virtualGroupDao: VirtualGroupDao,
+    private val channelDao: ChannelDao,
+    private val movieDao: MovieDao,
+    private val seriesDao: SeriesDao,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncMutex = Mutex()
@@ -87,7 +102,10 @@ class ProfileSettingsSyncService @Inject constructor(
 
     @Volatile
     private var skipNextPushSignature: String? = null
+    @Volatile
+    private var pendingIptvFavoritesUntilMs: Long = 0L
     private var foregroundPullJob: Job? = null
+    private var iptvFavoritesRetryJob: Job? = null
     private var lastForegroundPullAtMs: Long = 0L
 
     private val syncedFeatures = listOf(
@@ -102,6 +120,7 @@ class ProfileSettingsSyncService @Inject constructor(
         "debrid_settings",
         "animeskip_settings",
         "freebox_settings",
+        "freebox_poster_overrides",
         "iptv_settings",
         "track_preference"
     )
@@ -192,7 +211,7 @@ class ProfileSettingsSyncService @Inject constructor(
                 }
 
                 importSettingsBlob(profileId, featuresJson)
-                skipNextPushSignature = remoteSignature
+                skipNextPushSignature = buildSettingsSignature(profileId)
                 Log.d(TAG, "Applied remote profile settings blob for profile $profileId")
                 Result.success(true)
             } catch (e: Exception) {
@@ -236,6 +255,7 @@ class ProfileSettingsSyncService @Inject constructor(
                 put(feature, serialized)
             }
             put(IPTV_PROVIDERS_FEATURE, buildIptvProvidersJson(providerDao.getAllSync()))
+            put(IPTV_FAVORITES_FEATURE, buildIptvFavoritesJson())
         }
 
         return buildJsonObject {
@@ -247,8 +267,14 @@ class ProfileSettingsSyncService @Inject constructor(
     private suspend fun importSettingsBlob(profileId: Int, featuresJson: JsonObject) {
         applyingRemoteBlob = true
         try {
+            val iptvProviderIdMap = importIptvProvidersJson(featuresJson[IPTV_PROVIDERS_FEATURE]?.jsonObject)
             syncedFeatures.forEach { feature ->
-                val featureJson = featuresJson[feature]?.jsonObject ?: return@forEach
+                val rawFeatureJson = featuresJson[feature]?.jsonObject ?: return@forEach
+                val featureJson = if (feature == "iptv_settings") {
+                    remapIptvSettingsProviderIds(rawFeatureJson, iptvProviderIdMap)
+                } else {
+                    rawFeatureJson
+                }
                 profileDataStoreFactory.get(profileId, feature).edit { mutablePrefs ->
                     val preservedEntries = if (feature == "layout_settings") {
                         val entries = mutableMapOf<Preferences.Key<*>, Any>()
@@ -337,7 +363,10 @@ class ProfileSettingsSyncService @Inject constructor(
                     }
                 }
             }
-            importIptvProvidersJson(featuresJson[IPTV_PROVIDERS_FEATURE]?.jsonObject)
+            importAndRetryIptvFavoritesJson(
+                featureJson = featuresJson[IPTV_FAVORITES_FEATURE]?.jsonObject,
+                providerIdMap = iptvProviderIdMap
+            )
         } finally {
             applyingRemoteBlob = false
         }
@@ -357,8 +386,14 @@ class ProfileSettingsSyncService @Inject constructor(
                         .map { providers ->
                             "$IPTV_PROVIDERS_FEATURE={${buildFeatureSignature(buildIptvProvidersJson(providers))}}"
                         }
+                    val iptvFavoritesFlow = combine(
+                        virtualGroupDao.observeAllForSync(),
+                        favoriteDao.observeAllForSync()
+                    ) { groups, favorites ->
+                        "$IPTV_FAVORITES_FEATURE={groups=${groups.buildVirtualGroupSignature()}|favorites=${favorites.buildFavoriteSignature()}}"
+                    }
 
-                    combine(featureFlows + iptvProvidersFlow) { signatures ->
+                    combine(featureFlows + iptvProvidersFlow + iptvFavoritesFlow) { signatures ->
                         signatures.joinToString(separator = "||")
                     }
                 }
@@ -368,6 +403,10 @@ class ProfileSettingsSyncService @Inject constructor(
                 .collect { signature ->
                     if (!authManager.isAuthenticated) return@collect
                     if (applyingRemoteBlob) return@collect
+                    if (isWaitingForIptvFavoriteResolution()) {
+                        Log.d(TAG, "Skipping settings push while IPTV favorites are waiting for catalog resolution")
+                        return@collect
+                    }
                     if (profileDataStoreFactory.corruptedFileNames.isNotEmpty()) {
                         Log.w(TAG, "DataStore corruption detected (${profileDataStoreFactory.corruptedFileNames}) Ã¢â‚¬â€ pulling from remote instead of pushing")
                         profileDataStoreFactory.corruptedFileNames.clear()
@@ -390,6 +429,7 @@ class ProfileSettingsSyncService @Inject constructor(
             signatures += "$feature={${buildFeatureSignature(prefs, feature)}}"
         }
         signatures += "$IPTV_PROVIDERS_FEATURE={${buildFeatureSignature(buildIptvProvidersJson(providerDao.getAllSync()))}}"
+        signatures += "$IPTV_FAVORITES_FEATURE={${buildFeatureSignature(buildIptvFavoritesJson())}}"
         return signatures.joinToString(separator = "||")
     }
 
@@ -445,7 +485,9 @@ class ProfileSettingsSyncService @Inject constructor(
                 featureJson
             }
             "$feature={${buildFeatureSignature(normalized)}}"
-        } + "||$IPTV_PROVIDERS_FEATURE={${buildFeatureSignature(featuresJson[IPTV_PROVIDERS_FEATURE]?.jsonObject ?: JsonObject(emptyMap()))}}"
+        } +
+            "||$IPTV_PROVIDERS_FEATURE={${buildFeatureSignature(featuresJson[IPTV_PROVIDERS_FEATURE]?.jsonObject ?: JsonObject(emptyMap()))}}" +
+            "||$IPTV_FAVORITES_FEATURE={${buildFeatureSignature(featuresJson[IPTV_FAVORITES_FEATURE]?.jsonObject ?: JsonObject(emptyMap()))}}"
     }
 
     private fun buildFeatureSignature(prefs: Preferences, feature: String = ""): String {
@@ -467,11 +509,194 @@ class ProfileSettingsSyncService @Inject constructor(
             .sortedBy { it.key }
             .joinToString(separator = "|") { (key, value) -> "$key=$value" }
     }
+
+    private suspend fun buildIptvFavoritesJson(): JsonObject {
+        val groups = virtualGroupDao.getAllSync()
+        val favorites = favoriteDao.getAllSync()
+        val providerIds = favorites.map { it.providerId }.toSet() + groups.map { it.providerId }.toSet()
+
+        val liveRemoteByProvider = providerIds.associateWith { providerId ->
+            channelDao.getIdMappings(providerId).associate { it.id to it.remoteId.toString() }
+        }
+        val movieRemoteByProvider = providerIds.associateWith { providerId ->
+            movieDao.getIdMappings(providerId).associate { it.id to it.remoteId.toString() }
+        }
+        val seriesRemoteByProvider = providerIds.associateWith { providerId ->
+            seriesDao.getIdMappings(providerId).associate { it.id to it.remoteId }
+        }
+
+        return buildJsonObject {
+            put("groups", JsonArray(groups.map { group ->
+                buildJsonObject {
+                    put("provider_id", group.providerId)
+                    put("group_id", group.id)
+                    put("content_type", group.contentType.name)
+                    put("name", group.name)
+                    group.iconEmoji?.let { put("icon_emoji", it) }
+                    put("position", group.position)
+                    put("created_at", group.createdAt)
+                }
+            }))
+            put("favorites", JsonArray(favorites.mapNotNull { favorite ->
+                val remoteContentId = when (favorite.contentType) {
+                    ContentType.LIVE -> liveRemoteByProvider[favorite.providerId]?.get(favorite.contentId)
+                    ContentType.MOVIE -> movieRemoteByProvider[favorite.providerId]?.get(favorite.contentId)
+                    ContentType.SERIES -> seriesRemoteByProvider[favorite.providerId]?.get(favorite.contentId)
+                    ContentType.SERIES_EPISODE -> null
+                } ?: return@mapNotNull null
+
+                buildJsonObject {
+                    put("provider_id", favorite.providerId)
+                    put("content_type", favorite.contentType.name)
+                    put("content_remote_id", remoteContentId)
+                    favorite.groupId?.let { put("group_id", it) }
+                    put("position", favorite.position)
+                    put("added_at", favorite.addedAt)
+                }
+            }))
+        }
+    }
+
+    private fun isWaitingForIptvFavoriteResolution(): Boolean {
+        val until = pendingIptvFavoritesUntilMs
+        return until > 0L && SystemClock.elapsedRealtime() < until
+    }
+
+    private suspend fun importAndRetryIptvFavoritesJson(
+        featureJson: JsonObject?,
+        providerIdMap: Map<Long, Long>
+    ) {
+        if (featureJson == null || providerIdMap.isEmpty()) return
+        val unresolved = importIptvFavoritesJson(featureJson, providerIdMap)
+        if (unresolved <= 0) {
+            pendingIptvFavoritesUntilMs = 0L
+            iptvFavoritesRetryJob?.cancel()
+            iptvFavoritesRetryJob = null
+            return
+        }
+
+        pendingIptvFavoritesUntilMs = SystemClock.elapsedRealtime() + IPTV_FAVORITES_PENDING_MAX_MS
+        iptvFavoritesRetryJob?.cancel()
+        iptvFavoritesRetryJob = scope.launch {
+            var remaining = unresolved
+            listOf(5_000L, 15_000L, 45_000L, 120_000L, 240_000L).forEach { retryDelayMs ->
+                if (remaining <= 0) return@forEach
+                delay(retryDelayMs)
+                applyingRemoteBlob = true
+                try {
+                    remaining = importIptvFavoritesJson(featureJson, providerIdMap)
+                    skipNextPushSignature = buildSettingsSignature(profileManager.activeProfileId.value)
+                } catch (e: Exception) {
+                    Log.w(TAG, "IPTV favorites retry failed", e)
+                } finally {
+                    applyingRemoteBlob = false
+                }
+            }
+            pendingIptvFavoritesUntilMs = 0L
+            iptvFavoritesRetryJob = null
+            if (remaining > 0) {
+                Log.w(TAG, "IPTV favorites import still has $remaining unresolved item(s) after retries")
+            }
+        }
+    }
+
+    private suspend fun importIptvFavoritesJson(
+        featureJson: JsonObject?,
+        providerIdMap: Map<Long, Long>
+    ): Int {
+        if (featureJson == null || providerIdMap.isEmpty()) return 0
+        val groupIdMap = mutableMapOf<Long, Long>()
+        val existingGroups = virtualGroupDao.getAllSync()
+
+        (featureJson["groups"]?.jsonArray ?: JsonArray(emptyList())).forEach { element ->
+            val obj = element.jsonObject
+            val remoteProviderId = obj.longValueOrNull("provider_id") ?: return@forEach
+            val localProviderId = providerIdMap[remoteProviderId] ?: return@forEach
+            val remoteGroupId = obj.longValueOrNull("group_id")
+            val contentType = obj.contentTypeValue("content_type") ?: return@forEach
+            val name = obj.stringValue("name")
+            if (name.isBlank()) return@forEach
+
+            val existing = existingGroups.firstOrNull {
+                it.providerId == localProviderId &&
+                    it.contentType == contentType &&
+                    it.name == name
+            }
+            val localGroupId = existing?.id ?: virtualGroupDao.insert(
+                VirtualGroupEntity(
+                    providerId = localProviderId,
+                    name = name,
+                    iconEmoji = obj.stringValue("icon_emoji").ifBlank { null },
+                    position = obj.intValue("position", 0),
+                    createdAt = obj.longValue("created_at", System.currentTimeMillis()),
+                    contentType = contentType
+                )
+            )
+            if (remoteGroupId != null) groupIdMap[remoteGroupId] = localGroupId
+        }
+
+        val localProviderIds = providerIdMap.values.toSet()
+        val liveLocalByProvider = localProviderIds.associateWith { providerId ->
+            channelDao.getIdMappings(providerId).associate { it.remoteId.toString() to it.id }
+        }
+        val movieLocalByProvider = localProviderIds.associateWith { providerId ->
+            movieDao.getIdMappings(providerId).associate { it.remoteId.toString() to it.id }
+        }
+        val seriesLocalByProvider = localProviderIds.associateWith { providerId ->
+            seriesDao.getIdMappings(providerId).associate { it.remoteId to it.id }
+        }
+
+        var unresolvedFavorites = 0
+        (featureJson["favorites"]?.jsonArray ?: JsonArray(emptyList())).forEach { element ->
+            val obj = element.jsonObject
+            val remoteProviderId = obj.longValueOrNull("provider_id") ?: return@forEach
+            val localProviderId = providerIdMap[remoteProviderId] ?: return@forEach
+            val contentType = obj.contentTypeValue("content_type") ?: return@forEach
+            val remoteContentId = obj.stringValue("content_remote_id").ifBlank { return@forEach }
+            val localContentId = when (contentType) {
+                ContentType.LIVE -> liveLocalByProvider[localProviderId]?.get(remoteContentId)
+                ContentType.MOVIE -> movieLocalByProvider[localProviderId]?.get(remoteContentId)
+                ContentType.SERIES -> seriesLocalByProvider[localProviderId]?.get(remoteContentId)
+                ContentType.SERIES_EPISODE -> null
+            }
+            if (localContentId == null) {
+                unresolvedFavorites += 1
+                return@forEach
+            }
+            val localGroupId = obj.longValueOrNull("group_id")?.let(groupIdMap::get)
+
+            runCatching {
+                favoriteDao.insert(
+                    FavoriteEntity(
+                        providerId = localProviderId,
+                        contentId = localContentId,
+                        contentType = contentType,
+                        position = obj.intValue("position", 0),
+                        groupId = localGroupId,
+                        addedAt = obj.longValue("added_at", System.currentTimeMillis())
+                    )
+                )
+            }
+        }
+        return unresolvedFavorites
+    }
+
+    private fun List<VirtualGroupEntity>.buildVirtualGroupSignature(): String =
+        joinToString(separator = "|") {
+            "${it.providerId}:${it.contentType}:${it.id}:${it.name}:${it.position}:${it.createdAt}"
+        }
+
+    private fun List<FavoriteEntity>.buildFavoriteSignature(): String =
+        joinToString(separator = "|") {
+            "${it.providerId}:${it.contentType}:${it.contentId}:${it.groupId}:${it.position}:${it.addedAt}"
+        }
+
     private fun buildIptvProvidersJson(providers: List<ProviderEntity>): JsonObject {
         return buildJsonObject {
             put("providers", kotlinx.serialization.json.JsonArray(providers.map { p ->
                 buildJsonObject {
                     put("name", p.name)
+                    put("provider_id", p.id)
                     put("type", p.type.name)
                     put("server_url", p.serverUrl)
                     put("username", p.username)
@@ -486,19 +711,29 @@ class ProfileSettingsSyncService @Inject constructor(
         }
     }
 
-    private suspend fun importIptvProvidersJson(featureJson: JsonObject?) {
-        if (featureJson == null) return
-        val providersArray = featureJson["providers"]?.jsonArray ?: return
+    private suspend fun importIptvProvidersJson(featureJson: JsonObject?): Map<Long, Long> {
+        if (featureJson == null) return emptyMap()
+        val providersArray = featureJson["providers"]?.jsonArray ?: return emptyMap()
         val existing = providerDao.getAllSync()
+        val providerIdMap = mutableMapOf<Long, Long>()
         providersArray.forEach { element ->
             val obj = element.jsonObject
+            val remoteProviderId = obj.longValueOrNull("provider_id")
             val name = obj.stringValue("name")
             val typeStr = obj.stringValue("type")
             val serverUrl = obj.stringValue("server_url")
             val username = obj.stringValue("username")
             if (name.isBlank()) return@forEach
-            val alreadyExists = existing.any { it.name == name && it.serverUrl == serverUrl && it.username == username }
-            if (alreadyExists) return@forEach
+            val existingProvider = existing.firstOrNull {
+                it.name == name &&
+                    it.serverUrl == serverUrl &&
+                    it.username == username &&
+                    it.stalkerMacAddress == obj.stringValue("stalker_mac_address")
+            }
+            if (existingProvider != null) {
+                if (remoteProviderId != null) providerIdMap[remoteProviderId] = existingProvider.id
+                return@forEach
+            }
             val type = runCatching { ProviderType.valueOf(typeStr) }.getOrNull() ?: return@forEach
             val entity = ProviderEntity(
                 id = 0L,
@@ -549,7 +784,41 @@ class ProfileSettingsSyncService @Inject constructor(
                 createdAt = System.currentTimeMillis()
             )
             runCatching { providerDao.insert(entity) }
+                .getOrNull()
+                ?.let { insertedId ->
+                    if (remoteProviderId != null) providerIdMap[remoteProviderId] = insertedId
+                }
         }
+        return providerIdMap
+    }
+
+    private fun remapIptvSettingsProviderIds(
+        featureJson: JsonObject,
+        providerIdMap: Map<Long, Long>
+    ): JsonObject {
+        if (providerIdMap.isEmpty()) return featureJson
+        return buildJsonObject {
+            featureJson.forEach { (keyName, encodedValue) ->
+                put(remapIptvSettingsKey(keyName, providerIdMap), encodedValue)
+            }
+        }
+    }
+
+    private fun remapIptvSettingsKey(keyName: String, providerIdMap: Map<Long, Long>): String {
+        val prefixes = listOf(
+            "iptv_hidden_groups_",
+            "iptv_hidden_channels_",
+            "iptv_group_renames_"
+        )
+        prefixes.forEach { prefix ->
+            if (!keyName.startsWith(prefix)) return@forEach
+            val suffix = keyName.removePrefix(prefix)
+            val remoteIdToken = suffix.takeWhile { it.isDigit() }
+            val remoteProviderId = remoteIdToken.toLongOrNull() ?: return keyName
+            val localProviderId = providerIdMap[remoteProviderId] ?: return keyName
+            return prefix + localProviderId + suffix.drop(remoteIdToken.length)
+        }
+        return keyName
     }
     private fun decryptProviderPassword(password: String): String = password
     private suspend fun encryptSyncedProviderPassword(password: String): String = password
@@ -569,6 +838,11 @@ class ProfileSettingsSyncService @Inject constructor(
 
     private fun JsonObject.longValueOrNull(key: String): Long? =
         this[key]?.jsonPrimitive?.longOrNull
+
+    private fun JsonObject.contentTypeValue(key: String): ContentType? =
+        stringValue(key).takeIf { it.isNotBlank() }?.let { raw ->
+            runCatching { ContentType.valueOf(raw) }.getOrNull()
+        }
 
     private inline fun <reified T : Enum<T>> JsonObject.enumValue(key: String, default: T): T =
         stringValue(key).takeIf { it.isNotBlank() }?.let { raw ->

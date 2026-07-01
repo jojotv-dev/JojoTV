@@ -1,4 +1,4 @@
-package com.nuvio.tv.core.sync.androidtv
+﻿package com.nuvio.tv.core.sync.androidtv
 
 import android.content.ContentUris
 import android.content.ContentValues
@@ -218,14 +218,26 @@ class AndroidTvChannelManager @Inject constructor(
 
         // Backdrop/poster fills the tile via posterArt; logo goes to the dedicated logo column
         // so the launcher renders it as a small badge overlay on focus.
-        val (imageUri, aspectRatio) = when {
-            !progress.backdrop.isNullOrBlank() ->
-                progress.backdrop to TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9
-            !progress.poster.isNullOrBlank() ->
-                progress.poster to TvContractCompat.PreviewPrograms.ASPECT_RATIO_2_3
-            else -> null to null
+        // 1. Image de base : Portrait Poster Art (utilisé par défaut pour la vignette d'accueil)
+        if (!progress.poster.isNullOrBlank()) {
+            builder.setPosterArtUri(Uri.parse(progress.poster))
+                .setPosterArtAspectRatio(TvContractCompat.PreviewPrograms.ASPECT_RATIO_2_3)
+        } else if (!progress.backdrop.isNullOrBlank()) {
+            // Repli (fallback) : si le poster est absent, on utilise le backdrop
+            builder.setPosterArtUri(Uri.parse(progress.backdrop))
+                .setPosterArtAspectRatio(TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9)
         }
-        imageUri?.let { builder.setPosterArtUri(Uri.parse(it)).setPosterArtAspectRatio(aspectRatio!!) }
+
+        // 2. Image au focus : Landscape Thumbnail (utilisé pour le déploiement en mode paysage)
+        if (!progress.backdrop.isNullOrBlank()) {
+            builder.setThumbnailUri(Uri.parse(progress.backdrop))
+                .setThumbnailAspectRatio(TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9)
+        } else if (!progress.poster.isNullOrBlank()) {
+            // Repli (fallback) : si le backdrop est absent, on utilise le poster
+            builder.setThumbnailUri(Uri.parse(progress.poster))
+                .setThumbnailAspectRatio(TvContractCompat.PreviewPrograms.ASPECT_RATIO_2_3)
+        }
+
         progress.logo?.let { builder.setLogoUri(Uri.parse(it)) }
 
         if (progress.duration > 0) {
@@ -251,7 +263,7 @@ class AndroidTvChannelManager @Inject constructor(
             it.put("last_engagement_time_utc_millis", progress.lastWatched)
             // Explicitly clear poster art when no image is available, so UPDATE operations
             // don't leave stale artwork from previous reconcile cycles.
-            if (imageUri == null) {
+            if (progress.poster.isNullOrBlank() && progress.backdrop.isNullOrBlank()) {
                 it.putNull(TvContractCompat.PreviewPrograms.COLUMN_POSTER_ART_URI)
             }
             if (progress.logo.isNullOrBlank()) {

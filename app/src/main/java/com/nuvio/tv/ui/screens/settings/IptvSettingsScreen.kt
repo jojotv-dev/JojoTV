@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.settings
+package com.nuvio.tv.ui.screens.settings
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.text.font.FontWeight
@@ -6,6 +6,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import com.nuvio.tv.domain.model.IptvPosterSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -36,6 +39,7 @@ fun IptvSettingsScreen(
     viewModel: IptvSettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val vodPosterSize by viewModel.vodPosterSize.collectAsStateWithLifecycle()
 
     LazyColumn(
         modifier = Modifier
@@ -77,6 +81,18 @@ fun IptvSettingsScreen(
                 subtitle = "Accès rapide enregistrements dans la sidebar",
                 checked = settings.showRecordingsInSidebar,
                 onToggle = { viewModel.setShowRecordings(!settings.showRecordingsInSidebar) }
+            )
+        }
+
+        // ── Section : Affichage ──────────────────────────────────────────
+        item {
+            Spacer(Modifier.height(8.dp))
+            IptvSettingsSectionTitle("Affichage")
+        }
+        item {
+            IptvPosterSizeSettingRow(
+                currentSize = vodPosterSize,
+                onSizeSelected = { size -> viewModel.setVodPosterSize(size) }
             )
         }
 
@@ -139,6 +155,44 @@ private fun IptvSettingsSectionTitle(title: String) {
         color = NuvioColors.Primary,
         modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
     )
+}
+
+// ── Reglage taille des vignettes IPTV ─────────────────────────────────────────
+
+@Composable
+private fun IptvPosterSizeSettingRow(
+    currentSize: IptvPosterSize,
+    onSizeSelected: (IptvPosterSize) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Taille des vignettes",
+            style = MaterialTheme.typography.labelLarge,
+            color = NuvioColors.TextSecondary
+        )
+        LazyRow(
+            contentPadding = PaddingValues(end = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                items = IptvPosterSize.entries,
+                key = { it.name }
+            ) { size ->
+                val label = when (size) {
+                    IptvPosterSize.VERY_SMALL -> "Tres petite"
+                    IptvPosterSize.SMALL -> "Petite"
+                    IptvPosterSize.MEDIUM -> "Moyenne"
+                    IptvPosterSize.LARGE -> "Grande"
+                    IptvPosterSize.VERY_LARGE -> "Tres grande"
+                }
+                SettingsChoiceChip(
+                    label = label,
+                    selected = size == currentSize,
+                    onClick = { onSizeSelected(size) }
+                )
+            }
+        }
+    }
 }
 
 // ── Tuile de navigation ───────────────────────────────────────────────────────

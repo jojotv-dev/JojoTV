@@ -10,6 +10,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.domain.model.WatchProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -229,11 +230,14 @@ class WatchProgressPreferences @Inject constructor(
                 val key = "${contentId}_s${season}e${episode}"
                 map.remove(key)
                 map.remove(contentId)
+                removeFreeboxEquivalentProgress(map, contentId)
                 Log.d(TAG, "removeProgress episodeKey=$key existsAfter=${map.containsKey(key)}")
             } else {
                 // Remove all progress for this content
                 val keysToRemove = map.keys.filter { key ->
-                    key == contentId || key.startsWith("${contentId}_s")
+                    key == contentId ||
+                        key.startsWith("${contentId}_s") ||
+                        isSameFreeboxProgressTarget(key, map[key], contentId)
                 }
                 Log.d(TAG, "removeProgress removingKeys=${keysToRemove.joinToString()}")
                 keysToRemove.forEach { map.remove(it) }
@@ -243,6 +247,43 @@ class WatchProgressPreferences @Inject constructor(
             preferences[watchProgressKey] = gson.toJson(map)
         }
     }
+
+    private fun removeFreeboxEquivalentProgress(
+        map: MutableMap<String, WatchProgress>,
+        contentId: String
+    ) {
+        val keysToRemove = map.keys.filter { key ->
+            key == contentId || isSameFreeboxProgressTarget(key, map[key], contentId)
+        }
+        keysToRemove.forEach { map.remove(it) }
+    }
+
+    private fun isSameFreeboxProgressTarget(
+        key: String,
+        progress: WatchProgress?,
+        targetContentId: String
+    ): Boolean {
+        if (!targetContentId.startsWith("freebox:", ignoreCase = true)) return false
+        val targetPath = freeboxPathFromContentId(targetContentId)
+        if (targetPath.isBlank()) return false
+        val keyPath = if (key.startsWith("freebox:", ignoreCase = true)) {
+            freeboxPathFromContentId(key.withoutEpisodeProgressSuffix())
+        } else {
+            null
+        }
+        val progressContentPath = progress?.contentId
+            ?.takeIf { it.startsWith("freebox:", ignoreCase = true) }
+            ?.let(::freeboxPathFromContentId)
+        val progressVideoPath = progress?.videoId
+            ?.takeIf { it.startsWith("freebox:", ignoreCase = true) }
+            ?.let(::freeboxPathFromContentId)
+        return keyPath == targetPath ||
+            progressContentPath == targetPath ||
+            progressVideoPath == targetPath
+    }
+
+    private fun String.withoutEpisodeProgressSuffix(): String =
+        replace(Regex("_s\\d+e\\d+$"), "")
 
     /**
      * Remove watch progress for multiple episodes in a single DataStore transaction.

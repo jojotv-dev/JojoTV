@@ -8,6 +8,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -25,6 +26,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Color
@@ -45,6 +48,7 @@ import com.nuvio.tv.ui.navigation.Screen
 import com.nuvio.tv.ui.screens.iptv.IptvFocusedMediaDetails
 import com.nuvio.tv.ui.screens.iptv.IptvFocusedMediaPanel
 import com.nuvio.tv.ui.screens.iptv.IptvVodPosterWidth
+import com.nuvio.tv.domain.model.IptvPosterSize
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import com.nuvio.tv.ui.screens.iptv.tivi.components.*
@@ -71,6 +75,14 @@ fun IptvTiviScreen(
     val playbackScope = rememberCoroutineScope()
     val channelListState = rememberLazyListState()
     val epgListState = rememberLazyListState()
+    val selectedGroupFocusRequester = remember { FocusRequester() }
+    val firstContentFocusRequester = remember { FocusRequester() }
+    val focusSelectedGroup = remember(selectedGroupFocusRequester) {
+        { runCatching { selectedGroupFocusRequester.requestFocus() }.isSuccess }
+    }
+    val focusFirstContent = remember(firstContentFocusRequester) {
+        { runCatching { firstContentFocusRequester.requestFocus() }.isSuccess }
+    }
     LaunchedEffect(initialTab) { viewModel.selectTab(initialTab) }
     LaunchedEffect(channelListState, epgListState) {
         snapshotFlow {
@@ -93,7 +105,7 @@ fun IptvTiviScreen(
         VisibilityToggleDialog(
             state = state,
             onDismiss = viewModel::dismissVisibilityDialog,
-            onSave = viewModel::saveVisibility,
+            onChange = viewModel::updateVisibility,
         )
     }
 
@@ -114,6 +126,8 @@ fun IptvTiviScreen(
             onGroupFocus = { providerId, groupId -> viewModel.focusGroup(providerId, groupId) },
             onProviderLongClick = viewModel::openProviderVisibility,
             onGroupLongClick = viewModel::openGroupVisibility,
+            selectedGroupFocusRequester = selectedGroupFocusRequester,
+            onDirectionRight = focusFirstContent,
             modifier = Modifier.fillMaxHeight(),
         )
 
@@ -196,6 +210,8 @@ fun IptvTiviScreen(
                                         }
                                     },
                                     listState = channelListState,
+                                    firstChannelFocusRequester = firstContentFocusRequester,
+                                    onDirectionLeft = focusSelectedGroup,
 
                                     modifier = Modifier.weight(0.35f).fillMaxHeight(),
                                 )
@@ -217,8 +233,11 @@ fun IptvTiviScreen(
                     } else {
                         TiviMovieContent(
                             movies = c.movies,
+                            posterSize = uiState.posterSize,
                             onMovieFocused = viewModel::enrichMovieDetails,
                             onToggleFavorite = viewModel::toggleMovieFavorite,
+                            firstMovieFocusRequester = firstContentFocusRequester,
+                            onDirectionLeft = focusSelectedGroup,
                             onPlayMovie = { movie ->
                                 playbackScope.launch {
                                     when (val result = viewModel.resolveMovieStream(movie)) {
@@ -255,8 +274,11 @@ fun IptvTiviScreen(
                     } else {
                         TiviSeriesContent(
                             series = c.series,
+                            posterSize = uiState.posterSize,
                             onSeriesFocused = viewModel::enrichSeriesDetails,
                             onToggleFavorite = viewModel::toggleSeriesFavorite,
+                            firstSeriesFocusRequester = firstContentFocusRequester,
+                            onDirectionLeft = focusSelectedGroup,
                             onOpenSeries = { series ->
                                 val providerId = uiState.selectedProviderId ?: series.providerId
                                 navController.navigate(Screen.IptvSeriesDetail.createRoute(series.id, providerId))
@@ -278,8 +300,11 @@ fun IptvTiviScreen(
 @Composable
 private fun TiviMovieContent(
     movies: List<com.streamvault.domain.model.Movie>,
+    posterSize: IptvPosterSize,
     onMovieFocused: (com.streamvault.domain.model.Movie) -> Unit,
     onToggleFavorite: (com.streamvault.domain.model.Movie) -> Unit,
+    firstMovieFocusRequester: FocusRequester? = null,
+    onDirectionLeft: (() -> Boolean)? = null,
     onPlayMovie: (com.streamvault.domain.model.Movie) -> Unit,
 ) {
     if (movies.isEmpty()) {
@@ -296,25 +321,34 @@ private fun TiviMovieContent(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(120.dp),
-            modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
-            contentPadding = PaddingValues(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(movies, key = { it.id }) { movie ->
-                TiviMediaCard(
-                    title = movie.name,
-                    posterUrl = movie.posterUrl,
-                    isFavorite = movie.isFavorite,
-                    onLongPress = { onToggleFavorite(movie) },
-                    onFocused = {
-                        focusedMovieId = movie.id
-                        onMovieFocused(movie)
-                    },
-                    onClick = { onPlayMovie(movie) },
-                )
+        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            val columns = remember(maxWidth, posterSize.cardWidth) {
+                (((maxWidth - 8.dp).value / (posterSize.cardWidth + 8.dp).value).toInt()).coerceAtLeast(1)
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(posterSize.cardWidth),
+                modifier = Modifier.fillMaxSize().padding(8.dp),
+                contentPadding = PaddingValues(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(movies.size, key = { index -> movies[index].id }) { index ->
+                    val movie = movies[index]
+                    TiviMediaCard(
+                        title = movie.name,
+                        posterUrl = movie.posterUrl,
+                        cardWidth = posterSize.cardWidth,
+                        isFavorite = movie.isFavorite,
+                        focusRequester = if (index == 0) firstMovieFocusRequester else null,
+                        onDirectionLeft = if (index % columns == 0) onDirectionLeft else null,
+                        onLongPress = { onToggleFavorite(movie) },
+                        onFocused = {
+                            focusedMovieId = movie.id
+                            onMovieFocused(movie)
+                        },
+                        onClick = { onPlayMovie(movie) },
+                    )
+                }
             }
         }
     }
@@ -326,8 +360,11 @@ private fun TiviMovieContent(
 @Composable
 private fun TiviSeriesContent(
     series: List<com.streamvault.domain.model.Series>,
+    posterSize: IptvPosterSize,
     onSeriesFocused: (com.streamvault.domain.model.Series) -> Unit,
     onToggleFavorite: (com.streamvault.domain.model.Series) -> Unit,
+    firstSeriesFocusRequester: FocusRequester? = null,
+    onDirectionLeft: (() -> Boolean)? = null,
     onOpenSeries: (com.streamvault.domain.model.Series) -> Unit,
 ) {
     if (series.isEmpty()) {
@@ -344,25 +381,34 @@ private fun TiviSeriesContent(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(120.dp),
-            modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp),
-            contentPadding = PaddingValues(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(series, key = { it.id }) { item ->
-                TiviMediaCard(
-                    title = item.name,
-                    posterUrl = item.posterUrl,
-                    isFavorite = item.isFavorite,
-                    onLongPress = { onToggleFavorite(item) },
-                    onFocused = {
-                        focusedSeriesId = item.id
-                        onSeriesFocused(item)
-                    },
-                    onClick = { onOpenSeries(item) },
-                )
+        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            val columns = remember(maxWidth, posterSize.cardWidth) {
+                (((maxWidth - 8.dp).value / (posterSize.cardWidth + 8.dp).value).toInt()).coerceAtLeast(1)
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(posterSize.cardWidth),
+                modifier = Modifier.fillMaxSize().padding(8.dp),
+                contentPadding = PaddingValues(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(series.size, key = { index -> series[index].id }) { index ->
+                    val item = series[index]
+                    TiviMediaCard(
+                        title = item.name,
+                        posterUrl = item.posterUrl,
+                        cardWidth = posterSize.cardWidth,
+                        isFavorite = item.isFavorite,
+                        focusRequester = if (index == 0) firstSeriesFocusRequester else null,
+                        onDirectionLeft = if (index % columns == 0) onDirectionLeft else null,
+                        onLongPress = { onToggleFavorite(item) },
+                        onFocused = {
+                            focusedSeriesId = item.id
+                            onSeriesFocused(item)
+                        },
+                        onClick = { onOpenSeries(item) },
+                    )
+                }
             }
         }
     }
@@ -375,7 +421,10 @@ private fun TiviSeriesContent(
 private fun TiviMediaCard(
     title: String,
     posterUrl: String?,
+    cardWidth: androidx.compose.ui.unit.Dp,
     isFavorite: Boolean,
+    focusRequester: FocusRequester? = null,
+    onDirectionLeft: (() -> Boolean)? = null,
     onLongPress: () -> Unit,
     onFocused: () -> Unit,
     onClick: () -> Unit,
@@ -391,7 +440,8 @@ private fun TiviMediaCard(
     Card(
         onClick = onClick,
         modifier = Modifier
-            .width(IptvVodPosterWidth)
+            .width(cardWidth)
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged {
                 isFocused = it.isFocused
                 if (it.isFocused) onFocused()
@@ -399,6 +449,11 @@ private fun TiviMediaCard(
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
                 if (native.action == AndroidKeyEvent.ACTION_DOWN &&
+                    native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT &&
+                    onDirectionLeft?.invoke() == true
+                ) {
+                    true
+                } else if (native.action == AndroidKeyEvent.ACTION_DOWN &&
                     native.keyCode == AndroidKeyEvent.KEYCODE_MENU
                 ) {
                     onLongPress()
@@ -463,8 +518,11 @@ private fun TiviMediaCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(NuvioColors.Secondary)
-                    .padding(horizontal = 8.dp, vertical = 7.dp),
+                    .background(NuvioColors.Secondary.copy(alpha = 0.18f))
+                    .padding(horizontal = 8.dp, vertical = 7.dp)
+                    .then(
+                        if (isFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
+                    ),
             )
         }
     }

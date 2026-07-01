@@ -20,7 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.Button
@@ -39,10 +38,14 @@ import com.nuvio.tv.ui.theme.NuvioColors
 fun VisibilityToggleDialog(
     state: TiviVisibilityDialogState,
     onDismiss: () -> Unit,
-    onSave: (Set<Long>) -> Unit,
+    onChange: (Set<Long>) -> Unit,
 ) {
     var visibleIds by remember(state) {
         mutableStateOf(state.items.filter { it.isVisible }.mapTo(mutableSetOf()) { it.id })
+    }
+    fun updateVisibleIds(next: Set<Long>) {
+        visibleIds = next.toMutableSet()
+        onChange(next)
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -59,7 +62,9 @@ fun VisibilityToggleDialog(
                 Button(
                     onClick = {
                         val allIds = state.items.mapTo(mutableSetOf()) { it.id }
-                        visibleIds = if (visibleIds.size == state.items.size) mutableSetOf() else allIds
+                        updateVisibleIds(
+                            if (visibleIds.size == state.items.size) emptySet() else allIds
+                        )
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.colors(
@@ -89,9 +94,9 @@ fun VisibilityToggleDialog(
                         val isVisible = item.id in visibleIds
                         Button(
                             onClick = {
-                                visibleIds = visibleIds.toMutableSet().apply {
+                                updateVisibleIds(visibleIds.toMutableSet().apply {
                                     if (isVisible) remove(item.id) else add(item.id)
-                                }
+                                })
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.colors(
@@ -118,16 +123,7 @@ fun VisibilityToggleDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
                 ) {
-                    Button(onClick = onDismiss) { Text("Annuler") }
-                    Button(
-                        onClick = { onSave(visibleIds) },
-                        colors = ButtonDefaults.colors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = Color.Black,
-                        ),
-                    ) {
-                        Text("Enregistrer")
-                    }
+                    Button(onClick = onDismiss) { Text("Fermer") }
                 }
             }
         }

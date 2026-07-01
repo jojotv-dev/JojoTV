@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.iptv
+﻿package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -56,25 +56,59 @@ import coil3.compose.AsyncImage
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.streamvault.domain.model.Series
 import com.streamvault.domain.repository.SeriesRepository
+import com.nuvio.tv.data.local.IptvSettingsDataStore
+import com.nuvio.tv.domain.model.IptvPosterSize
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
+import com.nuvio.tv.core.tmdb.TmdbService
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 @HiltViewModel
 class IptvSeriesListViewModel @Inject constructor(
     private val seriesRepository: SeriesRepository,
+    private val tmdbService: TmdbService,
+    private val iptvSettingsDataStore: IptvSettingsDataStore,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
     val providerId: Long = savedStateHandle.get<String>("providerId")?.toLongOrNull() ?: -1L
     val categoryId: Long? = savedStateHandle.get<String>("categoryId")?.toLongOrNull()
     val categoryName: String = savedStateHandle.get<String>("categoryName") ?: "Toutes les series"
+    val posterSize: StateFlow<IptvPosterSize> = iptvSettingsDataStore.vodPosterSize
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), IptvPosterSize.DEFAULT)
+
+    private val _focusedSeriesDetails = MutableStateFlow<IptvFocusedMediaDetails?>(null)
+    val focusedSeriesDetails: StateFlow<IptvFocusedMediaDetails?> = _focusedSeriesDetails.asStateFlow()
+    private var enrichJob: Job? = null
 
     val series: StateFlow<List<Series>> = (
         if (categoryId == null) seriesRepository.getSeries(providerId)
         else seriesRepository.getSeriesByCategory(providerId, categoryId)
     ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun onSeriesFocused(series: Series) {
+        _focusedSeriesDetails.value = series.toFocusedDetails()
+        enrichJob?.cancel()
+        enrichJob = viewModelScope.launch {
+            delay(IPTV_FOCUS_ENRICH_DEBOUNCE_MS)
+            val enriched = enrichIptvFocusFromSeries(seriesRepository, tmdbService, providerId, series)
+                ?: return@launch
+            val base = series.toFocusedDetails()
+            _focusedSeriesDetails.value = base.copy(
+                plot = enriched.plot?.takeIf { it.isNotBlank() } ?: base.plot,
+                genre = enriched.genre?.takeIf { it.isNotBlank() } ?: base.genre,
+                year = enriched.year?.takeIf { it.isNotBlank() } ?: base.year,
+                rating = enriched.rating ?: base.rating,
+                duration = enriched.durationMinutes?.let { m -> if (m >= 60) "${m/60}h ${m%60}min" else "${m}min" } ?: base.duration,
+            )
+        }
+    }
 }
 
 @Composable
@@ -83,8 +117,10 @@ fun IptvSeriesListScreen(
     viewModel: IptvSeriesListViewModel = hiltViewModel()
 ) {
     val series by viewModel.series.collectAsStateWithLifecycle()
+    val posterSize by viewModel.posterSize.collectAsStateWithLifecycle()
     var viewMode by remember { mutableStateOf(IptvViewMode.GRID) }
     var focusedSeries by remember(series) { mutableStateOf(series.firstOrNull()) }
+    val focusedSeriesDetails by viewModel.focusedSeriesDetails.collectAsStateWithLifecycle()
 
     Column(modifier = Modifier.fillMaxSize().background(NuvioColors.Background)) {
         Row(
@@ -115,13 +151,13 @@ fun IptvSeriesListScreen(
         } else {
             focusedSeries?.let { item ->
                 IptvFocusedMediaPanel(
-                    details = item.toFocusedDetails(),
+                    details = focusedSeriesDetails ?: item.toFocusedDetails(),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
             if (viewMode == IptvViewMode.GRID) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(IptvVodPosterWidth),
+                    columns = GridCells.Adaptive(posterSize.cardWidth),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -129,8 +165,9 @@ fun IptvSeriesListScreen(
                 ) {
                     items(series, key = { it.id }) { s ->
                         SeriesCard(
+                            cardWidth = posterSize.cardWidth,
                             series = s,
-                            onFocused = { focusedSeries = s },
+                            onFocused = { focusedSeries = s; viewModel.onSeriesFocused(s) },
                             onClick = { onOpenSeries(s.id) },
                         )
                     }
@@ -144,7 +181,7 @@ fun IptvSeriesListScreen(
                     items(series, key = { it.id }) { s ->
                         SeriesListRow(
                             series = s,
-                            onFocused = { focusedSeries = s },
+                            onFocused = { focusedSeries = s; viewModel.onSeriesFocused(s) },
                             onClick = { onOpenSeries(s.id) },
                         )
                     }
@@ -165,7 +202,7 @@ private fun SeriesListRow(series: Series, onFocused: () -> Unit, onClick: () -> 
             if (it.hasFocus) onFocused()
         },
         shape = CardDefaults.shape(shape),
-        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
+        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.BackgroundCard),
         border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.97f)
     ) {
@@ -224,17 +261,17 @@ private fun SeriesListRow(series: Series, onFocused: () -> Unit, onClick: () -> 
 }
 
 @Composable
-private fun SeriesCard(series: Series, onFocused: () -> Unit, onClick: () -> Unit) {
+private fun SeriesCard(series: Series, cardWidth: androidx.compose.ui.unit.Dp, onFocused: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Card(
         onClick = onClick,
-        modifier = Modifier.width(IptvVodPosterWidth).onFocusChanged {
+        modifier = Modifier.width(cardWidth).onFocusChanged {
             isFocused = it.hasFocus
             if (it.hasFocus) onFocused()
         },
         shape = CardDefaults.shape(shape),
-        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.Secondary),
+        colors = CardDefaults.colors(containerColor = NuvioColors.BackgroundCard, focusedContainerColor = NuvioColors.BackgroundCard),
         border = CardDefaults.border(focusedBorder = Border(border = BorderStroke(2.dp, NuvioColors.FocusRing), shape = RoundedCornerShape(12.dp))),
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 0.97f)
     ) {

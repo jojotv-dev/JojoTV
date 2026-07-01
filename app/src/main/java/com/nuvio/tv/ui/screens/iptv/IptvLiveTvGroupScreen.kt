@@ -59,6 +59,7 @@ import com.nuvio.tv.data.local.IptvVisibilitySettings
 import com.nuvio.tv.ui.theme.NuvioColors
 import com.nuvio.tv.ui.screens.iptv.IptvGroupOptionsDialog
 import com.streamvault.domain.model.Category
+import com.streamvault.domain.model.ContentType
 import com.streamvault.domain.repository.ChannelRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -87,7 +88,7 @@ class IptvLiveTvGroupViewModel @Inject constructor(
         combine(
             combine(
                 channelRepository.getCategories(providerId),
-                iptvSettingsDataStore.visibilitySettings(providerId)
+                iptvSettingsDataStore.visibilitySettings(providerId, ContentType.LIVE)
             ) { categories, visibility ->
                 categories.map { cat ->
                     CategoryWithVisibility(
@@ -104,7 +105,7 @@ class IptvLiveTvGroupViewModel @Inject constructor(
 
     fun toggleGroupVisibility(categoryId: Long, currentlyVisible: Boolean) {
         viewModelScope.launch {
-            iptvSettingsDataStore.setGroupVisible(providerId, categoryId.toString(), !currentlyVisible)
+            iptvSettingsDataStore.setGroupVisible(providerId, ContentType.LIVE, categoryId.toString(), !currentlyVisible)
         }
     }
 

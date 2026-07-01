@@ -124,6 +124,7 @@ class SeriesRepositoryImpl @Inject constructor(
                 entities
             }
         }.map { list -> list.map { it.toDomain() } }
+            .withFavoriteState(providerId)
 
     override fun getSeriesByCategory(providerId: Long, categoryId: Long): Flow<List<Series>> =
         flow {
@@ -139,6 +140,7 @@ class SeriesRepositoryImpl @Inject constructor(
                         entities
                     }
                 }.map { list -> list.map { it.toDomain() } }
+                    .withFavoriteState(providerId)
             )
         }
 
@@ -160,6 +162,7 @@ class SeriesRepositoryImpl @Inject constructor(
                     entities
                 }
             }.map { list -> list.map { it.toDomain() } }
+                .withFavoriteState(providerId)
         )
     }
 
@@ -260,7 +263,9 @@ class SeriesRepositoryImpl @Inject constructor(
         }.map { list -> list.map { it.toDomain() } }
 
     override fun getSeriesByIds(ids: List<Long>): Flow<List<Series>> =
-        seriesDao.getByIds(ids).map { entities -> entities.map { it.toDomain() } }
+        seriesDao.getByIds(ids)
+            .map { entities -> entities.map { it.toDomain() } }
+            .withFavoriteStateForProviders()
 
     override fun getCategories(providerId: Long): Flow<List<Category>> =
         combine(
@@ -323,6 +328,9 @@ class SeriesRepositoryImpl @Inject constructor(
 
     override suspend fun getSeriesById(seriesId: Long): Series? =
         seriesDao.getById(seriesId)?.toDomain()
+
+    override suspend fun getSeriesByProviderSeriesId(providerId: Long, providerSeriesId: String): Series? =
+        seriesDao.getByProviderSeriesId(providerId, providerSeriesId)?.toDomain()
 
     override suspend fun getEpisodeById(episodeId: Long): Episode? =
         episodeDao.getById(episodeId)?.toDomain()
@@ -544,6 +552,13 @@ class SeriesRepositoryImpl @Inject constructor(
 
     override suspend fun refreshSeries(providerId: Long): Result<Unit> =
         Result.success(Unit) // Handled by ProviderRepository
+
+    override suspend fun updateSeriesArtwork(seriesId: Long, posterUrl: String?, backdropUrl: String?): Result<Unit> = try {
+        seriesDao.updateArtwork(seriesId, posterUrl, backdropUrl)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.error(e.message ?: "Failed to update series artwork", e)
+    }
 
     private suspend fun buildSeriesWithPersistedEpisodes(seriesEntity: SeriesEntity): Series {
         val episodes = episodeDao.getBySeriesSync(seriesEntity.id).map { it.toDomain() }
@@ -1451,6 +1466,30 @@ class SeriesRepositoryImpl @Inject constructor(
 
     private fun seriesUpdatedScore(series: Series): Long =
         series.lastModified.takeIf { it > 0L } ?: 0L
+
+    private fun Flow<List<Series>>.withFavoriteState(providerId: Long): Flow<List<Series>> =
+        combine(favoriteDao.getAllByType(providerId, ContentType.SERIES.name)) { series, favorites ->
+            val favoriteIds = favorites.map { it.contentId }.toSet()
+            series.map { item -> item.copy(isFavorite = item.id in favoriteIds) }
+        }
+
+    private fun Flow<List<Series>>.withFavoriteStateForProviders(): Flow<List<Series>> =
+        flatMapLatest { series ->
+            val providerIds = series.map { it.providerId }.distinct()
+            android.util.Log.w("FAVDEBUG", "SERIES providerIds=$providerIds seriesIds=${series.map { it.id }} seriesProviderIds=${series.map { it.providerId }}")
+            if (providerIds.isEmpty()) {
+                flowOf(series)
+            } else {
+                favoriteDao.getGlobalByTypeForProviders(providerIds, ContentType.SERIES.name)
+                    .map { favorites ->
+                        val favoriteKeys = favorites.map { it.providerId to it.contentId }.toSet()
+                        android.util.Log.w("FAVDEBUG", "SERIES favoriteKeys=$favoriteKeys")
+                        series.map { item ->
+                            item.copy(isFavorite = (item.providerId to item.id) in favoriteKeys)
+                        }
+                    }
+            }
+        }
 
     private suspend fun getOrCreateXtreamProvider(providerId: Long, provider: ProviderEntity): XtreamProvider {
         val enableBase64TextCompatibility = preferencesRepository.xtreamBase64TextCompatibility.first()

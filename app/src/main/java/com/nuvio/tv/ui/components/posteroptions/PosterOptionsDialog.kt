@@ -38,6 +38,7 @@ fun PosterOptionsDialog(
     showManageLists: Boolean,
     isMovie: Boolean,
     isSeries: Boolean = false,
+    isIptvItem: Boolean = false,
     isWatched: Boolean,
     isWatchedPending: Boolean,
     onDismiss: () -> Unit,
@@ -79,7 +80,13 @@ fun PosterOptionsDialog(
             )
         ) {
             Text(
-                if (showManageLists) {
+                if (isIptvItem) {
+                    if (isInLibrary) {
+                        stringResource(R.string.hero_remove_from_favorites)
+                    } else {
+                        stringResource(R.string.hero_add_to_favorites)
+                    }
+                } else if (showManageLists) {
                     stringResource(R.string.library_manage_lists)
                 } else {
                     if (isInLibrary) {
@@ -91,7 +98,7 @@ fun PosterOptionsDialog(
             )
         }
 
-        if (isMovie || isSeries) {
+        if (!isIptvItem && (isMovie || isSeries)) {
             Button(
                 onClick = onToggleWatched,
                 enabled = !isWatchedPending,
@@ -214,6 +221,7 @@ fun PosterOptionsHost(
             showManageLists = state.librarySourceMode == LibrarySourceMode.TRAKT,
             isMovie = isMovie,
             isSeries = isSeries,
+            isIptvItem = state.isIptvItem,
             isWatched = state.isWatched,
             isWatchedPending = state.isWatchedPending,
             onDismiss = { controller.dismiss() },
@@ -222,7 +230,10 @@ fun PosterOptionsHost(
                 controller.dismiss()
             },
             onToggleLibrary = {
-                if (state.librarySourceMode == LibrarySourceMode.TRAKT) {
+                if (state.isIptvItem) {
+                    controller.toggleIptvFavorite()
+                    controller.dismiss()
+                } else if (state.librarySourceMode == LibrarySourceMode.TRAKT) {
                     controller.openListPicker()
                 } else {
                     controller.toggleLibrary()

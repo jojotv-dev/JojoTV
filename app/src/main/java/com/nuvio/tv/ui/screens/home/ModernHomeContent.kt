@@ -1,4 +1,4 @@
-@file:OptIn(
+﻿@file:OptIn(
     androidx.compose.foundation.ExperimentalFoundationApi::class,
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     kotlinx.coroutines.FlowPreview::class
@@ -10,12 +10,14 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyListState
@@ -36,6 +38,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalView
@@ -52,6 +57,7 @@ import kotlin.math.abs
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -69,11 +75,9 @@ import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import com.nuvio.tv.data.freebox.freeboxContentIdForEntry
 import com.nuvio.tv.data.freebox.freeboxFileNameOnly
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.MetaPreview
-import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.ContinueWatchingOptionsDialog
 import com.nuvio.tv.LocalSidebarExpanded
@@ -102,9 +106,17 @@ fun ModernHomeContent(
     trailerPreviewAudioUrls: Map<String, String> = emptyMap(),
     onNavigateToDetail: (String, String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
+    onContinueWatchingDetails: (ContinueWatchingItem) -> Unit = { item ->
+        onNavigateToDetail(
+            item.contentId(),
+            item.contentType(),
+            ""
+        )
+    },
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit = {},
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit = {},
     showContinueWatchingManualPlayOption: Boolean = false,
+    onSearchContinueWatchingPoster: ((ContinueWatchingItem) -> Unit)? = null,
     onRequestTrailerPreview: (String, String, String?, String) -> Unit,
     onLoadMoreCatalog: (String, String, String) -> Unit,
     onRemoveContinueWatching: (String, Int?, Int?, Boolean) -> Unit,
@@ -121,6 +133,7 @@ fun ModernHomeContent(
     onRenameFreeboxProgress: (ContinueWatchingItem, String) -> Unit = { _, _ -> },
     onMarkFreeboxUnwatched: (ContinueWatchingItem) -> Unit = {},
     onRenameFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry, String) -> Unit = { _, _ -> },
+    onDeleteFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry) -> Unit = {},
     onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     onPreloadAdjacentItem: (MetaPreview) -> Unit = {},
     onSaveFocusState: (Int, Int, String?, Map<String, String>, Map<String, Int>, Int, Int) -> Unit,
@@ -242,6 +255,7 @@ fun ModernHomeContent(
     val isFastScrolling = remember { mutableStateOf(false) }
     val isRapidHorizontalNav = remember { mutableStateOf(false) }
     val focusedCatalogSelection = remember { mutableStateOf<FocusedCatalogSelection?>(null) }
+    val focusedFreeboxVideo = remember { mutableStateOf<MetaPreview?>(null) }
     var lastRequestedTrailerFocusKey by remember { mutableStateOf<String?>(null) }
     val expandedCatalogFocusKey = remember { mutableStateOf<String?>(null) }
     val focusedHeroMediaNonce = remember { mutableIntStateOf(0) }
@@ -526,10 +540,10 @@ fun ModernHomeContent(
                 // Home screen didn't have focus, don't overwrite the saved state
                 return@onDispose
             }
-            
+
             val focusedRowIndex = focusedRowKey?.let { latestRowIndexByKey.value.map[it] } ?: -1
             val focusedItemIndex = activeItemIndex.intValue
-            
+
             val focusedItemKeyByRow = latestCarouselRows
                 .associate { rowState ->
                     val focusedIdx = focusedItemByRow[rowState.key] ?: 0
@@ -583,7 +597,7 @@ fun ModernHomeContent(
                     val activeKey = activeRowKey.value
                     val row = if (activeKey == null) null
                     else rowByKey[activeKey]
-                    
+
                     val index = activeItemIndex.intValue
                     val clampedIdx = row?.let {
                         index.coerceIn(0, (it.items.size - 1).coerceAtLeast(0))
@@ -597,8 +611,35 @@ fun ModernHomeContent(
                     val activeCarouselItem = activeCarouselItemState.value
                     val activeItemId = activeCarouselItem?.metaPreview?.id
                     val enrichmentActive = enrichingItemId != null && enrichingItemId == activeItemId
-                    
+                    val activeFreeboxVideo = focusedFreeboxVideo.value
+                        ?.takeIf { activeRowKey.value == "freebox_videos" }
+                    val freeboxHero = activeFreeboxVideo?.let { item ->
+                        HeroPreview(
+                            title = item.name,
+                            logo = item.logo,
+                            description = item.description,
+                            contentTypeText = "Freebox",
+                            isSeries = false,
+                            yearText = item.releaseInfo,
+                            runtimeText = item.runtime,
+                            imdbText = item.imdbRating?.let { String.format(java.util.Locale.US, "%.1f", it) },
+                            ageRatingText = item.ageRating,
+                            statusText = item.status,
+                            countryText = item.country,
+                            languageText = item.language?.uppercase(),
+                            genres = item.genres.take(3).asStable(),
+                            poster = item.poster,
+                            backdrop = item.backdropUrl,
+                            imageUrl = item.backdropUrl,
+                            frozenBackdropUrl = item.backdropUrl,
+                            frozenLogoUrl = item.logo
+                        )
+                    }
+
                     val enrichedItem = activeItemId?.let { enrichedPreviews[it] }
+                    val activeIsIptvItem = activeCarouselItem?.metaPreview?.let { preview ->
+                        preview.rawType == "iptv_movie" || preview.rawType == "iptv_series"
+                    } == true
                     val enrichedHero = if (enrichedItem != null) {
                         HeroPreview(
                             title = enrichedItem.name,
@@ -606,8 +647,8 @@ fun ModernHomeContent(
                             description = enrichedItem.description,
                             contentTypeText = activeCarouselItem?.heroPreview?.contentTypeText,
                             isSeries = isSeriesType(enrichedItem.apiType),
-                            yearText = activeCarouselItem?.heroPreview?.yearText,
-                            runtimeText = activeCarouselItem?.heroPreview?.runtimeText,
+                            yearText = enrichedItem.releaseInfo ?: activeCarouselItem?.heroPreview?.yearText,
+                            runtimeText = enrichedItem.runtime ?: activeCarouselItem?.heroPreview?.runtimeText,
                             imdbText = enrichedItem.imdbRating?.let { String.format(java.util.Locale.US, "%.1f", it) },
                             ageRatingText = enrichedItem.ageRating,
                             statusText = enrichedItem.status,
@@ -616,19 +657,19 @@ fun ModernHomeContent(
                             genres = enrichedItem.genres.take(3).asStable(),
                             poster = enrichedItem.poster,
                             backdrop = enrichedItem.backdropUrl,
-                            imageUrl = activeCarouselItem?.heroPreview?.imageUrl,
-                            frozenBackdropUrl = activeCarouselItem?.heroPreview?.frozenBackdropUrl,
+                            imageUrl = enrichedItem.backdropUrl ?: enrichedItem.poster ?: activeCarouselItem?.heroPreview?.imageUrl,
+                            frozenBackdropUrl = enrichedItem.backdropUrl ?: activeCarouselItem?.heroPreview?.frozenBackdropUrl,
                             frozenLogoUrl = activeCarouselItem?.heroPreview?.frozenLogoUrl
                         )
                     } else null
 
                     val resolvedHero = when {
                         activeCarouselItem == null -> null
-                        enrichmentActive -> activeCarouselItem.heroPreview
                         enrichedHero != null -> enrichedHero
+                        enrichmentActive -> activeCarouselItem.heroPreview
                         else -> activeCarouselItem.heroPreview
                     }
-                    
+
                     // Only use the real enrichmentActive flag from the ViewModel.
                     // Additionally, if enrichment is enabled but no enriched data exists yet
                     // for this item, treat as pending to avoid showing un-enriched addon data.
@@ -636,23 +677,27 @@ fun ModernHomeContent(
                     // Also treat as pending when activeCarouselItem is null (row not yet resolved).
                     val heroEnrichmentEnabled = uiState.heroEnrichmentEnabled
                     val enrichmentFailed = activeItemId != null && activeItemId in failedEnrichmentIds
-                    val effectiveEnrichmentActive = activeCarouselItem == null || enrichmentActive ||
-                        (enrichedHero == null && activeItemId != null && heroEnrichmentEnabled && !enrichmentFailed)
-                    
+                    val effectiveEnrichmentActive = activeCarouselItem == null ||
+                        (enrichmentActive && enrichedHero == null) ||
+                        (!activeIsIptvItem && enrichedHero == null && activeItemId != null && heroEnrichmentEnabled && !enrichmentFailed)
+
                     val activeRowKeyVal = activeRowKey.value
                     val activeRow = activeRowKeyVal?.let { rowByKey[it] }
                     val activeRowFallbackBackdrop = activeRow?.items?.list?.firstNotNullOfOrNull { item ->
                         item.heroPreview.backdrop?.takeIf { it.isNotBlank() }
                     }
-                    
+
                     val heroBackdrop = firstNonBlank(
+                        freeboxHero?.backdrop,
+                        freeboxHero?.imageUrl,
+                        freeboxHero?.poster,
                         resolvedHero?.backdrop,
                         resolvedHero?.imageUrl,
                         resolvedHero?.poster,
                         activeRowFallbackBackdrop
                     )
-                    
-                    Triple(heroBackdrop, resolvedHero, effectiveEnrichmentActive)
+
+                    Triple(heroBackdrop, freeboxHero ?: resolvedHero, if (freeboxHero != null) false else effectiveEnrichmentActive)
                 }
             }
 
@@ -802,15 +847,7 @@ fun ModernHomeContent(
                                 return@collect
                             }
                         }
-                        val displayedBackdrop = HeroBackdropState.lastDisplayedUrl
-                        val corrected = if (!displayedBackdrop.isNullOrBlank() &&
-                            displayedBackdrop != currentStable.heroBackdrop
-                        ) {
-                            currentStable.copy(heroBackdrop = displayedBackdrop)
-                        } else {
-                            currentStable
-                        }
-                        stableHeroSceneStateRef.value = corrected
+                        stableHeroSceneStateRef.value = currentStable
                     }
                 }
             }
@@ -1012,7 +1049,15 @@ fun ModernHomeContent(
             val stableOnRequestLazyCatalogLoad = remember(onRequestLazyCatalogLoad) {
                 { catalogKey: String -> onRequestLazyCatalogLoad(catalogKey) }
             }
-            val stableOnItemFocus = remember(onItemFocus) { { item: MetaPreview -> onItemFocus(item) } }
+            val stableOnItemFocus = remember(onItemFocus) {
+                { item: MetaPreview ->
+                    focusedFreeboxVideo.value = item.takeIf {
+                        it.id.startsWith("freebox:", ignoreCase = true) ||
+                            it.rawType.equals("freebox", ignoreCase = true)
+                    }
+                    onItemFocus(item)
+                }
+            }
             val stableOnPreloadAdjacentItem = remember(onPreloadAdjacentItem) { { item: MetaPreview -> onPreloadAdjacentItem(item) } }
 
             ModernHomeRowsList(
@@ -1091,37 +1136,23 @@ fun ModernHomeContent(
                 onNavigateToFreebox = onNavigateToFreebox,
                 freeboxVideoArtwork = uiState.freeboxVideoArtwork,
                 freeboxVideoBackdrops = uiState.freeboxVideoBackdrops,
+                freeboxVideoMetadata = uiState.freeboxVideoMetadata,
                 freeboxVideoProbedDurations = uiState.freeboxVideoProbedDurations,
                 onRenameFreeboxVideo = onRenameFreeboxVideo,
-                onDeleteFreeboxVideo = { entry ->
-                    val contentId = freeboxContentIdForEntry(entry)
-                    onDeleteFreeboxProgress?.invoke(
-                        ContinueWatchingItem.InProgress(
-                            progress = WatchProgress(
-                                contentId = contentId,
-                                contentType = "freebox",
-                                name = entry.name,
-                                poster = uiState.freeboxVideoArtwork[contentId],
-                                backdrop = uiState.freeboxVideoArtwork[contentId],
-                                logo = null,
-                                videoId = contentId,
-                                season = null,
-                                episode = null,
-                                episodeTitle = null,
-                                position = 0L,
-                                duration = entry.durationMs ?: 0L,
-                                lastWatched = 0L
-                            )
-                        )
-                    )
-                },
+                onDeleteFreeboxVideo = onDeleteFreeboxVideo,
                 modifier = Modifier.align(Alignment.BottomStart)
             )
     }
 
     val selectedOptionsItem = optionsItem.value
     if (selectedOptionsItem != null) {
-        val selectedIsIptv = selectedOptionsItem.contentId().startsWith("iptv_")
+        val selectedContentId = selectedOptionsItem.contentId()
+        val selectedContentType = selectedOptionsItem.contentType()
+        val selectedIsIptv = selectedContentId.startsWith("iptv_", ignoreCase = true)
+        val selectedIsIptvSeries = selectedContentId.startsWith("iptv_series:", ignoreCase = true) ||
+            selectedContentId.startsWith("iptv_series_remote:", ignoreCase = true) ||
+            selectedContentType.equals("iptv_series", ignoreCase = true)
+        val selectedIsFreebox = selectedContentId.startsWith("freebox:", ignoreCase = true)
         ContinueWatchingOptionsDialog(
             item = selectedOptionsItem,
             onDismiss = { optionsItem.value = null },
@@ -1139,15 +1170,16 @@ fun ModernHomeContent(
                 )
                 optionsItem.value = null
             },
+            showDetails = !selectedIsIptv || selectedIsIptvSeries || selectedIsFreebox,
             onDetails = {
-                onNavigateToDetail(selectedOptionsItem.contentId(), selectedOptionsItem.contentType(), "")
+                onContinueWatchingDetails(selectedOptionsItem)
                 optionsItem.value = null
             },
             onStartFromBeginning = {
                 onContinueWatchingStartFromBeginning(selectedOptionsItem)
                 optionsItem.value = null
             },
-            showPlayManually = showContinueWatchingManualPlayOption && !selectedIsIptv,
+            showPlayManually = showContinueWatchingManualPlayOption && !selectedIsIptv && !selectedIsFreebox,
             onRenameFreebox = if (selectedOptionsItem is ContinueWatchingItem.InProgress && selectedOptionsItem.progress.contentId.startsWith("freebox:")) {
                 {
                     renameOptionsItem.value = selectedOptionsItem
@@ -1163,6 +1195,16 @@ fun ModernHomeContent(
             onPlayManually = {
                 onContinueWatchingPlayManually(selectedOptionsItem)
                 optionsItem.value = null
+            },
+            onSearchPoster = if (selectedIsFreebox || selectedIsIptv) {
+                onSearchContinueWatchingPoster?.let {
+                    {
+                        it(selectedOptionsItem)
+                        optionsItem.value = null
+                    }
+                }
+            } else {
+                null
             },
             onDeleteFromFreebox = if (selectedOptionsItem is ContinueWatchingItem.InProgress && selectedOptionsItem.progress.contentId.startsWith("freebox:")) {
                 {
@@ -1191,6 +1233,66 @@ fun ModernHomeContent(
         )
     }
 }
+
+@Composable
+private fun ModernHeroSynopsisBlock(
+    previewProvider: () -> HeroPreview?,
+    modifier: Modifier = Modifier
+) {
+    val description = previewProvider()
+        ?.description
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: return
+
+    val scrollState = rememberScrollState()
+
+    androidx.compose.runtime.LaunchedEffect(description) {
+        scrollState.scrollTo(0) // Réinitialisation au changement de focus de ligne
+        kotlinx.coroutines.delay(3500) // Pause de lecture de 3,5s
+        while (true) {
+            val max = scrollState.maxValue
+            if (max > 0 && max < Int.MAX_VALUE) {
+                // Défilement progressif vers le bas (35ms par pixel)
+                scrollState.animateScrollTo(
+                    value = max,
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = max * 35,
+                        easing = androidx.compose.animation.core.LinearEasing
+                    )
+                )
+                kotlinx.coroutines.delay(3500) // Pause en bas de 3,5s
+
+                // Retour rapide vers le haut
+                scrollState.animateScrollTo(
+                    value = 0,
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 1000,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    )
+                )
+                kotlinx.coroutines.delay(3000) // Pause en haut
+            } else {
+                break
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.34f))
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodyMedium,
+            color = NuvioColors.TextPrimary,
+            modifier = Modifier.heightIn(max = 112.dp).verticalScroll(scrollState)
+        )
+    }
+}
+
 @Composable
 private fun ModernHeroSection(
     heroSceneState: () -> ModernHeroSceneState,

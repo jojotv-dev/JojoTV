@@ -155,6 +155,10 @@ val buildingAppBundle = gradle.startParameter.taskNames.any { it.contains("bundl
 
 val isDebugTask = gradle.startParameter.taskNames.any { it.contains("debug", ignoreCase = true) }
 
+val requestedApkAbi = providers.gradleProperty("jojotvAbi").orNull
+    ?.trim()
+    ?.takeIf { it in setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64") }
+
 val useDebugReleaseSigning = env("CI_USE_DEBUG_SIGNING").equals("true", ignoreCase = true)
 
 val useLocalFfmpegDecoder = truthy(
@@ -455,6 +459,32 @@ android {
 
         }
 
+        create("quick") {
+
+            initWith(buildTypes.getByName("release"))
+
+            isDebuggable = false
+
+            isMinifyEnabled = false
+
+            isShrinkResources = false
+
+            signingConfig = if (useDebugReleaseSigning) {
+
+                signingConfigs.getByName("debug")
+
+            } else {
+
+                signingConfigs.getByName("release")
+
+            }
+
+            buildConfigField("boolean", "IS_DEBUG_BUILD", "false")
+
+            matchingFallbacks += "release"
+
+        }
+
         create("benchmark") {
 
             initWith(buildTypes.getByName("release"))
@@ -495,9 +525,13 @@ android {
 
             reset()
 
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            if (requestedApkAbi != null) {
+                include(requestedApkAbi)
+            } else {
+                include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            }
 
-            isUniversalApk = true
+            isUniversalApk = requestedApkAbi == null
 
         }
 

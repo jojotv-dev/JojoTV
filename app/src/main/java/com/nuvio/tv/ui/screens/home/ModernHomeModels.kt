@@ -14,7 +14,9 @@ import com.nuvio.tv.ui.util.localizeEpisodeTitle
 import com.nuvio.tv.ui.util.computeAirDateBadgeText
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.R
-import com.nuvio.tv.data.freebox.freeboxVideoDisplayTitle
+import com.nuvio.tv.data.freebox.freeboxDisplayName
+import com.nuvio.tv.data.freebox.formatFreeboxDurationCompact
+import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.ui.components.formatContinueWatchingProgressLabel
 import com.nuvio.tv.ui.util.StableList
 import com.nuvio.tv.ui.util.StableMap
@@ -278,7 +280,7 @@ internal fun buildContinueWatchingItem(
     val secondaryHighlightText = when (item) {
         is ContinueWatchingItem.InProgress -> {
             val progress = item.progress
-            if (progress.isFreeboxProgressForHome()) {
+            if (progress.isFreeboxProgressForHome() || progress.isIptvProgressForHome()) {
                 ""
             } else {
                 formatContinueWatchingProgressLabel(
@@ -321,6 +323,7 @@ internal fun buildContinueWatchingItem(
                 isSeries && episodeCode != null && episodeTitle != null -> "$episodeCode · $episodeTitle"
                 isSeries && episodeCode != null -> episodeCode
                 isSeries && episodeTitle != null -> episodeTitle
+                item.progress.isFreeboxProgressForHome() || item.progress.isIptvProgressForHome() -> ""
                 else -> item.progress.contentType.replaceFirstChar { ch -> ch.uppercase() }
             }
             HeroPreview(
@@ -330,8 +333,17 @@ internal fun buildContinueWatchingItem(
                 contentTypeText = episodeLabel,
                 isSeries = isSeries,
                 yearText = extractYearOrRange(item.releaseInfo),
+                runtimeText = if (item.progress.isFreeboxProgressForHome()) {
+                    formatFreeboxDurationCompact(item.progress.duration)
+                } else {
+                    null
+                },
                 secondaryHighlightText = secondaryHighlightText.takeIf { it.isNotBlank() },
-                imdbText = item.episodeImdbRating?.let { String.format("%.1f", it) },
+                imdbText = if (item.progress.isFreeboxProgressForHome()) {
+                    null
+                } else {
+                    item.episodeImdbRating?.let { String.format("%.1f", it) }
+                },
                 genres = item.genres.asStable(),
                 poster = item.progress.poster,
                 backdrop = item.progress.backdrop,
@@ -381,10 +393,19 @@ internal fun buildContinueWatchingItem(
                 firstNonBlank(item.progress.backdrop, item.progress.poster)
             }
         } else {
+            val preferIptvBackdrop = item.progress.isIptvProgressForHome()
             if (isSeriesType(item.progress.contentType)) {
-                firstNonBlank(heroPreview.poster, item.progress.poster, item.progress.backdrop)
+                if (preferIptvBackdrop) {
+                    firstNonBlank(item.progress.backdrop, item.progress.poster, heroPreview.poster)
+                } else {
+                    firstNonBlank(heroPreview.poster, item.progress.poster, item.progress.backdrop)
+                }
             } else {
-                firstNonBlank(item.progress.poster, item.progress.backdrop)
+                if (preferIptvBackdrop) {
+                    firstNonBlank(item.progress.backdrop, item.progress.poster)
+                } else {
+                    firstNonBlank(item.progress.poster, item.progress.backdrop)
+                }
             }
         }
         is ContinueWatchingItem.NextUp -> if (useLandscapePosters) {
@@ -406,7 +427,7 @@ internal fun buildContinueWatchingItem(
         },
           subtitle = when (item) {
               is ContinueWatchingItem.InProgress -> {
-                  if (item.progress.isFreeboxProgressForHome()) null
+                  if (item.progress.isFreeboxProgressForHome() || item.progress.isIptvProgressForHome()) null
                   else {
                       val ps = item.progress.season
                       val pe = item.progress.episode
@@ -442,7 +463,11 @@ internal fun buildCatalogItem(
     val carriedBackdrop = previousCachedItem?.heroPreview?.frozenBackdropUrl
     val carriedLogo = previousCachedItem?.heroPreview?.frozenLogoUrl
 
-    val currentBackdrop = item.backdropUrl
+    val isIptv = item.rawType == "iptv_movie" || item.rawType == "iptv_series"
+    val explicitBackdrop = item.background?.takeIf { it.isNotBlank() }
+        ?: item.landscapePoster?.takeIf { it.isNotBlank() }
+    val currentBackdrop = if (isIptv) explicitBackdrop else item.backdropUrl
+    val currentPoster = item.poster?.takeIf { it.isNotBlank() }
     val currentLogo = item.logo
 
     // First non-blank value wins and is never replaced.
@@ -451,14 +476,22 @@ internal fun buildCatalogItem(
     val frozenLogo = carriedLogo?.takeIf { it.isNotBlank() }
         ?: currentLogo
 
+    val isFreebox = item.apiType.equals("freebox", ignoreCase = true) || item.id.startsWith("freebox:")
+    val cleanTitle = if (isFreebox) freeboxDisplayName(item.name) else item.name
+    val cardImageUrl = if (useLandscapePosters) {
+        currentBackdrop ?: currentPoster
+    } else {
+        currentPoster ?: currentBackdrop
+    }
+
     val heroPreview = HeroPreview(
-        title = item.name,
+        title = cleanTitle,
         logo = item.logo,
         description = item.description,
         contentTypeText = when (item.apiType.lowercase()) {
             "movie" -> strTypeMovie.ifBlank { item.apiType.replaceFirstChar { ch -> ch.uppercase() } }
             "series" -> strTypeSeries.ifBlank { item.apiType.replaceFirstChar { ch -> ch.uppercase() } }
-            "freebox" -> null
+            "iptv_movie", "iptv_series", "freebox" -> null
             else -> item.apiType.replaceFirstChar { ch -> ch.uppercase() }
         },
         isSeries = isSeriesType(item.apiType),
@@ -470,26 +503,18 @@ internal fun buildCatalogItem(
         countryText = item.country,
         languageText = item.language?.uppercase(),
         genres = item.genres.take(3).asStable(),
-        poster = item.poster,
-        backdrop = item.backdropUrl,
-        imageUrl = if (useLandscapePosters) {
-            item.backdropUrl ?: item.poster
-        } else {
-            item.poster ?: item.backdropUrl
-        },
+        poster = currentPoster,
+        backdrop = currentBackdrop,
+        imageUrl = cardImageUrl,
         frozenBackdropUrl = frozenBackdrop,
         frozenLogoUrl = frozenLogo
     )
 
     return ModernCarouselItem(
         key = "catalog_${row.key()}_${item.id}_${occurrence}",
-        title = item.name,
+        title = cleanTitle,
         subtitle = item.releaseInfo,
-        imageUrl = if (useLandscapePosters) {
-            item.backdropUrl ?: item.poster
-        } else {
-            item.poster ?: item.backdropUrl
-        },
+        imageUrl = cardImageUrl,
         heroPreview = heroPreview,
         payload = ModernPayload.Catalog(
             focusKey = "${row.key()}::${item.id}",
@@ -682,10 +707,26 @@ internal fun ContinueWatchingItem.episode(): Int? {
 }
 
 private fun com.nuvio.tv.domain.model.WatchProgress.displayNameForContinueWatching(): String =
-    if (contentId.startsWith("freebox:") || videoId.startsWith("freebox:") || contentType.equals("freebox", ignoreCase = true)) {
-        freeboxVideoDisplayTitle(name.ifBlank { videoId }, duration)
+    if (isFreeboxProgressForHome()) {
+        val bestName = name
+            .takeUnless { it.isLikelyGeneratedFreeboxLabel() }
+            ?: freeboxPathFromContentId(contentId)
+                .takeUnless { it.isLikelyGeneratedFreeboxLabel() }
+            ?: freeboxPathFromContentId(videoId)
+                .takeUnless { it.isLikelyGeneratedFreeboxLabel() }
+            ?: videoId
+        freeboxDisplayName(bestName)
     } else {
         name
     }
+
+private fun String.isLikelyGeneratedFreeboxLabel(): Boolean {
+    val value = trim()
+    if (value.isBlank()) return true
+    return value.matches(Regex("\\d{10,}"))
+}
+
 private fun com.nuvio.tv.domain.model.WatchProgress.isFreeboxProgressForHome(): Boolean =
     contentId.startsWith("freebox:") || videoId.startsWith("freebox:") || contentType.equals("freebox", ignoreCase = true)
+private fun com.nuvio.tv.domain.model.WatchProgress.isIptvProgressForHome(): Boolean =
+    contentId.startsWith("iptv_") || videoId.startsWith("iptv_") || contentType.startsWith("iptv", ignoreCase = true)

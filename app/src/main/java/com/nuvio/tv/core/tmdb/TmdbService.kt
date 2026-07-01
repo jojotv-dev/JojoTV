@@ -61,6 +61,25 @@ private fun tmdbCandidateTitleScore(query: String, title: String?, originalLangu
     val overlap = queryWords.intersect(titleWords).size
     return overlap * 100 / max(queryWords.size, titleWords.size)
 }
+
+internal fun cleanTmdbTitleQuery(rawQuery: String): String {
+    return rawQuery
+        .substringBeforeLast('.', rawQuery)
+        .replace(Regex("""\[[^\]]*]"""), " ")
+        .replace(Regex("""\((?:19|20)\d{2}\)"""), " ")
+        .replace(
+            Regex(
+                """\b(?:4k|uhd|hdr10\+?|hdr|dv|dolby\s*vision|hevc|x265|x264|h\.?264|h\.?265|multi|vostfr|vf|truefrench|french|web-?dl|bluray|brrip|webrip|hdtv|aac|ac3|eac3|atmos|dts|proper|repack)\b""",
+                RegexOption.IGNORE_CASE
+            ),
+            " "
+        )
+        .replace(Regex("""\b(?:19|20)\d{2}\b"""), " ")
+        .replace(Regex("""[._-]+"""), " ")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .ifBlank { rawQuery.trim() }
+}
 /**
  * Service to handle TMDB ID conversions and lookups.
  * Provides caching to avoid redundant API calls.
@@ -71,19 +90,19 @@ class TmdbService @Inject constructor(
 ) {
     // Cache: IMDB ID -> TMDB ID
     private val imdbToTmdbCache = ConcurrentHashMap<String, Int>()
-    
-    // Cache: TMDB ID -> IMDB ID  
+
+    // Cache: TMDB ID -> IMDB ID
     private val tmdbToImdbCache = ConcurrentHashMap<Int, String>()
 
     private val imdbToTmdbInFlight = ConcurrentHashMap<String, CompletableDeferred<Int?>>()
     private val tmdbToImdbInFlight = ConcurrentHashMap<String, CompletableDeferred<String?>>()
-    
+
     // Mutex for thread-safe cache operations
     private val cacheMutex = Mutex()
-    
+
     /**
      * Convert an IMDB ID to a TMDB ID.
-     * 
+     *
      * @param imdbId The IMDB ID (e.g., "tt0133093")
      * @param mediaType The media type ("movie" or "series"/"tv")
      * @return The TMDB ID, or null if not found
@@ -94,13 +113,13 @@ class TmdbService @Inject constructor(
             Log.w(TAG, "Invalid IMDB ID format: $imdbId")
             return@withContext null
         }
-        
+
         // Check cache first
         imdbToTmdbCache[imdbId]?.let { cached ->
             Log.d(TAG, "Cache hit: IMDB $imdbId -> TMDB $cached")
             return@withContext cached
         }
-        
+
         val normalizedType = normalizeMediaType(mediaType)
         val requestKey = "$imdbId:$normalizedType"
         val requestDeferred = CompletableDeferred<Int?>()
@@ -110,35 +129,35 @@ class TmdbService @Inject constructor(
 
         try {
             Log.d(TAG, "Looking up TMDB ID for IMDB: $imdbId (type: $mediaType)")
-            
+
             val response = tmdbApi.findByExternalId(
                 externalId = imdbId,
                 apiKey = TMDB_API_KEY,
                 externalSource = "imdb_id"
             )
-            
+
             if (!response.isSuccessful) {
                 Log.e(TAG, "TMDB API error: ${response.code()} - ${response.message()}")
                 requestDeferred.complete(null)
                 return@withContext null
             }
-            
+
             val body = response.body()
             if (body == null) {
                 requestDeferred.complete(null)
                 return@withContext null
             }
-            
+
             // Determine which results to use based on media type
             val result = when (normalizedType) {
                 "movie" -> body.movieResults?.firstOrNull()
                 "tv", "series" -> body.tvResults?.firstOrNull()
                 else -> body.movieResults?.firstOrNull() ?: body.tvResults?.firstOrNull()
             }
-            
+
             result?.let { found ->
                 Log.d(TAG, "Found TMDB ID: ${found.id} for IMDB: $imdbId")
-                
+
                 // Cache both directions
                 cacheMutex.withLock {
                     imdbToTmdbCache[imdbId] = found.id
@@ -146,14 +165,14 @@ class TmdbService @Inject constructor(
                 }
 
                 requestDeferred.complete(found.id)
-                 
+
                 return@withContext found.id
             }
-            
+
             Log.w(TAG, "No TMDB result found for IMDB: $imdbId")
             requestDeferred.complete(null)
             null
-            
+
         } catch (e: CancellationException) {
             requestDeferred.cancel(e)
             throw e
@@ -165,10 +184,10 @@ class TmdbService @Inject constructor(
             imdbToTmdbInFlight.remove(requestKey, requestDeferred)
         }
     }
-    
+
     /**
      * Convert a TMDB ID to an IMDB ID.
-     * 
+     *
      * @param tmdbId The TMDB ID
      * @param mediaType The media type ("movie" or "series"/"tv")
      * @return The IMDB ID, or null if not found
@@ -179,7 +198,7 @@ class TmdbService @Inject constructor(
             Log.d(TAG, "Cache hit: TMDB $tmdbId -> IMDB $cached")
             return@withContext cached
         }
-        
+
         val normalizedType = normalizeMediaType(mediaType)
         val requestKey = "$tmdbId:$normalizedType"
         val requestDeferred = CompletableDeferred<String?>()
@@ -189,28 +208,28 @@ class TmdbService @Inject constructor(
 
         try {
             Log.d(TAG, "Looking up IMDB ID for TMDB: $tmdbId (type: $mediaType)")
-            
+
             val response = when (normalizedType) {
                 "movie" -> tmdbApi.getMovieExternalIds(tmdbId, TMDB_API_KEY)
                 "tv", "series" -> tmdbApi.getTvExternalIds(tmdbId, TMDB_API_KEY)
                 else -> tmdbApi.getMovieExternalIds(tmdbId, TMDB_API_KEY)
             }
-            
+
             if (!response.isSuccessful) {
                 Log.e(TAG, "TMDB API error: ${response.code()} - ${response.message()}")
                 requestDeferred.complete(null)
                 return@withContext null
             }
-            
+
             val body = response.body()
             if (body == null) {
                 requestDeferred.complete(null)
                 return@withContext null
             }
-            
+
             body.imdbId?.let { imdbId ->
                 Log.d(TAG, "Found IMDB ID: $imdbId for TMDB: $tmdbId")
-                
+
                 // Cache both directions
                 cacheMutex.withLock {
                     tmdbToImdbCache[tmdbId] = imdbId
@@ -218,14 +237,14 @@ class TmdbService @Inject constructor(
                 }
 
                 requestDeferred.complete(imdbId)
-                 
+
                 return@withContext imdbId
             }
-            
+
             Log.w(TAG, "No IMDB ID found for TMDB: $tmdbId")
             requestDeferred.complete(null)
             null
-            
+
         } catch (e: CancellationException) {
             requestDeferred.cancel(e)
             throw e
@@ -237,11 +256,11 @@ class TmdbService @Inject constructor(
             tmdbToImdbInFlight.remove(requestKey, requestDeferred)
         }
     }
-    
+
     /**
      * Get a TMDB ID from a video ID string.
      * Handles both IMDB IDs (tt...) and TMDB IDs.
-     * 
+     *
      * @param videoId The video ID (can be IMDB or TMDB format)
      * @param mediaType The media type
      * @return The TMDB ID as a string, or null if conversion failed
@@ -259,23 +278,23 @@ class TmdbService @Inject constructor(
             .substringBefore(':')
             .substringBefore('/')
             .trim()
-        
+
         // If it's an IMDB ID, convert it
         if (idPart.startsWith("tt")) {
             val tmdbId = imdbToTmdb(idPart, normalizeMediaType(mediaType))
             return tmdbId?.toString()
         }
-        
+
         // If it looks like a numeric ID, assume it's already a TMDB ID
         if (idPart.all { it.isDigit() }) {
             return idPart
         }
-        
+
         // Unknown format
         Log.w(TAG, "Unknown video ID format: $videoId")
         return null
     }
-    
+
     /**
      * Normalize media type to consistent format
      */
@@ -286,7 +305,7 @@ class TmdbService @Inject constructor(
             else -> mediaType.lowercase()
         }
     }
-    
+
     /**
      * Clear all caches
      */
@@ -297,145 +316,170 @@ class TmdbService @Inject constructor(
      */
         suspend fun fetchImagesForTitleQuery(query: String, mediaTypeHint: String = "movie"): TmdbImages? =
         withContext(Dispatchers.IO) {
-            val cleanQuery = query.trim()
+            val cleanQuery = cleanTmdbTitleQuery(query)
             if (cleanQuery.length < 2 || TMDB_API_KEY.isBlank()) return@withContext null
 
             fun titleScore(title: String?, originalLanguage: String? = null): Int =
                 tmdbTitleMatchScore(cleanQuery, title, originalLanguage)
 
-            suspend fun searchMovieBest(): Pair<Int, TmdbImages>? {
-                val results = tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
+            suspend fun searchMovieBest(language: String): Pair<Int, TmdbImages>? {
+                val results = tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, language, 1, false)
                     .body()?.results.orEmpty()
                     .filter { !it.posterPath.isNullOrBlank() || !it.backdropPath.isNullOrBlank() }
                 val result = results.maxByOrNull { titleScore(it.title ?: it.originalTitle, it.originalLanguage) } ?: return null
                 val score = titleScore(result.title ?: result.originalTitle, result.originalLanguage)
                 if (score < 60) return null
-                val frPosterUrl = runCatching {
+                val posterUrl = runCatching {
                     tmdbApi.getMovieImages(result.id, TMDB_API_KEY, "fr,en,null")
                         .body()?.posters
                         ?.sortedWith(compareBy { when (it.iso6391) { "fr" -> 0; "en" -> 1; else -> 2 } })
                         ?.firstOrNull { !it.filePath.isNullOrBlank() }
                         ?.filePath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                }.getOrNull()
+                }.getOrNull() ?: result.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 return score to TmdbImages(
                     backdropUrl = result.backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
-                    posterUrl = frPosterUrl ?: result.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" },
+                    posterUrl = posterUrl,
                     runtimeMinutes = null
                 )
             }
 
-            suspend fun searchTvBest(): Pair<Int, TmdbImages>? {
-                val results = tmdbApi.searchTv(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
+            suspend fun searchTvBest(language: String): Pair<Int, TmdbImages>? {
+                val results = tmdbApi.searchTv(TMDB_API_KEY, cleanQuery, language, 1, false)
                     .body()?.results.orEmpty()
                     .filter { !it.posterPath.isNullOrBlank() || !it.backdropPath.isNullOrBlank() }
                 val result = results.maxByOrNull { titleScore(it.name ?: it.originalName, it.originalLanguage) } ?: return null
                 val score = titleScore(result.name ?: result.originalName, result.originalLanguage)
                 if (score < 60) return null
-                val frPosterUrl = runCatching {
+                val posterUrl = runCatching {
                     tmdbApi.getTvImages(result.id, TMDB_API_KEY, "fr,en,null")
                         .body()?.posters
                         ?.sortedWith(compareBy { when (it.iso6391) { "fr" -> 0; "en" -> 1; else -> 2 } })
                         ?.firstOrNull { !it.filePath.isNullOrBlank() }
                         ?.filePath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                }.getOrNull()
+                }.getOrNull() ?: result.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 return score to TmdbImages(
                     backdropUrl = result.backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
-                    posterUrl = frPosterUrl ?: result.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" },
+                    posterUrl = posterUrl,
                     runtimeMinutes = null
                 )
             }
 
-            runCatching {
-                val movieResult = runCatching { searchMovieBest() }.getOrNull()
-                val tvResult = runCatching { searchTvBest() }.getOrNull()
-                val best = listOfNotNull(movieResult, tvResult).maxByOrNull { it.first }
-                best?.second ?: if (normalizeMediaType(mediaTypeHint) == "tv") tvResult?.second ?: movieResult?.second
-                               else movieResult?.second ?: tvResult?.second
-            }.getOrNull()
+            val frMovieResult = runCatching { searchMovieBest("fr-FR") }.getOrNull()
+            val frTvResult = runCatching { searchTvBest("fr-FR") }.getOrNull()
+            val bestFr = listOfNotNull(frMovieResult, frTvResult).maxByOrNull { it.first }
+            bestFr?.takeIf { it.first >= 80 }?.let { return@withContext it.second }
+            val enMovieResult = runCatching { searchMovieBest("en-US") }.getOrNull()
+            val enTvResult = runCatching { searchTvBest("en-US") }.getOrNull()
+            val bestEn = listOfNotNull(enMovieResult, enTvResult).maxByOrNull { it.first }
+            val best = listOfNotNull(bestFr, bestEn).maxByOrNull { it.first }
+            best?.second ?: if (normalizeMediaType(mediaTypeHint) == "tv") frTvResult?.second ?: frMovieResult?.second
+                           else frMovieResult?.second ?: frTvResult?.second
         }
     suspend fun fetchPosterCandidatesForTitleQuery(
         query: String,
         mediaTypeHint: String = "movie"
     ): List<TmdbPosterCandidate> = withContext(Dispatchers.IO) {
-        val cleanQuery = query.trim()
+        val cleanQuery = cleanTmdbTitleQuery(query)
         if (cleanQuery.length < 2 || TMDB_API_KEY.isBlank()) return@withContext emptyList()
+        val preferredType = normalizeMediaType(mediaTypeHint)
 
         data class Candidate(
             val id: Int,
             val mediaType: String,
             val title: String,
-            val posterPath: String,
+            val posterPath: String?,
+            val backdropPath: String?,
             val releaseDate: String?,
             val overview: String?,
             val score: Int
         )
 
-        runCatching {
-            val preferredType = normalizeMediaType(mediaTypeHint)
-            val movieCandidates = runCatching {
-                tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
-                    .body()?.results.orEmpty()
-                    .mapNotNull { result ->
-                        val title = result.title ?: result.originalTitle ?: return@mapNotNull null
-                        val posterPath = result.posterPath ?: return@mapNotNull null
-                        val score = tmdbCandidateTitleScore(cleanQuery, title, result.originalLanguage)
-                        if (score < 45) return@mapNotNull null
-                        Candidate(
-                            id = result.id,
-                            mediaType = "movie",
-                            title = title,
-                            posterPath = posterPath,
-                            releaseDate = result.releaseDate,
-                            overview = result.overview,
-                            score = score
-                        )
-                    }
-            }.getOrDefault(emptyList())
-            val tvCandidates = runCatching {
-                tmdbApi.searchTv(TMDB_API_KEY, cleanQuery, "fr-FR", 1, false)
-                    .body()?.results.orEmpty()
-                    .mapNotNull { result ->
+        fun List<Candidate>.normalizeLanguage(): List<Candidate> = this
+            .distinctBy { "${it.mediaType}:${it.id}" }
+            .sortedWith(
+                compareByDescending<Candidate> { it.score }
+                    .thenByDescending { it.mediaType == preferredType }
+                    .thenByDescending { it.releaseDate }
+            )
+
+        suspend fun searchCandidates(language: String): List<Candidate> = try {
+            if (preferredType == "tv") {
+                tmdbApi.searchTv(TMDB_API_KEY, cleanQuery, language, 1, false)
+                    .body()?.results.orEmpty().mapNotNull { result ->
                         val title = result.name ?: result.originalName ?: return@mapNotNull null
-                        val posterPath = result.posterPath ?: return@mapNotNull null
+                        if (result.posterPath.isNullOrBlank() && result.backdropPath.isNullOrBlank()) return@mapNotNull null
                         val score = tmdbCandidateTitleScore(cleanQuery, title, result.originalLanguage)
-                        if (score < 45) return@mapNotNull null
+                        if (score < 30) return@mapNotNull null
                         Candidate(
                             id = result.id,
                             mediaType = "tv",
                             title = title,
-                            posterPath = posterPath,
+                            posterPath = result.posterPath,
+                            backdropPath = result.backdropPath,
                             releaseDate = result.firstAirDate,
                             overview = result.overview,
                             score = score
                         )
                     }
-            }.getOrDefault(emptyList())
+            } else {
+                tmdbApi.searchMovies(TMDB_API_KEY, cleanQuery, language, 1, false)
+                    .body()?.results.orEmpty().mapNotNull { result ->
+                        val title = result.title ?: result.originalTitle ?: return@mapNotNull null
+                        if (result.posterPath.isNullOrBlank() && result.backdropPath.isNullOrBlank()) return@mapNotNull null
+                        val score = tmdbCandidateTitleScore(cleanQuery, title, result.originalLanguage)
+                        if (score < 30) return@mapNotNull null
+                        Candidate(
+                            id = result.id,
+                            mediaType = "movie",
+                            title = title,
+                            posterPath = result.posterPath,
+                            backdropPath = result.backdropPath,
+                            releaseDate = result.releaseDate,
+                            overview = result.overview,
+                            score = score
+                        )
+                    }
+            }
+        } catch (t: Throwable) {
+            emptyList()
+        }
 
-            (movieCandidates + tvCandidates)
-                .distinctBy { "${it.mediaType}:${it.id}" }
-                .sortedWith(
-                    compareByDescending<Candidate> { it.score }
-                        .thenByDescending { it.mediaType == preferredType }
-                        .thenByDescending { it.releaseDate }
-                )
-                .take(8)
-                .map { candidate ->
+        val frCandidates = searchCandidates("fr-FR")
+        val enCandidates = if (frCandidates.isEmpty()) searchCandidates("en-US") else emptyList()
+        val candidates = (frCandidates + enCandidates).normalizeLanguage().take(8)
+
+        candidates.flatMap { candidate ->
+            listOfNotNull(
+                candidate.posterPath?.let { path ->
                     TmdbPosterCandidate(
-                        url = "https://image.tmdb.org/t/p/w500${candidate.posterPath}",
-                        language = "fr",
+                        url = "https://image.tmdb.org/t/p/w500$path",
+                        language = null,
                         title = candidate.title,
                         releaseDate = candidate.releaseDate,
                         overview = candidate.overview,
-                        mediaType = candidate.mediaType
+                        mediaType = candidate.mediaType,
+                        artworkType = TmdbArtworkType.PORTRAIT
+                    )
+                },
+                candidate.backdropPath?.let { path ->
+                    TmdbPosterCandidate(
+                        url = "https://image.tmdb.org/t/p/w780$path",
+                        language = null,
+                        title = candidate.title,
+                        releaseDate = candidate.releaseDate,
+                        overview = candidate.overview,
+                        mediaType = candidate.mediaType,
+                        artworkType = TmdbArtworkType.LANDSCAPE
                     )
                 }
-        }.getOrDefault(emptyList())
+            )
+        }
     }
 
 
     suspend fun fetchMetadataForTitleQuery(query: String, mediaTypeHint: String = "movie"): FreeboxVideoMeta? =
         withContext(Dispatchers.IO) {
-            val cleanQuery = query.trim()
+            val cleanQuery = cleanTmdbTitleQuery(query)
             if (cleanQuery.length < 2 || TMDB_API_KEY.isBlank()) return@withContext null
 
             fun titleScore(title: String?, originalLanguage: String? = null): Int =
@@ -456,12 +500,15 @@ class TmdbService @Inject constructor(
                         ?.filePath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 }.getOrNull()
                 return score to FreeboxVideoMeta(
+                    tmdbId = result.id,
+                    mediaType = "movie",
                     posterUrl = frPoster ?: result.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" },
                     backdropUrl = result.backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
                     overview = details?.overview?.takeIf { it.isNotBlank() } ?: result.overview?.takeIf { it.isNotBlank() },
                     voteAverage = details?.voteAverage ?: result.voteAverage,
                     year = (details?.releaseDate ?: result.releaseDate)?.take(4),
-                    genres = details?.genres?.map { it.name } ?: emptyList()
+                    genres = details?.genres?.map { it.name } ?: emptyList(),
+                    runtimeMinutes = details?.runtime
                 )
             }
 
@@ -480,12 +527,15 @@ class TmdbService @Inject constructor(
                         ?.filePath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 }.getOrNull()
                 return score to FreeboxVideoMeta(
+                    tmdbId = result.id,
+                    mediaType = "series",
                     posterUrl = frPoster ?: result.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" },
                     backdropUrl = result.backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
                     overview = details?.overview?.takeIf { it.isNotBlank() } ?: result.overview?.takeIf { it.isNotBlank() },
                     voteAverage = details?.voteAverage ?: result.voteAverage,
                     year = (details?.firstAirDate ?: result.firstAirDate)?.take(4),
-                    genres = details?.genres?.map { it.name } ?: emptyList()
+                    genres = details?.genres?.map { it.name } ?: emptyList(),
+                    runtimeMinutes = details?.episodeRunTime?.firstOrNull()
                 )
             }
 
@@ -498,7 +548,7 @@ class TmdbService @Inject constructor(
             }.getOrNull()
         }
 
-        
+
 
         fun clearCache() {
         imdbToTmdbCache.clear()
@@ -507,7 +557,7 @@ class TmdbService @Inject constructor(
         tmdbToImdbInFlight.clear()
         Log.d(TAG, "Cache cleared")
     }
-    
+
     /**
      * Pre-populate cache with known mappings
      */
@@ -548,13 +598,21 @@ class TmdbService @Inject constructor(
 
 
 data class FreeboxVideoMeta(
+    val tmdbId: Int? = null,
+    val mediaType: String? = null,
     val posterUrl: String?,
     val backdropUrl: String?,
     val overview: String?,
     val voteAverage: Double?,
     val year: String?,
-    val genres: List<String>
+    val genres: List<String>,
+    val runtimeMinutes: Int? = null
 )
+
+enum class TmdbArtworkType {
+    PORTRAIT,
+    LANDSCAPE
+}
 
 data class TmdbPosterCandidate(
     val url: String,
@@ -562,7 +620,8 @@ data class TmdbPosterCandidate(
     val title: String? = null,
     val releaseDate: String? = null,
     val overview: String? = null,
-    val mediaType: String? = null
+    val mediaType: String? = null,
+    val artworkType: TmdbArtworkType = TmdbArtworkType.PORTRAIT
 )
 data class TmdbImages(val backdropUrl: String?, val posterUrl: String?, val runtimeMinutes: Int? = null)
 

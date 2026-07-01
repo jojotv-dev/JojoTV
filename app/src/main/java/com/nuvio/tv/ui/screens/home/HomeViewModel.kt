@@ -11,6 +11,7 @@ import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.recommendations.TvRecommendationManager
 import com.nuvio.tv.core.tmdb.TmdbMetadataService
 import com.nuvio.tv.core.tmdb.TmdbService
+import com.nuvio.tv.core.tmdb.FreeboxVideoMeta
 import com.nuvio.tv.data.local.AuthSessionNoticeDataStore
 import com.nuvio.tv.data.local.CollectionsDataStore
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
@@ -31,6 +32,7 @@ import com.nuvio.tv.data.freebox.freeboxLegacyContentIdFor
 import com.nuvio.tv.data.freebox.freeboxPathFromContentId
 import com.nuvio.tv.data.local.FreeboxSettingsDataStore
 import com.nuvio.tv.data.local.FreeboxPosterOverrideDataStore
+import com.nuvio.tv.data.video.VideoFrameThumbnailService
 import com.nuvio.tv.data.trailer.TrailerService
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.CatalogDescriptor
@@ -95,6 +97,7 @@ class HomeViewModel @Inject constructor(
     internal val watchedItemsPreferences: WatchedItemsPreferences,
     internal val freeboxOsClient: FreeboxOsClient,
     internal val freeboxFrameThumbnailService: FreeboxFrameThumbnailService,
+    internal val videoFrameThumbnailService: VideoFrameThumbnailService,
     internal val freeboxSettingsDataStore: FreeboxSettingsDataStore,
     internal val freeboxDurationCacheDataStore: com.nuvio.tv.data.local.FreeboxDurationCacheDataStore,
     internal val freeboxPosterOverrideDataStore: FreeboxPosterOverrideDataStore,
@@ -133,7 +136,10 @@ class HomeViewModel @Inject constructor(
     private val freeboxDurationProbesInFlight = Collections.synchronizedSet(mutableSetOf<String>())
     @Volatile private var freeboxAutomaticArtwork: Map<String, String> = emptyMap()
     @Volatile private var freeboxAutomaticBackdrops: Map<String, String> = emptyMap()
-    @Volatile private var freeboxPosterOverrides: Map<String, String> = emptyMap()
+    @Volatile private var freeboxAutomaticMetadata: Map<String, FreeboxVideoMeta> = emptyMap()
+    @Volatile internal var freeboxPosterOverrides: Map<String, String> = emptyMap()
+    @Volatile private var freeboxOverviewOverrides: Map<String, String> = emptyMap()
+    @Volatile internal var freeboxBackdropOverrides: Map<String, String> = emptyMap()
     @Volatile internal var iptvFavoriteRows: List<HomeRow.Catalog> = emptyList()
 
     internal val _movieWatchedStatus = MutableStateFlow<Map<String, Boolean>>(emptyMap())
@@ -320,6 +326,18 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             freeboxPosterOverrideDataStore.overrides.collectLatest { overrides ->
                 freeboxPosterOverrides = overrides
+                publishFreeboxArtwork()
+            }
+        }
+        viewModelScope.launch {
+            freeboxPosterOverrideDataStore.backdropOverrides.collectLatest { overrides ->
+                freeboxBackdropOverrides = overrides
+                publishFreeboxArtwork()
+            }
+        }
+        viewModelScope.launch {
+            freeboxPosterOverrideDataStore.overviewOverrides.collectLatest { overrides ->
+                freeboxOverviewOverrides = overrides
                 publishFreeboxArtwork()
             }
         }
@@ -1044,8 +1062,62 @@ class HomeViewModel @Inject constructor(
         val directory = path.substringBeforeLast("/", missingDelimiterValue = "")
         return if (directory.isBlank()) newName else "$directory/$newName"
     }
+
+    fun deleteFreeboxVideoFromHome(entry: FreeboxFileEntry) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val contentId = freeboxContentIdForEntry(entry)
+            val legacyContentId = freeboxLegacyContentIdFor(contentId)
+            _uiState.update { state ->
+                state.copy(
+                    freeboxVideoEntries = state.freeboxVideoEntries.filterNot { current ->
+                        current.path == entry.path
+                    },
+                    freeboxVideoArtwork = state.freeboxVideoArtwork
+                        .minus(contentId)
+                        .minus(legacyContentId),
+                    freeboxVideoBackdrops = state.freeboxVideoBackdrops
+                        .minus(contentId)
+                        .minus(legacyContentId),
+                    freeboxVideoProbedDurations = state.freeboxVideoProbedDurations.minus(entry.path),
+                    continueWatchingItems = state.continueWatchingItems.filterNot { item ->
+                        item is ContinueWatchingItem.InProgress &&
+                            (item.progress.contentId == contentId ||
+                                item.progress.contentId == legacyContentId ||
+                                freeboxPathFromContentId(item.progress.contentId) == entry.path)
+                    }
+                )
+            }
+
+            try {
+                val settings = freeboxSettingsDataStore.settings.first()
+                val token = freeboxOsClient.openSession(settings).getOrNull()?.sessionToken
+                    ?: throw IllegalStateException("Session Freebox indisponible")
+                freeboxOsClient.deleteFiles(settings.copy(sessionToken = token), listOf(entry)).getOrThrow()
+
+                val allProgress = watchProgressRepository.allProgress.first()
+                allProgress
+                    .filter { progress ->
+                        progress.contentId == contentId ||
+                            progress.contentId == legacyContentId ||
+                            freeboxPathFromContentId(progress.contentId) == entry.path
+                    }
+                    .forEach { progress ->
+                        watchProgressRepository.removeProgress(progress.contentId, progress.season, progress.episode)
+                        pruneStaleFreeboxFromContinueWatchingCache(progress.contentId)
+                    }
+
+                loadFreeboxVideos()
+            } catch (error: Exception) {
+                Log.w(TAG, "Impossible de supprimer le fichier Freebox depuis l'accueil: ${entry.path}", error)
+                _uiState.update { it.copy(error = error.message ?: "Erreur lors de la suppression Freebox.") }
+                loadFreeboxVideos()
+            }
+        }
+    }
+
     private fun publishFreeboxArtwork() {
         val artwork = freeboxAutomaticArtwork + freeboxPosterOverrides
+        val backdrops = freeboxAutomaticBackdrops + freeboxBackdropOverrides
         _uiState.update { state ->
             val enrichedCw = state.continueWatchingItems.map { item ->
                 if (item is ContinueWatchingItem.InProgress &&
@@ -1056,10 +1128,18 @@ class HomeViewModel @Inject constructor(
                     item.copy(
                         progress = item.progress.copy(
                             poster = artwork[contentId] ?: item.progress.poster,
-                            backdrop = freeboxAutomaticBackdrops[contentId]
+                            backdrop = backdrops[contentId]
                                 ?: artwork[contentId]
                                 ?: item.progress.backdrop,
-                        )
+                        ),
+                        episodeDescription = freeboxOverviewOverrides[contentId]
+                            ?: freeboxAutomaticMetadata[contentId]?.overview
+                            ?: item.episodeDescription,
+                        genres = freeboxAutomaticMetadata[contentId]?.genres
+                            ?.takeIf { it.isNotEmpty() }
+                            ?: item.genres,
+                        releaseInfo = freeboxAutomaticMetadata[contentId]?.year
+                            ?: item.releaseInfo
                     )
                 } else {
                     item
@@ -1067,7 +1147,36 @@ class HomeViewModel @Inject constructor(
             }
             state.copy(
                 freeboxVideoArtwork = artwork,
-                freeboxVideoBackdrops = freeboxAutomaticBackdrops,
+                freeboxVideoBackdrops = backdrops,
+                freeboxVideoMetadata = buildMap {
+                    freeboxAutomaticMetadata.forEach { (key, meta) ->
+                        put(
+                            key,
+                            freeboxOverviewOverrides[key]
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { customOverview -> meta.copy(overview = customOverview) }
+                                ?: meta
+                        )
+                    }
+                    freeboxOverviewOverrides.forEach { (key, customOverview) ->
+                        if (key !in this && customOverview.isNotBlank()) {
+                            put(
+                                key,
+                                FreeboxVideoMeta(
+                                    tmdbId = null,
+                                    mediaType = null,
+                                    posterUrl = freeboxPosterOverrides[key] ?: freeboxAutomaticArtwork[key],
+                                    backdropUrl = freeboxBackdropOverrides[key] ?: freeboxAutomaticBackdrops[key],
+                                    overview = customOverview,
+                                    voteAverage = null,
+                                    year = null,
+                                    genres = emptyList(),
+                                    runtimeMinutes = null
+                                )
+                            )
+                        }
+                    }
+                },
                 continueWatchingItems = enrichedCw
             )
         }
@@ -1089,6 +1198,7 @@ class HomeViewModel @Inject constructor(
                         // Charger les artworks TMDB en arriere-plan
                         val artworkMap = mutableMapOf<String, String>()
                         val backdropMap = mutableMapOf<String, String>()
+                        val metadataMap = mutableMapOf<String, FreeboxVideoMeta>()
                         videos.forEach { entry ->
                             try {
                                 val contentId = freeboxContentIdForEntry(entry)
@@ -1101,18 +1211,23 @@ class HomeViewModel @Inject constructor(
                                     artworkMap[contentId] = artwork
                                 }
                                 val backdrop = meta?.backdropUrl ?: artwork
+                                if (meta != null) {
+                                    metadataMap[contentId] = meta
+                                }
                                 if (!backdrop.isNullOrBlank()) {
                                     backdropMap[contentId] = backdrop
                                 }
                                 if (!artwork.isNullOrBlank() || !backdrop.isNullOrBlank()) {
                                     freeboxAutomaticArtwork = artworkMap.toMap()
                                     freeboxAutomaticBackdrops = backdropMap.toMap()
+                                    freeboxAutomaticMetadata = metadataMap.toMap()
                                     publishFreeboxArtwork()
                                 }
                             } catch (_: Exception) {}
                         }
                         freeboxAutomaticArtwork = artworkMap
                         freeboxAutomaticBackdrops = backdropMap
+                        freeboxAutomaticMetadata = metadataMap
                         publishFreeboxArtwork()
                     }
             } catch (e: Exception) {

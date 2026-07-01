@@ -18,6 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -31,6 +32,11 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -54,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(
@@ -139,6 +146,7 @@ internal fun ModernHomeRowsList(
     onNavigateToFreebox: (String, String?) -> Unit = { _, _ -> },
     freeboxVideoArtwork: Map<String, String> = emptyMap(),
     freeboxVideoBackdrops: Map<String, String> = emptyMap(),
+    freeboxVideoMetadata: Map<String, com.nuvio.tv.core.tmdb.FreeboxVideoMeta> = emptyMap(),
     freeboxVideoProbedDurations: Map<String, Long> = emptyMap(),
     onDeleteFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry) -> Unit = {},
     onRenameFreeboxVideo: (com.nuvio.tv.data.freebox.FreeboxFileEntry, String) -> Unit = { _, _ -> },
@@ -157,6 +165,8 @@ internal fun ModernHomeRowsList(
 
     val density = LocalDensity.current
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val coroutineScope = rememberCoroutineScope()
     val verticalPrefetchImageLoader = context.imageLoader
     val movieFavoritesRowSuffix = "_${HomeViewModel.IPTV_MOVIE_FAVORITES_CATALOG_ID}"
     val seriesFavoritesRowSuffix = "_${HomeViewModel.IPTV_SERIES_FAVORITES_CATALOG_ID}"
@@ -176,6 +186,24 @@ internal fun ModernHomeRowsList(
             rows.filterNot { it.key in prioritizedKeys }.forEach { add(it.key to it) }
         }
     }
+    fun rowEntryFocusRequester(rowKey: String): FocusRequester {
+        val rowRequester = rowFocusRequesters.getOrPut(rowKey) { FocusRequester() }
+        val itemRequesters = stableItemFocusRequestersByRow[rowKey]?.value
+        val row = orderedRows.firstOrNull { it.first == rowKey }?.second
+        val targetIndex = when {
+            rowKey == MODERN_CONTINUE_WATCHING_ROW_KEY -> lastFocusedContinueWatchingIndex.value
+            row != null -> focusedItemByRowMap[rowKey] ?: 0
+            else -> 0
+        }.coerceAtLeast(0)
+        val safeIndex = row?.items?.list?.lastIndex
+            ?.takeIf { it >= 0 }
+            ?.let { lastIndex -> targetIndex.coerceIn(0, lastIndex) }
+            ?: targetIndex
+
+        return itemRequesters?.get(safeIndex)
+            ?: itemRequesters?.get(0)
+            ?: rowRequester
+    }
     val latestOrderedRowsForLazy = rememberUpdatedState(orderedRows)
 
     LaunchedEffect(verticalPrefetchImageLoader, density) {
@@ -193,20 +221,22 @@ internal fun ModernHomeRowsList(
                         for (i in 0 until minOf(prefetchItemsPerRow, row.items.list.size)) {
                             val item = row.items.list[i]
                             val url = item.imageUrl ?: continue
-                            val metrics = item.catalogCardRequestMetrics(
-                                useLandscapePosters = when {
-                                    row.key.endsWith(movieFavoritesRowSuffix) -> !movieFavoritesPortraitMode
-                                    row.key.endsWith(seriesFavoritesRowSuffix) -> !seriesFavoritesPortraitMode
-                                    else -> useLandscapePosters
-                                },
-                                portraitCardWidth = portraitCatalogCardWidth,
-                                portraitCardHeight = portraitCatalogCardHeight,
-                                landscapeCardWidth = landscapeCatalogCardWidth,
-                                landscapeCardHeight = landscapeCatalogCardHeight,
-                                expandEnabled = effectiveExpandEnabled
-                            )
-                            val wPx = with(density) { metrics.width.roundToPx() }
-                            val hPx = with(density) { metrics.height.roundToPx() }
+                            val isIptvFavoriteRow = row.key.endsWith(movieFavoritesRowSuffix) ||
+                                row.key.endsWith(seriesFavoritesRowSuffix)
+                            val metrics = if (isIptvFavoriteRow) {
+                                null
+                            } else {
+                                item.catalogCardRequestMetrics(
+                                    useLandscapePosters = useLandscapePosters,
+                                    portraitCardWidth = portraitCatalogCardWidth,
+                                    portraitCardHeight = portraitCatalogCardHeight,
+                                    landscapeCardWidth = landscapeCatalogCardWidth,
+                                    landscapeCardHeight = landscapeCatalogCardHeight,
+                                    expandEnabled = effectiveExpandEnabled
+                                )
+                            }
+                            val wPx = with(density) { (metrics?.width ?: videoCardWidth).roundToPx() }
+                            val hPx = with(density) { (metrics?.height ?: videoCardHeight).roundToPx() }
                             val cacheKey = "${url}_${wPx}x${hPx}"
                             if (verticalPrefetchImageLoader.memoryCache?.get(MemoryCache.Key(cacheKey)) != null) continue
                             verticalPrefetchImageLoader.enqueue(
@@ -290,7 +320,34 @@ internal fun ModernHomeRowsList(
                 .clipToBounds()
                 .graphicsLayer { alpha = trailerContentAlpha() }
                 .focusRequester(contentFocusRequester)
-                .focusRestorer(focusRestorerRequester)
+                .focusRestorer(focusRestorerRequester())
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionUp) {
+                        return@onPreviewKeyEvent false
+                    }
+                    if (activeRowKey.value != "freebox_videos") {
+                        return@onPreviewKeyEvent false
+                    }
+
+                    val continueWatchingRowIndex = orderedRows.indexOfFirst {
+                        it.first == MODERN_CONTINUE_WATCHING_ROW_KEY
+                    }
+                    if (continueWatchingRowIndex < 0) {
+                        return@onPreviewKeyEvent false
+                    }
+
+                    val targetIndex = lastFocusedContinueWatchingIndex.value.coerceAtLeast(0)
+                    val targetRequester = rowEntryFocusRequester(MODERN_CONTINUE_WATCHING_ROW_KEY)
+                    focusedItemByRowMap[MODERN_CONTINUE_WATCHING_ROW_KEY] = targetIndex
+                    latestOnActiveRowKeyChange.value(MODERN_CONTINUE_WATCHING_ROW_KEY)
+                    latestOnActiveItemIndexChange.value(targetIndex)
+
+                    coroutineScope.launch {
+                        runCatching { verticalRowListState.scrollToItem(continueWatchingRowIndex) }
+                        runCatching { targetRequester.requestFocus() }
+                    }
+                    true
+                }
                 .dpadVerticalFastScroll(
                     scrollableState = verticalRowListState,
                     onFastScrollingChanged = onFastScrollingChanged,
@@ -323,17 +380,24 @@ internal fun ModernHomeRowsList(
                                     ?: visibleItems.firstOrNull()?.index
                                     ?: verticalRowListState.firstVisibleItemIndex
                         }
-                        val targetRow = orderedRows.getOrNull(targetRowIndex)?.second
-                        if (targetRow == null) null
+                        val targetEntry = orderedRows.getOrNull(targetRowIndex)
+                        if (targetEntry == null) null
                         else {
-                            val savedIdx = (focusedItemByRowMap[targetRow.key] ?: 0)
-                                .coerceIn(0, (targetRow.items.list.size - 1).coerceAtLeast(0))
-                            latestOnActiveRowKeyChange.value(targetRow.key)
-                            latestOnActiveItemIndexChange.value(savedIdx)
+                            val (targetKey, targetRow) = targetEntry
+                            if (targetRow == null) {
+                                latestOnActiveRowKeyChange.value(targetKey)
+                                latestOnActiveItemIndexChange.value(0)
+                                targetKey
+                            } else {
+                                val savedIdx = (focusedItemByRowMap[targetRow.key] ?: 0)
+                                    .coerceIn(0, (targetRow.items.list.size - 1).coerceAtLeast(0))
+                                latestOnActiveRowKeyChange.value(targetRow.key)
+                                latestOnActiveItemIndexChange.value(savedIdx)
 
-                            val targetItemKey = targetRow.items.list.getOrNull(savedIdx)?.key
-                                ?: "${targetRow.key}_$savedIdx"
-                            targetItemKey
+                                val targetItemKey = targetRow.items.list.getOrNull(savedIdx)?.key
+                                    ?: "${targetRow.key}_$savedIdx"
+                                targetItemKey
+                            }
                         }
                     },
                 ),
@@ -344,9 +408,17 @@ internal fun ModernHomeRowsList(
                 items = orderedRows,
                 key = { _, entry -> entry.first },
                 contentType = { _, entry -> entry.second?.apiType ?: "freebox_videos" }
-            ) { _, entry ->
+            ) { index, entry ->
                 val row = entry.second
                 if (row == null) {
+                    val freeboxEntryFocusRequester = rowFocusRequesters.getOrPut("freebox_videos") { FocusRequester() }
+                    val continueWatchingExists = orderedRows.any { it.first == MODERN_CONTINUE_WATCHING_ROW_KEY }
+                    val freeboxUpRequester = if (continueWatchingExists) {
+                        rowEntryFocusRequester(MODERN_CONTINUE_WATCHING_ROW_KEY)
+                    } else null
+                    val nextRowKey = orderedRows.getOrNull(index + 1)?.first
+                    val freeboxDownRequester = nextRowKey?.let(::rowEntryFocusRequester)
+
                     FreeboxVideosSection(
                         entries = freeboxVideoEntries,
                         probedDurations = freeboxVideoProbedDurations,
@@ -356,6 +428,7 @@ internal fun ModernHomeRowsList(
                         },
                         artworkMap = freeboxVideoArtwork,
                         backdropMap = freeboxVideoBackdrops,
+                        metadataMap = freeboxVideoMetadata,
                         continueWatchingIds = continueWatchingContentIds,
                         cardWidth = videoCardWidth,
                         imageHeight = videoCardHeight,
@@ -366,6 +439,44 @@ internal fun ModernHomeRowsList(
                         },
                         onDeleteFromFreebox = { video -> onDeleteFreeboxVideo(video) },
                         onRenameFreebox = onRenameFreeboxVideo,
+                        onItemFocused = { itemIndex, item ->
+                            val rowBecameActive = activeRowKey.value != "freebox_videos"
+                            val itemChanged = activeItemIndex.value != itemIndex
+
+                            if (rowBecameActive || itemChanged) {
+                                val now = System.currentTimeMillis()
+                                val timeSinceLastHeroNav = now - lastHeroNavigationAtMs.value
+                                onHeroFocusSettleDelayChange(
+                                    if (lastHeroNavigationAtMs.value != 0L &&
+                                        timeSinceLastHeroNav in 1 until 130L // MODERN_HERO_RAPID_NAV_THRESHOLD_MS
+                                    ) 400L // MODERN_HERO_RAPID_NAV_SETTLE_MS
+                                    else 450L // MODERN_HERO_FOCUS_DEBOUNCE_MS
+                                )
+                                onLastHeroNavigationAtMsChange(now)
+                                onActiveRowKeyChange("freebox_videos")
+                                onActiveItemIndexChange(itemIndex)
+                            }
+
+                            if (focusedItemByRowMap["freebox_videos"] != itemIndex) {
+                                focusedItemByRowMap["freebox_videos"] = itemIndex
+                            }
+                            onItemFocus(item)
+                        },
+                        entryFocusRequester = freeboxEntryFocusRequester,
+                        upFocusRequester = freeboxUpRequester,
+                        downFocusRequester = freeboxDownRequester,
+                        onMoveUp = if (freeboxUpRequester != null) {
+                            {
+                                val targetIndex = lastFocusedContinueWatchingIndex.value.coerceAtLeast(0)
+                                focusedItemByRowMap[MODERN_CONTINUE_WATCHING_ROW_KEY] = targetIndex
+                                latestOnActiveRowKeyChange.value(MODERN_CONTINUE_WATCHING_ROW_KEY)
+                                latestOnActiveItemIndexChange.value(targetIndex)
+                                runCatching { freeboxUpRequester.requestFocus() }.getOrDefault(false) ||
+                                    runCatching { focusManager.moveFocus(FocusDirection.Up) }.getOrDefault(false)
+                            }
+                        } else {
+                            null
+                        }
                     )
                     return@itemsIndexed
                 }
@@ -376,7 +487,7 @@ internal fun ModernHomeRowsList(
                     { rowKey: String, index: Int, isContinueWatchingRow: Boolean ->
                         val rowBecameActive = activeRowKey.value != rowKey
                         val itemChanged = activeItemIndex.value != index
-                        
+
                         if (rowBecameActive || itemChanged) {
                             val now = System.currentTimeMillis()
                             val timeSinceLastHeroNav = now - lastHeroNavigationAtMs.value
@@ -421,6 +532,8 @@ internal fun ModernHomeRowsList(
                         }
                     }
                 }
+                val useIptvVideoCardTreatment = row.key.endsWith(movieFavoritesRowSuffix) ||
+                    row.key.endsWith(seriesFavoritesRowSuffix)
                 ModernRowSection(
                     row = row,
                     isActiveRow = isActiveRowLambda,
@@ -437,10 +550,11 @@ internal fun ModernHomeRowsList(
                     onPendingRowFocusCleared = onPendingRowFocusCleared,
                     onRowItemFocused = stableOnRowItemFocused,
                     useLandscapePosters = when {
-                        row.key.endsWith(movieFavoritesRowSuffix) -> !movieFavoritesPortraitMode
-                        row.key.endsWith(seriesFavoritesRowSuffix) -> !seriesFavoritesPortraitMode
+                        row.key.endsWith(movieFavoritesRowSuffix) -> false
+                        row.key.endsWith(seriesFavoritesRowSuffix) -> false
                         else -> useLandscapePosters
                     },
+                    useVideoCardTreatment = useIptvVideoCardTreatment,
                     showLabels = showLabels,
                     posterCardCornerRadius = posterCardCornerRadius,
                     focusedPosterBackdropTrailerMuted = focusedPosterBackdropTrailerMuted,
@@ -450,8 +564,8 @@ internal fun ModernHomeRowsList(
                     expandedCatalogFocusKey = expandedCatalogFocusKey,
                     expandedTrailerPreviewUrl = expandedTrailerPreviewUrl,
                     expandedTrailerPreviewAudioUrl = expandedTrailerPreviewAudioUrl,
-                    portraitCatalogCardWidth = portraitCatalogCardWidth,
-                    portraitCatalogCardHeight = portraitCatalogCardHeight,
+                    portraitCatalogCardWidth = if (useIptvVideoCardTreatment) videoCardWidth else portraitCatalogCardWidth,
+                    portraitCatalogCardHeight = if (useIptvVideoCardTreatment) videoCardHeight else portraitCatalogCardHeight,
                     landscapeCatalogCardWidth = landscapeCatalogCardWidth,
                     landscapeCatalogCardHeight = landscapeCatalogCardHeight,
                     continueWatchingCardWidth = continueWatchingCardWidth,

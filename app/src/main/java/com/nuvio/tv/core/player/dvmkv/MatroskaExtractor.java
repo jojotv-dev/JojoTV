@@ -2715,12 +2715,16 @@ public class MatroskaExtractor implements Extractor {
         case CODEC_ID_AAC:
           mimeType = MimeTypes.AUDIO_AAC;
           initializationData = Collections.singletonList(getCodecPrivate(codecId));
-          AacUtil.Config aacConfig = AacUtil.parseAudioSpecificConfig(codecPrivate);
-          // Update sampleRate and channelCount from the AudioSpecificConfig initialization data,
-          // which is more reliable. See [Internal: b/10903778].
-          sampleRate = aacConfig.sampleRateHz;
-          channelCount = aacConfig.channelCount;
-          codecs = aacConfig.codecs;
+          try {
+            AacUtil.Config aacConfig = AacUtil.parseAudioSpecificConfig(codecPrivate);
+            // Update sampleRate and channelCount from the AudioSpecificConfig initialization data,
+            // which is more reliable. See [Internal: b/10903778].
+            sampleRate = aacConfig.sampleRateHz;
+            channelCount = aacConfig.channelCount;
+            codecs = aacConfig.codecs;
+          } catch (Exception e) {
+            Log.w(TAG, "Ignoring invalid AAC AudioSpecificConfig, falling back to default values", e);
+          }
           break;
         case CODEC_ID_AAC_MPEG2_LC_SBR:
           mimeType = MimeTypes.AUDIO_AAC;
@@ -3324,6 +3328,9 @@ public class MatroskaExtractor implements Extractor {
         };
       }
       int config = (2 << 11) | (coreFrequencyIndex << 7) | (channelCount << 3);
+      if (channelCount == 2) {
+        return new byte[] {(byte) 0x2B, (byte) 0x11, (byte) 0x88};
+      }
       return new byte[] {(byte) (config >> 8), (byte) config};
     }
     private static int aacFrequencyIndex(int sampleRate) {

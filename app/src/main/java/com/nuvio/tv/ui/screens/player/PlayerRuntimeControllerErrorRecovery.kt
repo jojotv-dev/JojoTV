@@ -15,6 +15,27 @@ private const val MAX_AUTO_RETRIES = 2
 private const val RETRY_DELAY_MS = 1_500L
 private const val STABLE_PROGRESS_RESET_DELAY_MS = 5_000L
 
+internal fun PlayerRuntimeController.recoveryResumePositionMs(): Long {
+    val duration = maxOf(currentPlaybackDurationMs(), playbackTimeline.value.duration, lastKnownDuration)
+    val savedResume = pendingResumeProgress?.let { saved ->
+        when {
+            duration > 0L -> saved.resolveResumePosition(duration)
+            saved.position > 0L -> saved.position
+            else -> 0L
+        }
+    } ?: 0L
+    return listOf(
+        currentPlaybackPositionMs() ?: 0L,
+        playbackTimeline.value.currentPosition,
+        _uiState.value.pendingSeekPosition ?: 0L,
+        lastSavedPosition,
+        savedResume
+    )
+        .filter { it > 1_000L }
+        .maxOrNull()
+        ?: 0L
+}
+
 internal fun PlayerRuntimeController.showRecoveryOverlay() {
     _uiState.update { state ->
         state.copy(
@@ -212,12 +233,17 @@ internal fun PlayerRuntimeController.attemptFreeboxTokenRefresh(
     if (errorRetryCount >= MAX_AUTO_RETRIES) return false
     errorRetryCount++
     val paused = userPausedManually
+    val savedPosition = recoveryResumePositionMs()
     errorRetryJob?.cancel()
     errorRetryJob = scope.launch {
         showRecoveryOverlay()
         val newHeaders = refresher()
         if (newHeaders != null) {
             currentHeaders = newHeaders
+        }
+        if (savedPosition > 0L) {
+            _uiState.update { it.copy(pendingSeekPosition = savedPosition) }
+            saveWatchProgressInternal(savedPosition, getEffectiveDuration(savedPosition), syncRemote = false)
         }
         releasePlayer(flushPlaybackState = false)
         initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
@@ -242,7 +268,7 @@ internal fun PlayerRuntimeController.attemptAutoRetry(
     )
 
     // Capture the current position so we can resume after re-init.
-    val savedPosition = _exoPlayer?.currentPosition?.takeIf { it > 0L } ?: 0L
+    val savedPosition = recoveryResumePositionMs()
     val isFirstAttempt = attempt == 0
 
     errorRetryJob?.cancel()
@@ -352,8 +378,8 @@ internal fun PlayerRuntimeController.tryAudioTrackPcmFallback(
     hasTriedAudioPcmFallback = true
     pendingAudioPcmFallbackRebuild = true
 
-    val player = _exoPlayer ?: return false
-    val savedPosition = player.currentPosition.takeIf { it > 0L } ?: 0L
+    if (_exoPlayer == null) return false
+    val savedPosition = recoveryResumePositionMs()
     val paused = userPausedManually
 
     Log.d(PlayerRuntimeController.TAG, "Audio track init failed (5001) — rebuilding player with PCM forcing, position=${savedPosition}ms")
@@ -397,7 +423,7 @@ internal fun PlayerRuntimeController.tryDv7HevcFallback(
     forceDv7ToHevc = true
 
     val paused = userPausedManually
-    val savedPosition = _exoPlayer?.currentPosition?.takeIf { it > 0L } ?: 0L
+    val savedPosition = recoveryResumePositionMs()
 
     Log.d(
         PlayerRuntimeController.TAG,

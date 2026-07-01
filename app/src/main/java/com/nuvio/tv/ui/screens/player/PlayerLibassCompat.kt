@@ -116,9 +116,9 @@ private fun ExtractorsFactory.withAssMkvSupportCompat(
             // Replace DvMatroskaExtractor with AssMatroskaExtractor so that libass works.
             // For actual DV content, maybeAdjustLibassPipelineForTracks will detect the DV
             // video track and rebuild the player without libass, restoring DvMatroskaExtractor.
-            if (extractor is DvMatroskaExtractor) {
-                extractors[index] = AssMatroskaExtractor(subtitleParserFactory, assHandler)
-            }
+            // if (extractor is DvMatroskaExtractor) {
+            //     extractors[index] = AssMatroskaExtractor(subtitleParserFactory, assHandler)
+            // }
         }
         extractors
     }

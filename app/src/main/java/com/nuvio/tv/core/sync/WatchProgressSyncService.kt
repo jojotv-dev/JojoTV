@@ -10,6 +10,11 @@ import com.nuvio.tv.data.local.WatchProgressPreferences
 import com.nuvio.tv.data.remote.supabase.SupabaseWatchProgress
 import com.nuvio.tv.data.remote.supabase.SupabaseWatchProgressEvent
 import com.nuvio.tv.domain.model.WatchProgress
+import com.nuvio.tv.ui.screens.iptv.IptvProgressKey
+import com.nuvio.tv.ui.screens.iptv.parseIptvProgressKey
+import com.nuvio.tv.ui.screens.iptv.stableIptvProgressId
+import com.streamvault.domain.repository.MovieRepository
+import com.streamvault.domain.repository.SeriesRepository
 import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +51,9 @@ class WatchProgressSyncService @Inject constructor(
     private val watchProgressPreferences: WatchProgressPreferences,
     private val traktAuthDataStore: TraktAuthDataStore,
     private val traktSettingsDataStore: TraktSettingsDataStore,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val movieRepository: MovieRepository,
+    private val seriesRepository: SeriesRepository
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deltaSyncMutex = Mutex()
@@ -215,18 +222,19 @@ class WatchProgressSyncService @Inject constructor(
         profileId: Int = profileManager.activeProfileId.value
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            val (canonicalKey, canonicalProgress) = canonicalizeProgressPair(key, progress)
             val params = buildJsonObject {
                 put("p_entries", buildJsonArray {
                     addJsonObject {
-                        put("content_id", progress.contentId)
-                        put("content_type", progress.contentType)
-                        put("video_id", progress.videoId)
-                        progress.season?.let { put("season", it) }
-                        progress.episode?.let { put("episode", it) }
-                        put("position", progress.position)
-                        put("duration", progress.duration)
-                        put("last_watched", progress.lastWatched)
-                        put("progress_key", key)
+                        put("content_id", canonicalProgress.contentId)
+                        put("content_type", canonicalProgress.contentType)
+                        put("video_id", canonicalProgress.videoId)
+                        canonicalProgress.season?.let { put("season", it) }
+                        canonicalProgress.episode?.let { put("episode", it) }
+                        put("position", canonicalProgress.position)
+                        put("duration", canonicalProgress.duration)
+                        put("last_watched", canonicalProgress.lastWatched)
+                        put("progress_key", canonicalKey)
                     }
                 })
                 put("p_profile_id", profileId)
@@ -235,7 +243,7 @@ class WatchProgressSyncService @Inject constructor(
                 postgrest.rpc("sync_push_watch_progress", params)
             }
 
-            Log.d(TAG, "Pushed single watch progress entry to remote for profile $profileId (key=$key)")
+            Log.d(TAG, "Pushed single watch progress entry to remote for profile $profileId (key=$canonicalKey)")
             markPushSucceeded()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -455,13 +463,19 @@ class WatchProgressSyncService @Inject constructor(
         )
     }
 
-    private fun canonicalizeForRemote(
+    private suspend fun canonicalizeForRemote(
         rawEntries: Map<String, WatchProgress>
     ): Map<String, WatchProgress> {
         if (rawEntries.isEmpty()) return rawEntries
 
-        val canonical = rawEntries.toMutableMap()
+        val canonical = linkedMapOf<String, WatchProgress>()
         rawEntries.forEach { (key, progress) ->
+            val (canonicalKey, canonicalProgress) = canonicalizeProgressPair(key, progress)
+            putNewest(canonical, canonicalKey, canonicalProgress)
+        }
+
+        val withoutMirrors = canonical.toMutableMap()
+        canonical.forEach { (key, progress) ->
             val isSeriesMirrorKey = key == progress.contentId &&
                 isSeriesType(progress.contentType) &&
                 progress.season != null &&
@@ -475,7 +489,7 @@ class WatchProgressSyncService @Inject constructor(
                 season = season,
                 episode = episode
             )
-            val episodeProgress = rawEntries[episodeKey] ?: return@forEach
+            val episodeProgress = canonical[episodeKey] ?: return@forEach
 
             val exactMirror = progress.position == episodeProgress.position &&
                 progress.duration == episodeProgress.duration &&
@@ -483,14 +497,14 @@ class WatchProgressSyncService @Inject constructor(
             val episodeIsAtLeastAsFresh = episodeProgress.lastWatched >= progress.lastWatched - 1_000L
 
             if (exactMirror || episodeIsAtLeastAsFresh) {
-                canonical.remove(key)
+                withoutMirrors.remove(key)
             }
         }
 
-        return canonical
+        return withoutMirrors
     }
 
-    private fun normalizePulledEntries(
+    private suspend fun normalizePulledEntries(
         entries: List<Pair<String, WatchProgress>>
     ): List<Pair<String, WatchProgress>> {
         if (entries.isEmpty()) return entries
@@ -498,10 +512,8 @@ class WatchProgressSyncService @Inject constructor(
         val byKey = linkedMapOf<String, WatchProgress>()
         entries.sortedByDescending { it.second.lastWatched }
             .forEach { (key, progress) ->
-                val existing = byKey[key]
-                if (existing == null || progress.lastWatched > existing.lastWatched) {
-                    byKey[key] = progress
-                }
+                val (canonicalKey, canonicalProgress) = canonicalizeProgressPair(key, progress)
+                putNewest(byKey, canonicalKey, canonicalProgress)
             }
 
         val latestEpisodeByContent = byKey.entries
@@ -535,6 +547,79 @@ class WatchProgressSyncService @Inject constructor(
         return byKey.entries
             .sortedByDescending { it.value.lastWatched }
             .map { it.key to it.value }
+    }
+
+    private suspend fun canonicalizeProgressPair(
+        key: String,
+        progress: WatchProgress
+    ): Pair<String, WatchProgress> {
+        val canonicalContentId = canonicalIptvContentId(progress.contentId)
+        if (canonicalContentId == progress.contentId) {
+            return key to progress
+        }
+
+        val canonicalProgress = progress.copy(contentId = canonicalContentId)
+        val canonicalKey = canonicalProgressKey(
+            key = key,
+            oldContentId = progress.contentId,
+            canonicalContentId = canonicalContentId,
+            progress = canonicalProgress
+        )
+        return canonicalKey to canonicalProgress
+    }
+
+    private suspend fun canonicalIptvContentId(contentId: String): String {
+        return try {
+            when (val parsed = parseIptvProgressKey(contentId)) {
+                is IptvProgressKey.MovieLocal -> {
+                    val movie = movieRepository.getMovie(parsed.movieId)
+                    if (movie?.providerId == parsed.providerId) {
+                        movie.stableIptvProgressId()
+                    } else {
+                        contentId
+                    }
+                }
+                is IptvProgressKey.SeriesLocal -> {
+                    val series = seriesRepository.getSeriesById(parsed.seriesId)
+                    if (series?.providerId == parsed.providerId) {
+                        series.stableIptvProgressId()
+                    } else {
+                        contentId
+                    }
+                }
+                else -> contentId
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to canonicalize IPTV progress id $contentId", e)
+            contentId
+        }
+    }
+
+    private fun canonicalProgressKey(
+        key: String,
+        oldContentId: String,
+        canonicalContentId: String,
+        progress: WatchProgress
+    ): String {
+        val season = progress.season
+        val episode = progress.episode
+        return when {
+            season != null && episode != null -> episodeKey(canonicalContentId, season, episode)
+            key == oldContentId -> canonicalContentId
+            key.startsWith("${oldContentId}_") -> key.replaceFirst(oldContentId, canonicalContentId)
+            else -> canonicalContentId
+        }
+    }
+
+    private fun putNewest(
+        target: MutableMap<String, WatchProgress>,
+        key: String,
+        progress: WatchProgress
+    ) {
+        val existing = target[key]
+        if (existing == null || progress.lastWatched > existing.lastWatched) {
+            target[key] = progress
+        }
     }
 
     private fun episodeKey(contentId: String, season: Int, episode: Int): String {

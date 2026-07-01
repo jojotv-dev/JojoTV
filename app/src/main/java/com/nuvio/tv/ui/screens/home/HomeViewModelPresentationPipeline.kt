@@ -1,16 +1,19 @@
-package com.nuvio.tv.ui.screens.home
+﻿package com.nuvio.tv.ui.screens.home
 
 import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.LocaleCache
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.network.NetworkResult
+import com.nuvio.tv.core.tmdb.FreeboxVideoMeta
 import com.nuvio.tv.core.tmdb.TmdbEnrichment
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.TmdbSettings
+import com.nuvio.tv.ui.screens.iptv.IptvProgressKey
+import com.nuvio.tv.ui.screens.iptv.parseIptvProgressKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.async
@@ -452,7 +455,10 @@ internal fun HomeViewModel.onItemFocusPipeline(item: MetaPreview) {
             if (_enrichingItemId.value == item.id) setEnrichingItemId(null)
             return@launch
         }
-        if (item.id in prefetchedTmdbIds || item.id in prefetchedExternalMetaIds) {
+        val isIptvCatalogItem = item.isIptvCatalogItem()
+        val enrichedNeedsRetry = isIptvCatalogItem &&
+            _enrichedPreviews.value[item.id]?.description.isNullOrBlank()
+        if (!enrichedNeedsRetry && (item.id in prefetchedTmdbIds || item.id in prefetchedExternalMetaIds)) {
             if (_enrichingItemId.value == item.id) setEnrichingItemId(null)
             return@launch
         }
@@ -460,7 +466,12 @@ internal fun HomeViewModel.onItemFocusPipeline(item: MetaPreview) {
         try {
             var tmdbEnriched = false
 
-            if (tmdbEnabledForCurrentLayout) {
+            if (isIptvCatalogItem) {
+                tmdbEnriched = enrichIptvItemByTitle(
+                    item = item,
+                    allowTmdbFallback = true
+                )
+            } else if (tmdbEnabledForCurrentLayout) {
                 val tmdbId = runCatching { tmdbService.ensureTmdbId(item.id, item.apiType) }.getOrNull()
 
                 val enrichmentDeferred = if (tmdbId != null) async {
@@ -512,7 +523,10 @@ internal fun HomeViewModel.onItemFocusPipeline(item: MetaPreview) {
 
 internal fun HomeViewModel.preloadAdjacentItemPipeline(item: MetaPreview) {
     if (startupGracePeriodActive) return
-    if (item.id in prefetchedTmdbIds || item.id in prefetchedExternalMetaIds) return
+    val isIptvCatalogItem = item.isIptvCatalogItem()
+    val enrichedNeedsRetry = isIptvCatalogItem &&
+        _enrichedPreviews.value[item.id]?.description.isNullOrBlank()
+    if (!enrichedNeedsRetry && (item.id in prefetchedTmdbIds || item.id in prefetchedExternalMetaIds)) return
     if (pendingTmdbEnrichItemId == item.id || pendingAdjacentPrefetchItemId == item.id) return
 
     pendingAdjacentPrefetchItemId = item.id
@@ -527,7 +541,12 @@ internal fun HomeViewModel.preloadAdjacentItemPipeline(item: MetaPreview) {
 
         try {
             var tmdbEnriched = false
-            if (tmdbEnabledForCurrentLayout) {
+            if (isIptvCatalogItem) {
+                tmdbEnriched = enrichIptvItemByTitle(
+                    item = item,
+                    allowTmdbFallback = true
+                )
+            } else if (tmdbEnabledForCurrentLayout) {
                 val tmdbId = runCatching { tmdbService.ensureTmdbId(item.id, item.apiType) }.getOrNull()
                 val enrichment = if (tmdbId != null) runCatching {
                     tmdbMetadataService.fetchEnrichment(
@@ -567,6 +586,222 @@ internal fun HomeViewModel.preloadAdjacentItemPipeline(item: MetaPreview) {
     }
 }
 
+private fun MetaPreview.isIptvCatalogItem(): Boolean =
+    rawType == "iptv_movie" || rawType == "iptv_series"
+
+private suspend fun HomeViewModel.enrichIptvItemByTitle(
+    item: MetaPreview,
+    allowTmdbFallback: Boolean
+): Boolean {
+    val providerMetadata = fetchIptvProviderMetadata(item.id)
+    if (providerMetadata != null) {
+        updateCatalogItemWithIptvTitleMetadata(item.id, providerMetadata)
+    }
+
+    val needsTmdbFallback = allowTmdbFallback && (
+        providerMetadata == null ||
+            providerMetadata.overview.isNullOrBlank() ||
+            providerMetadata.backdropUrl.isNullOrBlank() ||
+            (item.rawType == "iptv_movie" && providerMetadata.runtimeMinutes == null)
+        )
+
+    val tmdbMetadata = if (needsTmdbFallback) runCatching {
+        tmdbService.fetchMetadataForTitleQuery(
+            query = item.name,
+            mediaTypeHint = if (item.rawType == "iptv_series") "tv" else "movie"
+        )
+    }.getOrNull() else null
+
+    if (tmdbMetadata != null) {
+        updateCatalogItemWithIptvTitleMetadata(item.id, tmdbMetadata)
+    }
+
+    if ((providerMetadata?.overview.isNullOrBlank()) && (tmdbMetadata?.overview.isNullOrBlank())) {
+        updateCatalogItemWithIptvContinueWatchingMetadata(item.id)
+    }
+
+    if (providerMetadata == null && tmdbMetadata == null && item.id !in _enrichedPreviews.value) return false
+
+    prefetchedTmdbIds.add(item.id)
+    prefetchedExternalMetaIds.add(item.id)
+    return true
+}
+
+private fun HomeViewModel.updateCatalogItemWithIptvContinueWatchingMetadata(itemId: String) {
+    val catalogItem = findCatalogItemById(itemId)
+        ?: _uiState.value.catalogRows.asSequence()
+            .flatMap { it.items.asSequence() }
+            .firstOrNull { it.id == itemId }
+    val normalizedCatalogTitle = catalogItem?.name?.normalizeIptvCwMatchTitle()
+    val overlay = cwEnrichedInProgressOverlay[itemId]
+        ?: _uiState.value.continueWatchingItems
+            .filterIsInstance<ContinueWatchingItem.InProgress>()
+            .firstOrNull { it.progress.contentId == itemId }
+        ?: cwEnrichedInProgressOverlay.values.firstOrNull { candidate ->
+            normalizedCatalogTitle != null &&
+                candidate.progress.name.normalizeIptvCwMatchTitle().matchesIptvCwTitle(normalizedCatalogTitle)
+        }
+        ?: _uiState.value.continueWatchingItems
+            .filterIsInstance<ContinueWatchingItem.InProgress>()
+            .firstOrNull { candidate ->
+                normalizedCatalogTitle != null &&
+                    candidate.progress.name.normalizeIptvCwMatchTitle().matchesIptvCwTitle(normalizedCatalogTitle)
+            }
+        ?: return
+    val description = overlay.episodeDescription?.takeIf { it.isNotBlank() } ?: return
+
+    fun mergeItem(currentItem: MetaPreview): MetaPreview =
+        currentItem.copy(
+            description = currentItem.description?.takeIf { it.isNotBlank() } ?: description,
+            poster = currentItem.poster ?: overlay.progress.poster,
+            background = currentItem.background ?: overlay.progress.backdrop,
+            imdbRating = currentItem.imdbRating ?: overlay.episodeImdbRating,
+            genres = currentItem.genres.ifEmpty { overlay.genres },
+            releaseInfo = currentItem.releaseInfo ?: overlay.releaseInfo
+        )
+
+    updateIndexedCatalogItem(itemId, ::mergeItem)
+    _uiState.update { state ->
+        var changed = false
+        val updatedRows = state.catalogRows.map { row ->
+            val itemIndex = row.items.indexOfFirst { it.id == itemId }
+            if (itemIndex < 0) {
+                row
+            } else {
+                val mergedItem = mergeItem(row.items[itemIndex])
+                if (mergedItem == row.items[itemIndex]) {
+                    row
+                } else {
+                    changed = true
+                    val mutableItems = row.items.toMutableList()
+                    mutableItems[itemIndex] = mergedItem
+                    row.copy(items = mutableItems)
+                }
+            }
+        }
+        if (changed) state.copy(catalogRows = updatedRows) else state
+    }
+    (findCatalogItemById(itemId) ?: catalogItem)?.let { enriched ->
+        val merged = mergeItem(enriched)
+        _lastEnrichedPreview.value = merged
+        _enrichedPreviews.update { it + (itemId to merged) }
+    }
+}
+
+private fun String.matchesIptvCwTitle(other: String): Boolean =
+    isNotBlank() &&
+        other.isNotBlank() &&
+        (this == other || startsWith(other) || other.startsWith(this))
+
+private fun String.normalizeIptvCwMatchTitle(): String =
+    lowercase()
+        .replace(Regex("""\((?:19|20)\d{2}\)"""), " ")
+        .replace(Regex("""\bs\d+\s*e\d+\b""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""\bseason\s+\d+\s+episode\s+\d+\b""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""\b(?:iptv_movie|iptv_series|movie|series)\b""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""[^\p{L}\p{N}]+"""), " ")
+        .trim()
+        .replace(Regex("""\s+"""), " ")
+
+internal suspend fun HomeViewModel.fetchIptvProviderMetadata(contentId: String): FreeboxVideoMeta? {
+    return when (val key = parseIptvProgressKey(contentId)) {
+        is IptvProgressKey.MovieLocal -> {
+            val movie = iptvMovieRepository.getMovie(key.movieId) ?: return null
+            val details = when (val result = iptvMovieRepository.getMovieDetails(key.providerId, movie.id)) {
+                is com.streamvault.domain.model.Result.Success -> result.data
+                else -> movie
+            }
+            details.toHomeIptvMetadata()
+        }
+        is IptvProgressKey.MovieStream -> {
+            val movie = iptvMovieRepository.getMovieByStreamId(key.providerId, key.streamId) ?: return null
+            val details = when (val result = iptvMovieRepository.getMovieDetails(key.providerId, movie.id)) {
+                is com.streamvault.domain.model.Result.Success -> result.data
+                else -> movie
+            }
+            details.toHomeIptvMetadata()
+        }
+        is IptvProgressKey.SeriesLocal -> {
+            val series = iptvSeriesRepository.getSeriesById(key.seriesId) ?: return null
+            val details = when (val result = iptvSeriesRepository.getSeriesDetails(key.providerId, series.id)) {
+                is com.streamvault.domain.model.Result.Success -> result.data
+                else -> series
+            }
+            details.toHomeIptvMetadata()
+        }
+        is IptvProgressKey.SeriesRemote -> {
+            val series = iptvSeriesRepository
+                .getSeriesByProviderSeriesId(key.providerId, key.providerSeriesId) ?: return null
+            val details = when (val result = iptvSeriesRepository.getSeriesDetails(key.providerId, series.id)) {
+                is com.streamvault.domain.model.Result.Success -> result.data
+                else -> series
+            }
+            details.toHomeIptvMetadata()
+        }
+        null -> null
+    }
+}
+
+internal fun mergeIptvTitleMetadata(
+    currentItem: MetaPreview,
+    metadata: FreeboxVideoMeta
+): MetaPreview = currentItem.copy(
+    poster = currentItem.poster ?: metadata.posterUrl,
+    background = currentItem.background ?: metadata.backdropUrl,
+    description = currentItem.description?.takeIf { it.isNotBlank() }
+        ?: metadata.overview?.takeIf { it.isNotBlank() },
+    imdbRating = currentItem.imdbRating ?: metadata.voteAverage?.toFloat(),
+    releaseInfo = currentItem.releaseInfo?.takeIf { it.isNotBlank() }
+        ?: metadata.year?.takeIf { it.isNotBlank() },
+    genres = currentItem.genres.ifEmpty { metadata.genres },
+    runtime = currentItem.runtime?.takeIf { it.isNotBlank() }
+        ?: metadata.runtimeMinutes?.takeIf { it > 0 }?.let(::formatTmdbRuntime)
+)
+
+private fun formatTmdbRuntime(minutes: Int): String {
+    val hours = minutes / 60
+    val remainingMinutes = minutes % 60
+    return if (hours > 0) {
+        hours.toString() + "h" + remainingMinutes.toString().padStart(2, '0')
+    } else {
+        "$minutes min"
+    }
+}
+
+private fun HomeViewModel.updateCatalogItemWithIptvTitleMetadata(
+    itemId: String,
+    metadata: FreeboxVideoMeta
+) {
+    fun mergeItem(currentItem: MetaPreview): MetaPreview =
+        mergeIptvTitleMetadata(currentItem, metadata)
+
+    updateIndexedCatalogItem(itemId, ::mergeItem)
+    _uiState.update { state ->
+        var changed = false
+        val updatedRows = state.catalogRows.map { row ->
+            val itemIndex = row.items.indexOfFirst { it.id == itemId }
+            if (itemIndex < 0) {
+                row
+            } else {
+                val mergedItem = mergeItem(row.items[itemIndex])
+                if (mergedItem == row.items[itemIndex]) {
+                    row
+                } else {
+                    changed = true
+                    val mutableItems = row.items.toMutableList()
+                    mutableItems[itemIndex] = mergedItem
+                    row.copy(items = mutableItems)
+                }
+            }
+        }
+        if (changed) state.copy(catalogRows = updatedRows) else state
+    }
+    findCatalogItemById(itemId)?.let { enriched ->
+        _lastEnrichedPreview.value = enriched
+        _enrichedPreviews.update { it + (itemId to enriched) }
+    }
+}
+
 private fun HomeViewModel.updateCatalogItemWithTmdb(itemId: String, enrichment: TmdbEnrichment) {
     val isModernLayout = _uiState.value.homeLayout == HomeLayout.MODERN
     fun mergeItem(currentItem: MetaPreview): MetaPreview {
@@ -580,7 +815,7 @@ private fun HomeViewModel.updateCatalogItemWithTmdb(itemId: String, enrichment: 
         }
         if (currentTmdbSettings.useArtwork) {
             merged = merged.copy(
-                background = enrichment.backdrop ?: merged.background,
+                background = merged.background ?: enrichment.backdrop,
                 logo = enrichment.logo ?: merged.logo
             )
         }
@@ -665,7 +900,7 @@ private fun HomeViewModel.updateCatalogItemWithMeta(itemId: String, meta: Meta) 
         .takeIf { it > 0 }
 
     fun mergeItem(currentItem: MetaPreview): MetaPreview = currentItem.copy(
-        background = meta.backdropUrl ?: currentItem.backdropUrl,
+        background = currentItem.background ?: meta.backdropUrl ?: currentItem.landscapePoster,
         logo = meta.logo ?: currentItem.logo,
         description = meta.description ?: currentItem.description,
         imdbRating = meta.imdbRating ?: currentItem.imdbRating,
@@ -753,7 +988,7 @@ internal suspend fun HomeViewModel.enrichHeroItemsPipeline(
 
                     if (settings.useArtwork) {
                         enriched = enriched.copy(
-                            background = enrichment.backdrop ?: enriched.background,
+                            background = enriched.background ?: enrichment.backdrop,
                             logo = enrichment.logo ?: enriched.logo,
                             poster = enrichment.poster ?: enriched.poster
                         )

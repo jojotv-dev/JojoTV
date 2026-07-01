@@ -1,4 +1,4 @@
-﻿package com.nuvio.tv.ui.screens.iptv
+package com.nuvio.tv.ui.screens.iptv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -69,6 +69,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -83,11 +85,27 @@ class IptvChannelListViewModel @Inject constructor(
     val categoryId: Long = savedStateHandle.get<String>("categoryId")?.toLongOrNull() ?: ChannelRepository.ALL_CHANNELS_ID
     val categoryName: String = savedStateHandle.get<String>("categoryName") ?: "Toutes les chaines"
 
-    val channels: StateFlow<List<Channel>> = if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
-        channelRepository.getChannelsWithoutErrors(providerId)
-    } else {
-        channelRepository.getChannelsByCategory(providerId, categoryId)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // Page rapide (60 chaines) affichee immediatement, puis bascule sur le flow complet reactif
+    private val _channels = MutableStateFlow<List<Channel>>(emptyList())
+    val channels: StateFlow<List<Channel>> = _channels.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val firstPage = if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
+                channelRepository.getChannelsWithoutErrorsPage(providerId, ChannelRepository.ALL_CHANNELS_ID, 60)
+            } else {
+                channelRepository.getChannelsByCategoryPage(providerId, categoryId, 60)
+            }.first()
+            _channels.value = firstPage
+
+            val fullFlow = if (categoryId == ChannelRepository.ALL_CHANNELS_ID) {
+                channelRepository.getChannelsWithoutErrors(providerId)
+            } else {
+                channelRepository.getChannelsByCategory(providerId, categoryId)
+            }
+            fullFlow.collect { _channels.value = it }
+        }
+    }
 
     private val _loadingChannelId = MutableStateFlow<Long?>(null)
     val loadingChannelId: StateFlow<Long?> = _loadingChannelId.asStateFlow()

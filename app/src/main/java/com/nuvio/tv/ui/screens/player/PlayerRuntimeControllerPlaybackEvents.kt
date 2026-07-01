@@ -319,7 +319,7 @@ internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, d
     val progress = WatchProgress(
         contentId = contentId,
         contentType = contentType,
-        name = contentName ?: title,
+        name = displayTitleForPlayback(),
         poster = poster,
         backdrop = backdrop,
         logo = logo,

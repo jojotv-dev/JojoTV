@@ -19,5 +19,6 @@ data class PosterOptionsState(
     val listPickerTitle: String? = null,
     val listPickerMembership: Map<String, Boolean> = emptyMap(),
     val listPickerPending: Boolean = false,
-    val listPickerError: String? = null
+    val listPickerError: String? = null,
+    val isIptvItem: Boolean = false
 )

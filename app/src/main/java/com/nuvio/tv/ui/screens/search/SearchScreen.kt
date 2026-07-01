@@ -1,4 +1,4 @@
-package com.nuvio.tv.ui.screens.search
+﻿package com.nuvio.tv.ui.screens.search
 
 import android.Manifest
 import android.content.Intent
@@ -731,7 +731,7 @@ fun SearchScreen(
                                     onNavigateToDetail(id, type, addonBaseUrl)
                                 },
                                 onItemLongPress = { item, addonBaseUrl ->
-                                    viewModel.posterOptions.show(item, addonBaseUrl)
+                                    viewModel.toggleFavoriteSilently(item, addonBaseUrl)
                                 },
                                 onSeeAll = {
                                     onNavigateToSeeAll(
