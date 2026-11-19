@@ -1,0 +1,24 @@
+package com.nuvio.tv.core.sync
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ProfileSettingsCredentialPolicyTest {
+    @Test
+    fun `non tracker credentials are excluded from profile settings blobs`() {
+        assertTrue(shouldExcludePreferenceFromProfileSettingsSync("mdblist_settings", "mdblist_api_key"))
+    }
+
+    @Test
+    fun `tracker and non credential settings remain in their existing sync surfaces`() {
+        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("trakt_settings", "trakt_access_token"))
+        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("mdblist_settings", "mdblist_enabled"))
+    }
+
+    @Test
+    fun `4k trailers stay on the device while other trailer settings sync`() {
+        assertTrue(shouldExcludePreferenceFromProfileSettingsSync("trailer_settings", "trailer_allow_4k"))
+        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("trailer_settings", "trailer_enabled"))
+    }
+}

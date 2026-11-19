@@ -1,0 +1,43 @@
+import org.gradle.api.Task
+import org.gradle.api.execution.TaskExecutionListener
+import org.gradle.api.tasks.TaskState
+
+def buildProgress = [total: 0, completed: 0]
+
+def updateTerminalTitle = { String message ->
+    def safeMessage = message.replaceAll(/[\r\n\u0007]/, ' ')
+    System.out.print("\u001B]0;Nuvio ${safeMessage}\u0007")
+    System.out.flush()
+}
+
+def showProgress = { String current ->
+    int total = buildProgress.total as int
+    int completed = buildProgress.completed as int
+    int percent = total == 0 ? 0 : Math.min(100, Math.round(completed * 100.0d / total) as int)
+    updateTerminalTitle("${percent}% (${completed}/${total}) | ${current}")
+}
+
+gradle.taskGraph.whenReady { graph ->
+    buildProgress.total = graph.allTasks.size()
+    showProgress('build prepare')
+}
+
+gradle.addListener(new TaskExecutionListener() {
+    @Override
+    void beforeExecute(Task task) {
+        showProgress(task.path)
+    }
+
+    @Override
+    void afterExecute(Task task, TaskState taskState) {
+        buildProgress.completed = Math.min(
+            buildProgress.total as int,
+            (buildProgress.completed as int) + 1
+        )
+        showProgress(task.path)
+    }
+})
+
+gradle.buildFinished { result ->
+    updateTerminalTitle(result.failure == null ? 'BUILD SUCCESSFUL' : 'BUILD FAILED')
+}

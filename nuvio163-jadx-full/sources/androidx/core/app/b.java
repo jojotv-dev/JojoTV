@@ -1,0 +1,6 @@
+package androidx.core.app;
+
+/* JADX INFO: loaded from: classes3.dex */
+public interface b {
+    void validateRequestPermissionsRequestCode(int i10);
+}

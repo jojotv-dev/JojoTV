@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Official YouTube dark logo lockup, converted from Google's SVG asset. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="160dp"
+    android:height="110dp"
+    android:viewportWidth="160"
+    android:viewportHeight="110">
+    <path android:fillColor="#FF0000" android:pathData="M154.8,17.5c-1.8-6.7-7.1-12-13.8-13.8c-12.1-3.3-60.8-3.3-60.8-3.3s-48.7,0-60.8,3.3    c-6.7,1.8-12,7.1-13.8,13.8C2.4,29.7,2.4,55,2.4,55s0,25.3,3.3,37.5c1.8,6.7,7.1,12,13.8,13.8c12.1,3.3,60.8,3.3,60.8,3.3    s48.7,0,60.8-3.3c6.7-1.8,12-7.1,13.8-13.8c3.3-12.1,3.3-37.5,3.3-37.5S158.1,29.7,154.8,17.5z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M64.7,78.4 L105.1,55 L64.7,31.6 Z" />
+</vector>

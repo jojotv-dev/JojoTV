@@ -1,0 +1,57 @@
+package com.nuvio.tv.domain.model
+
+import androidx.compose.runtime.Immutable
+
+@Immutable
+data class MetaPreview(
+    val id: String,
+    val type: ContentType,
+    val rawType: String = type.toApiString(),
+    val name: String,
+    val poster: String?,
+    val posterShape: PosterShape,
+    val background: String?,
+    val logo: String?,
+    val description: String?,
+    val releaseInfo: String?,
+    val imdbRating: Float?,
+    val genres: List<String>,
+    val runtime: String? = null,
+    val status: String? = null,
+    val ageRating: String? = null,
+    val language: String? = null,
+    val released: String? = null,
+    val country: String? = null,
+    val imdbId: String? = null,
+    val slug: String? = null,
+    val landscapePoster: String? = null,
+    val rawPosterUrl: String? = null,
+    val director: List<String> = emptyList(),
+    val writer: List<String> = emptyList(),
+    val links: List<MetaLink> = emptyList(),
+    val behaviorHints: MetaBehaviorHints? = null,
+    val trailers: List<MetaTrailer> = emptyList(),
+    val trailerYtIds: List<String> = emptyList(),
+    val seasonCount: Int? = null,
+    val voteCount: Int? = null,
+    val sourceAddonBaseUrl: String? = null,
+    val mdbListRatings: MDBListRatings? = null,
+    val mdbListRatingOrder: List<String> = MDBListSettings.DEFAULT_RATING_ORDER,
+    val castMembers: List<MetaCastMember> = emptyList(),
+    /** TMDB identity of a strictly matched local video, when known. */
+    val tmdbId: String? = null,
+    val tmdbMediaType: ContentType? = null,
+    /** SMB file size and modification time used to distinguish a replaced file at the same path. */
+    val sourceFileSizeBytes: Long? = null,
+    val sourceFileLastModifiedMs: Long? = null,
+    val sourceFileId: Long? = null,
+    val currentSeasonComplete: Boolean? = null,
+    /** True only after TMDB's TV-details endpoint returned series metadata. */
+    val hasTmdbSeriesDetails: Boolean = false
+) {
+    val apiType: String
+        get() = type.toApiString(rawType)
+
+    val backdropUrl: String?
+        get() = background ?: landscapePoster ?: poster
+}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="live_tv_menu_list_channels">Chaînes à partir de listes</string>
+    <string name="live_tv_menu_list_channels_description">Transformer vos listes d’accueil, collections et listes de bibliothèque en chaînes avec un guide</string>
+    <string name="live_tv_list_channels_title">Chaînes à partir de listes</string>
+    <string name="live_tv_list_channels_description">Une chaîne de liste diffuse à la suite les titres des listes sélectionnées, comme une chaîne TV. Les séries passent à l’épisode suivant.</string>
+    <string name="live_tv_list_channel_new">Nouvelle chaîne de liste</string>
+    <string name="live_tv_list_channel_edit">Modifier la chaîne de liste</string>
+    <string name="live_tv_list_channel_name_hint">Nom de la chaîne (facultatif)</string>
+    <string name="live_tv_list_channel_lists_heading">Listes de cette chaîne</string>
+    <string name="live_tv_list_channel_loading_lists">Recherche de vos listes…</string>
+    <string name="live_tv_list_channel_no_lists">Aucune liste trouvée. Installez un addon avec des catalogues ou créez une collection.</string>
+    <string name="live_tv_list_channel_save">Enregistrer</string>
+    <string name="live_tv_list_channel_delete">Supprimer la chaîne</string>
+    <string name="live_tv_list_channel_none">Aucune chaîne de liste pour le moment</string>
+    <string name="live_tv_list_channel_summary">%1$d listes</string>
+    <string name="live_tv_list_finding">Recherche d’un flux pour %1$s…</string>
+    <string name="live_tv_list_unavailable">Impossible de trouver un flux pour cette chaîne pour le moment</string>
+    <string name="live_tv_list_unavailable_reason">Impossible de lire cette chaîne : %1$s</string>
+</resources>

@@ -1,0 +1,143 @@
+package com.nuvio.tv.data.mediaserver
+
+import com.nuvio.tv.core.tracking.TrackingExternalIds
+import com.nuvio.tv.data.storage.StorageCapacity
+import java.io.File
+
+enum class ServerCapability {
+    SEARCH,
+    EXTERNAL_ID_LOOKUP,
+    USER_STATE_READ,
+    USER_STATE_WRITE,
+    TRANSCODING
+}
+
+interface ServerProvider {
+    val id: String
+    val displayName: String
+    val capabilities: Set<ServerCapability>
+    val minimumVersion: String
+
+    suspend fun signIn(address: String, username: String, password: String): ServerSignIn = unsupported()
+
+    suspend fun libraries(session: ServerSession): List<ServerLibrary>
+
+    /** Lists real filesystem entries for source-style browsing when the provider supports it. */
+    suspend fun browse(session: ServerSession, relativePath: String): List<ServerBrowseEntry> = unsupported()
+
+    /** Returns filesystem capacity when the provider exposes it. */
+    suspend fun storageCapacity(session: ServerSession): StorageCapacity? = null
+
+    /** Copies a browsed file to private local storage for a compatible Android file handler. */
+    suspend fun downloadFile(
+        session: ServerSession,
+        relativePath: String,
+        destination: File,
+        onProgress: (copiedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    ): Unit = unsupported()
+
+    /** Creates a directory in a writable browsed share. */
+    suspend fun createBrowserDirectory(session: ServerSession, relativePath: String): Unit = unsupported()
+
+    /** Renames a browsed file or directory to a new name in the same parent directory. */
+    suspend fun renameBrowserEntry(
+        session: ServerSession,
+        relativePath: String,
+        newName: String,
+        isDirectory: Boolean,
+    ): Unit = unsupported()
+
+    /** Deletes a browsed file or directory. Directory deletion is recursive. */
+    suspend fun deleteBrowserEntry(session: ServerSession, relativePath: String, isDirectory: Boolean): Unit = unsupported()
+
+    /** Uploads a local file into a browsed share without replacing an existing file. */
+    suspend fun uploadBrowserFile(session: ServerSession, relativePath: String, source: File): Unit = unsupported()
+
+    suspend fun libraryPage(
+        session: ServerSession,
+        library: ServerLibrary,
+        start: Int,
+        limit: Int
+    ): ServerPage<ServerTitle>
+
+    suspend fun details(session: ServerSession, itemId: String): ServerItemDetails
+
+    suspend fun candidates(session: ServerSession, itemId: String): List<ServerCandidate>
+
+    suspend fun preparePlayback(session: ServerSession, request: ServerPlaybackRequest): ServerPlaybackSession
+
+    suspend fun report(session: ServerSession, playback: ServerPlaybackSession, event: ServerPlaybackEvent) = Unit
+
+    suspend fun signOut(session: ServerSession) = Unit
+
+    suspend fun collectionPage(
+        session: ServerSession,
+        collectionId: String,
+        start: Int,
+        limit: Int
+    ): ServerPage<ServerTitle> = unsupported()
+
+    suspend fun search(
+        session: ServerSession,
+        kind: ServerMediaKind,
+        libraries: List<ServerLibrary>,
+        query: String,
+        limit: Int
+    ): List<ServerTitle> = unsupported()
+
+    suspend fun resumeItems(session: ServerSession, limit: Int): List<ServerTitle> = unsupported()
+
+    suspend fun setPlayed(session: ServerSession, itemId: String, played: Boolean): Unit = unsupported()
+
+    suspend fun externalIdIndex(
+        session: ServerSession,
+        library: ServerLibrary,
+        start: Int,
+        limit: Int
+    ): ServerPage<ServerIndexEntry> = unsupported()
+
+    /** Items of [library] that may be [query]; null when the server cannot look up a single title this way. */
+    suspend fun lookupTitle(
+        session: ServerSession,
+        library: ServerLibrary,
+        query: ServerTitleQuery
+    ): List<ServerIndexEntry>? = null
+
+    suspend fun findEpisode(
+        session: ServerSession,
+        seriesItemId: String,
+        season: Int,
+        episode: Int
+    ): ServerEpisode? = unsupported()
+}
+
+data class ServerBrowseEntry(
+    val name: String,
+    val path: String,
+    val isDirectory: Boolean,
+    val sizeBytes: Long = 0L,
+    val mimeType: String? = null,
+    val isPlayable: Boolean = false,
+)
+
+data class ServerIndexEntry(
+    val itemId: String,
+    val ids: TrackingExternalIds,
+    val year: Int? = null
+)
+
+data class ServerTitleQuery(
+    val ids: TrackingExternalIds,
+    val name: String?,
+    val year: Int?,
+    val originalName: String? = null
+)
+
+data class ServerEpisode(
+    val itemId: String,
+    val premiereDate: String?
+)
+
+fun ServerProvider.supports(capability: ServerCapability): Boolean = capability in capabilities
+
+private fun unsupported(): Nothing = throw ServerException(ServerFailure.UNSUPPORTED)

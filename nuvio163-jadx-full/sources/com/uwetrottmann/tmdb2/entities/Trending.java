@@ -1,0 +1,11 @@
+package com.uwetrottmann.tmdb2.entities;
+
+import com.uwetrottmann.tmdb2.enumerations.MediaType;
+
+/* JADX INFO: loaded from: classes4.dex */
+public class Trending {
+    public MediaType media_type;
+    public BaseMovie movie;
+    public BasePerson person;
+    public BaseTvShow tvShow;
+}
