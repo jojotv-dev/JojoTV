@@ -244,7 +244,6 @@
     <string name="detail_tab_trailer">Fragman</string>
     <string name="detail_more_like_this_powered_by_tmdb">TMDB tarafından desteklenmektedir</string>
     <string name="detail_more_like_this_powered_by_trakt">Trakt tarafından desteklenmektedir</string>
-    <string name="detail_more_like_this_powered_by_simkl">Simkl tarafından desteklenmektedir</string>
     <string name="detail_comments_title">Yorumlar</string>
     <string name="detail_comments_subtitle">Trakt incelemeleri</string>
     <string name="detail_comments_subtitle_episode">S%1$dE%2$d için Trakt incelemeleri</string>
@@ -450,8 +449,6 @@
     <string name="licenses_attributions_tmdb_body">JojoTV, film ve dizi meta verileri, görseller, fragmanlar, oyuncular, yapım detayları, koleksiyonlar ve öneriler için TMDB API\'sini kullanır. Bu ürün TMDB API\'sini kullanır ancak TMDB tarafından onaylanmamıştır veya sertifikalandırılmamıştır.</string>
     <string name="licenses_attributions_trakt_title">Trakt</string>
     <string name="licenses_attributions_trakt_body">JojoTV, hesap doğrulama, izleme geçmişi, ilerleme senkronizasyonu, kütüphane verileri, puanlar, listeler ve yorumlar için Trakt\'a bağlanır. JojoTV Trakt ile bağlantılı veya onaylanmış değildir.</string>
-    <string name="licenses_attributions_simkl_title">Simkl</string>
-    <string name="licenses_attributions_simkl_body">JojoTV; hesap doğrulama, izleme listeleri, izleme geçmişi, oynatma ilerlemesi ve scrobbling için Simkl\'a bağlanır. Film, dizi ve anime takip verileri Simkl tarafından sağlanır. JojoTV, Simkl ile bağlantılı veya onaylanmış değildir.</string>
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">JojoTV, puanlar, izleme geçmişi ve oynatma takibi için MDBList\'i kullanır. JojoTV MDBList ile bağlantılı veya onaylanmış değildir.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
@@ -485,14 +482,6 @@
     <string name="tracking_sources_subtitle">JojoTV\'nun kütüphane ve izleme ilerlemesini nereden okuyacağını seç. Oynatma, bağlı tüm servislere scrobble edilir.</string>
     <string name="tracking_trakt_features_title">Trakt özellikleri</string>
     <string name="tracking_trakt_features_subtitle">Trakt\'a özel geçmiş, incelemeler ve öneriler</string>
-    <string name="tracking_simkl_features_title">Simkl özellikleri</string>
-    <string name="tracking_simkl_features_subtitle">Simkl\'a özel ayarlar</string>
-    <string name="tracking_simkl_anime_id_title">Anime kimlik tercihi</string>
-    <string name="tracking_simkl_anime_id_subtitle">Anime dizilerinin nasıl tanınacağını belirler. MAL veya Kitsu seçersen her sezon ayrı kayıt olur; IMDB\'de hepsi tek kimlik altında toplanır.</string>
-    <string name="tracking_simkl_anime_id_imdb">IMDB tercih et</string>
-    <string name="tracking_simkl_anime_id_mal">MyAnimeList tercih et</string>
-    <string name="tracking_simkl_anime_id_kitsu">Kitsu tercih et</string>
-    <string name="tracking_simkl_anime_id_tvdb">TVDB tercih et</string>
     <string name="tracking_status_connected">Bağlı</string>
     <string name="tracking_status_disconnected">Bağlı değil</string>
     <string name="tracking_status_waiting">Onay bekleniyor</string>
@@ -503,7 +492,6 @@
     <string name="tracking_library_source_dialog_subtitle">JojoTV\'nun Kütüphane için okuyacağı servisi seç. Oynatma, bağlı tüm servislere scrobble edilir.</string>
     <string name="tracking_trakt_progress_required">İzleme İlerlemesi kaynağı Trakt olduğunda kullanılabilir</string>
     <string name="trakt_name">Trakt</string>
-    <string name="simkl_name">Simkl</string>
     <string name="settings_network">Ağ Hızı</string>
     <string name="settings_network_subtitle">Gecikme ve indirme hızı testleri</string>
     <string name="settings_advanced">Gelişmiş</string>
@@ -1382,7 +1370,7 @@
     <string name="trakt_code_expires">Kodun süresi %1$s sonra dolacak</string>
     <string name="trakt_token_refreshes">Trakt erişim jetonu %1$s içinde yenilenir</string>
     <string name="trakt_login_instruction">Trakt cihazı kimlik doğrulamasını başlatmak için Giriş\'e basın. Burada bir QR kodu görünecektir.</string>
-    <string name="trakt_missing_credentials">local.properties içinde TRAKT_CLIENT_ID / TRAKT_CLIENT_SECRET eksik.</string>
+    <string name="trakt_missing_credentials">local.properties içinde TRAKT_CLIENT_ID eksik.</string>
     <string name="trakt_watch_progress_title">İzleme İlerlemesi</string>
     <string name="trakt_watch_progress_subtitle">Devam etme ve izlemeye devam etme için hangi ilerleme kaynağının kullanılacağını seçin</string>
     <string name="trakt_watch_progress_dialog_title">İzleme İlerlemesi</string>
@@ -1995,10 +1983,6 @@
     <string name="library_empty_trakt_subtitle">İçerikleri izleme listenize eklemek için içerik detaylarındaki + tuşunu kullanın</string>
     <string name="library_empty_trakt_not_auth_title">Trakt bağlı değil</string>
     <string name="library_empty_trakt_not_auth_subtitle">Trakt kütüphanenizi görüntülemek için Ayarlar\'dan Trakt hesabınızı bağlayın</string>
-    <string name="library_empty_simkl_title">Bu durumda %1$s yok</string>
-    <string name="library_empty_simkl_subtitle">Bir Simkl durumuna eklemek için detaylarda + tuşunu kullan</string>
-    <string name="library_empty_simkl_not_auth_title">Simkl bağlı değil</string>
-    <string name="library_empty_simkl_not_auth_subtitle">Simkl kütüphaneni görmek için Ayarlar\'dan Simkl hesabını bağla</string>
 
     <!-- Cloud library repository errors -->
 
@@ -2558,8 +2542,6 @@
     <string name="cd_nuvio_logo">JojoTV</string>
     <string name="cd_trakt_logo">Trakt logosu</string>
     <string name="cd_trakt_qr">Trakt etkinleştirme QR kodu</string>
-    <string name="cd_simkl_qr">Simkl etkinleştirme QR kodu</string>
-    <string name="cd_simkl_logo">Simkl logosu</string>
     <string name="cd_imdb">IMDb</string>
     <string name="cd_open_discover">Keşfeti aç</string>
     <string name="cd_clear_search">Aramayı temizle</string>
@@ -2985,38 +2967,7 @@
     <string name="trakt_library_error_list_limit_reached">Trakt liste limitine ulaşıldı. Yükseltme gerekli.</string>
     <string name="trakt_error_insufficient_ids_mark_watched">İzlenendi olarak işaretlemek için yeterli Trakt ID\'si yok</string>
     <string name="trakt_error_request_failed">Trakt isteği başarısız</string>
-    <string name="simkl_account_title">Simkl hesabı</string>
-    <string name="simkl_description">Listeleri, izleme geçmişini, oynatma ilerlemesini ve scrobble\'ları eşitlemek için Simkl\'ı bağla.</string>
-    <string name="simkl_connect">Simkl\'ı Bağla</string>
-    <string name="simkl_disconnect">Simkl Bağlantısını Kes</string>
-    <string name="simkl_disconnect_title">Simkl bağlantısı kesilsin mi?</string>
-    <string name="simkl_disconnect_subtitle">Bu, Simkl hesabını ve önbelleğe alınmış Simkl verilerini bu profilden kaldırır.</string>
-    <string name="simkl_connected_as">%1$s olarak bağlı</string>
-    <string name="simkl_user_fallback">Simkl kullanıcısı</string>
-    <string name="simkl_awaiting_instruction">Simkl doğrulama sayfasını aç ve bu kodu gir.</string>
-    <string name="simkl_code_expires">Kodun süresi %1$s içinde dolacak</string>
-    <string name="simkl_sync_now">Şimdi eşitle</string>
-    <string name="simkl_visit">Simkl\'ı ziyaret et</string>
-    <string name="simkl_sync_info_action">Eşitleme nasıl çalışır</string>
-    <string name="simkl_sync_info_title">Simkl eşitlemesi nasıl çalışır</string>
-    <string name="simkl_sync_info_description">JojoTV, Simkl\'ı en fazla her %1$d dakikada bir otomatik kontrol eder. Başka bir uygulama veya Simkl sitesinden yapılan değişikliklerin görünmesi bu kadar sürebilir.</string>
-    <string name="simkl_sync_info_activity">Her yenilemede önce Simkl\'da değişiklik olup olmadığı kontrol edilir ve yalnızca güncellemeler indirilir. Bu, Simkl\'ın API kurallarına uyar, gereksiz veri kullanımını azaltır ve servisin stabil kalmasına yardımcı olur.</string>
-    <string name="simkl_sync_info_manual">JojoTV\'da yaptığın değişiklikler hemen Simkl\'a gönderilir. Uzak değişiklikleri daha erken kontrol ettirmek istediğinde Şimdi eşitle\'ye bas.</string>
-    <string name="simkl_sync_info_library_statuses">Simkl\'daki Beklemede veya Bırakıldı listelerine koyulan diziler İzlemeye Devam Et\'te gizlenir. Bu listelerde kaldıkları sürece gizli kalırlar.</string>
-    <string name="simkl_sync_info_docs">Simkl eşitleme rehberini oku</string>
     <string name="error_open_browser_failed">Tarayıcı açılamadı</string>
-    <string name="simkl_missing_credentials">SIMKL_CLIENT_ID eksik</string>
-    <string name="simkl_status_enter_code">Bağlantıyı tamamlamak için kodu Simkl\'da gir</string>
-    <string name="simkl_status_waiting">Simkl onayı bekleniyor…</string>
-    <string name="simkl_status_connected">Simkl\'a bağlandı</string>
-    <string name="simkl_status_disconnected">Simkl bağlantısı kesildi</string>
-    <string name="simkl_status_syncing">Simkl eşitleniyor…</string>
-    <string name="simkl_status_synced">Simkl eşitlemesi tamamlandı</string>
-    <string name="simkl_watch_progress_selected">İzlemeye Devam Et için Simkl seçildi</string>
-    <string name="simkl_library_source_selected">Kütüphane için Simkl seçildi</string>
-    <string name="simkl_error_code_expired">Simkl kodunun süresi doldu. Yeniden başlat.</string>
-    <string name="simkl_error_authorization_revoked">Simkl yetkisi iptal edildi. Tekrar bağlan.</string>
-    <string name="simkl_error_network">Simkl\'a ulaşılamıyor. Tekrar dene.</string>
     <string name="tracking_removal_title">%1$s üzerinden kaldırılsın mı?</string>
     <string name="tracking_removal_message">“%1$s” kaydını %2$s üzerinden kaldırmak, oradaki %3$s verisini de siler. Bu işlem geri alınamaz.</string>
     <string name="tracking_removal_impact_history">izleme geçmişini</string>
@@ -3030,7 +2981,6 @@
     <string name="trakt_more_like_this_source_dialog_subtitle">Detay sayfalarında gösterilen öneriler için kaynağı seçin.</string>
     <string name="trakt_more_like_this_source_trakt">Trakt</string>
     <string name="trakt_more_like_this_source_tmdb">TMDB</string>
-    <string name="trakt_more_like_this_source_simkl">Simkl</string>
 
     <!-- Detail / poster options errors -->
     <string name="detail_error_update_library_failed">Kütüphane güncellenemedi</string>

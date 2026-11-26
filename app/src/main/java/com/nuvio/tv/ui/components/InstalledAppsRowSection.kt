@@ -10,6 +10,8 @@ import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -204,7 +207,8 @@ fun InstalledAppsRowSection(
     cyclicTail: Boolean = false,
     focusRequesterForPackage: ((String) -> FocusRequester)? = null,
     menuViewModel: AppContextMenuViewModel = hiltViewModel(),
-    focusResetToken: Int = 0
+    focusResetToken: Int = 0,
+    rowBringIntoViewSpec: BringIntoViewSpec? = null
 ) {
     val context = LocalContext.current
     val launchError = stringResource(R.string.installed_apps_launch_error)
@@ -217,6 +221,7 @@ fun InstalledAppsRowSection(
     var pendingCyclicFocusIndex by remember { mutableIntStateOf(-1) }
     val cyclicTailFocusRequester = remember(rowFocusRequester) { FocusRequester() }
     var cyclicTailFocused by remember(rowFocusRequester) { mutableStateOf(false) }
+    val appRowBringIntoViewSpec = rowBringIntoViewSpec ?: LocalBringIntoViewSpec.current
     if (lastFocusResetToken != focusResetToken) {
         lastFocusResetToken = focusResetToken
         lastIndex = -1
@@ -274,86 +279,88 @@ fun InstalledAppsRowSection(
                 modifier = Modifier.padding(start = horizontalPadding, bottom = 14.dp)
             )
         }
-        LazyRow(
-            state = listState,
-            modifier = Modifier.fillMaxWidth().focusRequester(rowFocusRequester).focusRestorer {
-                requesters[apps.getOrNull(lastIndex.coerceAtLeast(0))?.packageName] ?: FocusRequester.Default
-            }.onPreviewKeyEvent { event ->
-                if (!cyclicTail || event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || apps.size < 2) {
-                    return@onPreviewKeyEvent false
-                }
-                when {
-                    cyclicTailFocused && event.key == Key.DirectionLeft -> {
-                        pendingCyclicFocusIndex = apps.lastIndex
-                        true
+        CompositionLocalProvider(LocalBringIntoViewSpec provides appRowBringIntoViewSpec) {
+            LazyRow(
+                state = listState,
+                modifier = Modifier.fillMaxWidth().focusRequester(rowFocusRequester).focusRestorer {
+                    requesters[apps.getOrNull(lastIndex.coerceAtLeast(0))?.packageName] ?: FocusRequester.Default
+                }.onPreviewKeyEvent { event ->
+                    if (!cyclicTail || event.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || apps.size < 2) {
+                        return@onPreviewKeyEvent false
                     }
-                    cyclicTailFocused && event.key == Key.DirectionRight -> {
-                        pendingCyclicFocusIndex = 1
-                        true
-                    }
-                    event.key == Key.DirectionLeft && lastIndex == 0 -> {
-                        pendingCyclicFocusIndex = apps.lastIndex
-                        true
-                    }
-                    else -> false
-                }
-            }.focusGroup(),
-            contentPadding = PaddingValues(horizontal = horizontalPadding, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
-        ) {
-            itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
-                val requester = focusRequesterForPackage?.invoke(app.packageName)
-                    ?: requesters.getOrPut(app.packageName) { FocusRequester() }
-                LaunchedEffect(app.packageName) {
-                    requesters[app.packageName] = requester
-                }
-                InstalledAppTile(
-                    app = app,
-                    modifier = Modifier.focusRequester(requester),
-                    tileWidth = tileWidth,
-                    cornerRadius = cornerRadius,
-                    onFocused = {
-                        lastIndex = index
-                        currentOnItemFocused(index)
-                    },
-                    onClick = {
-                        if (!launchInstalledApp(context, app)) {
-                            Toast.makeText(context, launchError, Toast.LENGTH_SHORT).show()
+                    when {
+                        cyclicTailFocused && event.key == Key.DirectionLeft -> {
+                            pendingCyclicFocusIndex = apps.lastIndex
+                            true
                         }
-                    },
-                    onLongClick = {
-                        contextMenuApp = app
-                        contextMenuIndex = index
+                        cyclicTailFocused && event.key == Key.DirectionRight -> {
+                            pendingCyclicFocusIndex = 1
+                            true
+                        }
+                        event.key == Key.DirectionLeft && lastIndex == 0 -> {
+                            pendingCyclicFocusIndex = apps.lastIndex
+                            true
+                        }
+                        else -> false
                     }
-                )
-            }
-            if (cyclicTail && apps.isNotEmpty()) {
-                cyclicTailIndices.forEachIndexed { tailIndex, sourceIndex ->
-                    val tailApp = apps[sourceIndex]
-                    val isFocusableTail = tailIndex == 0 && apps.size > 1
-                    item(key = "installed_apps_cyclic_tail_${tailIndex}_${tailApp.packageName}") {
-                        InstalledAppTile(
-                            app = tailApp,
-                            onClick = {
-                                if (isFocusableTail && !launchInstalledApp(context, tailApp)) {
-                                    Toast.makeText(context, launchError, Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            modifier = if (isFocusableTail) {
-                                Modifier
-                                    .focusRequester(cyclicTailFocusRequester)
-                                    .onFocusChanged { focusState ->
-                                        cyclicTailFocused = focusState.isFocused
-                                        if (focusState.isFocused) {
-                                            lastIndex = 0
-                                            currentOnItemFocused(apps.lastIndex)
-                                        }
+                }.focusGroup(),
+                contentPadding = PaddingValues(horizontal = horizontalPadding, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
+            ) {
+                itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
+                    val requester = focusRequesterForPackage?.invoke(app.packageName)
+                        ?: requesters.getOrPut(app.packageName) { FocusRequester() }
+                    LaunchedEffect(app.packageName) {
+                        requesters[app.packageName] = requester
+                    }
+                    InstalledAppTile(
+                        app = app,
+                        modifier = Modifier.focusRequester(requester),
+                        tileWidth = tileWidth,
+                        cornerRadius = cornerRadius,
+                        onFocused = {
+                            lastIndex = index
+                            currentOnItemFocused(index)
+                        },
+                        onClick = {
+                            if (!launchInstalledApp(context, app)) {
+                                Toast.makeText(context, launchError, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onLongClick = {
+                            contextMenuApp = app
+                            contextMenuIndex = index
+                        }
+                    )
+                }
+                if (cyclicTail && apps.isNotEmpty()) {
+                    cyclicTailIndices.forEachIndexed { tailIndex, sourceIndex ->
+                        val tailApp = apps[sourceIndex]
+                        val isFocusableTail = tailIndex == 0 && apps.size > 1
+                        item(key = "installed_apps_cyclic_tail_${tailIndex}_${tailApp.packageName}") {
+                            InstalledAppTile(
+                                app = tailApp,
+                                onClick = {
+                                    if (isFocusableTail && !launchInstalledApp(context, tailApp)) {
+                                        Toast.makeText(context, launchError, Toast.LENGTH_SHORT).show()
                                     }
-                            } else Modifier.focusProperties { canFocus = false },
-                            tileWidth = tileWidth,
-                            cornerRadius = cornerRadius,
-                            onFocused = { if (isFocusableTail) lastIndex = 0 },
-                        )
+                                },
+                                modifier = if (isFocusableTail) {
+                                    Modifier
+                                        .focusRequester(cyclicTailFocusRequester)
+                                        .onFocusChanged { focusState ->
+                                            cyclicTailFocused = focusState.isFocused
+                                            if (focusState.isFocused) {
+                                                lastIndex = 0
+                                                currentOnItemFocused(apps.lastIndex)
+                                            }
+                                        }
+                                } else Modifier.focusProperties { canFocus = false },
+                                tileWidth = tileWidth,
+                                cornerRadius = cornerRadius,
+                                onFocused = { if (isFocusableTail) lastIndex = 0 },
+                            )
+                        }
                     }
                 }
             }

@@ -167,8 +167,6 @@ android {
         buildConfigField("String", "TRAKT_CLIENT_SECRET", "\"${localProperties.getProperty("TRAKT_CLIENT_SECRET", "")}\"")
         buildConfigField("String", "TRAKT_API_URL", "\"${localProperties.getProperty("TRAKT_API_URL", "https://api.trakt.tv/")}\"")
         buildConfigField("String", "TRAKT_REDIRECT_URI", "\"${localProperties.getProperty("TRAKT_REDIRECT_URI", "urn:ietf:wg:oauth:2.0:oob")}\"")
-        buildConfigField("String", "SIMKL_CLIENT_ID", buildConfigString(resolveProperty(devProperties, localProperties, "SIMKL_CLIENT_ID")))
-        buildConfigField("String", "SIMKL_APP_NAME", buildConfigString(resolveProperty(devProperties, localProperties, "SIMKL_APP_NAME", "nuvio")))
         buildConfigField("String", "MDBLIST_CLIENT_ID", buildConfigString(resolveProperty(devProperties, localProperties, "MDBLIST_CLIENT_ID")))
         buildConfigField(
             "String",
@@ -284,8 +282,7 @@ android {
             buildConfigField("String", "SPONSOR_NAMES", buildConfigString(sponsorNames))
         }
         release {
-            // Local APKs use the debug signing key until a production key is configured.
-            // Keep those iterative builds quick; production-signed APKs remain optimized.
+            // Production releases stay optimized; validation has its own build type.
             isMinifyEnabled = !useDebugReleaseSigning
             isShrinkResources = !useDebugReleaseSigning
             proguardFiles(
@@ -318,6 +315,14 @@ android {
             buildConfigField("String", "UNIQUE_CONTRIBUTIONS_BASE_URL", "\"${localProperties.getProperty("UNIQUE_CONTRIBUTIONS_BASE_URL", "")}\"")
             buildConfigField("String", "PLAYBACK_REPORTS_BASE_URL", buildConfigString(localProperties.getProperty("PLAYBACK_REPORTS_BASE_URL", "")))
             buildConfigField("String", "SPONSOR_NAMES", buildConfigString(sponsorNames))
+        }
+        create("validation") {
+            // Keep validation outputs separate while preserving the release app identity.
+            initWith(buildTypes.getByName("release"))
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+            isShrinkResources = false
+            matchingFallbacks += "release"
         }
         create("benchmark") {
             initWith(buildTypes.getByName("release"))
@@ -362,8 +367,8 @@ android {
     kotlin {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-            // Keep backend parallelism bounded while speeding up this large app module.
-            freeCompilerArgs.add("-Xbackend-threads=2")
+            // Avoid the Kotlin JVM backend metadata crash seen during parallel release code generation.
+            freeCompilerArgs.add("-Xbackend-threads=1")
         }
     }
     buildFeatures {
@@ -450,7 +455,8 @@ configurations.all {
 baselineProfile {
     automaticGenerationDuringBuild = false
     saveInSrc = true
-    mergeIntoMain = true
+    // Keep generated profiles variant-specific instead of placing them in src/main.
+    mergeIntoMain = false
     baselineProfileOutputDir = "generated/baselineProfiles"
     filter {
         include("com.nuvio.tv.**")
@@ -542,6 +548,7 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
     implementation(libs.coil.svg)
+    implementation(libs.avif.coder.coil)
     implementation(libs.coil.network.okhttp)
     implementation(libs.coil.network.cache.control)
 

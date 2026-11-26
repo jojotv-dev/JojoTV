@@ -139,6 +139,7 @@ fun YouTubeScreen(
     val state by viewModel.state.collectAsState()
     val error by viewModel.error.collectAsState()
     val cardMenu by viewModel.menu.collectAsState()
+    val contentFocusRestoreRequest by viewModel.contentFocusRestoreRequest.collectAsState()
     var query by remember { mutableStateOf("") }
     // The YouTube page sits slightly smaller than the rest of the app, so a 1080p TV shows more cards
     // and the header/tabs stop feeling oversized. Everything inside the page scales together.
@@ -248,6 +249,18 @@ fun YouTubeScreen(
     val focusManager = LocalFocusManager.current
     val sidebarExpanded = com.nuvio.tv.LocalSidebarExpanded.current
     val openSidebar = com.nuvio.tv.LocalOpenSidebar.current
+
+    LaunchedEffect(contentFocusRestoreRequest, state.loading, sidebarExpanded) {
+        if (contentFocusRestoreRequest == 0 || state.loading) return@LaunchedEffect
+        headerHidden = false
+        headerHideSuppressedUntil = android.os.SystemClock.elapsedRealtime() + 1_000L
+        repeat(10) {
+            delay(35)
+            if (sidebarExpanded) return@LaunchedEffect
+            if (runCatching { firstCardFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+            if (runCatching { selectedTabFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
 
     // Leaving the search behind (another tab, a card, settings) should put the magnifier back,
     // not leave a text box sitting in the header of the next page.

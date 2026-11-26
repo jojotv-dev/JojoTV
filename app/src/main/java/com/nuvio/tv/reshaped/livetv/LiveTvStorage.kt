@@ -207,6 +207,109 @@ internal class LiveTvStorage(context: Context, private val profileId: Int) {
         prefs.edit().putOrRemove(HIDDEN_VOD_CATEGORIES, if (keys.isEmpty()) null else array.toString()).apply()
     }
 
+    /** Remembers equivalent IDs when an account sync replaces a local copy of the same source. */
+    fun rememberVodSourceIdAlias(oldSourceId: String, canonicalSourceId: String) = synchronized(prefs) {
+        if (oldSourceId.isBlank() || canonicalSourceId.isBlank() || oldSourceId == canonicalSourceId) {
+            return@synchronized
+        }
+        val aliases = vodSourceIdAliasesLocked().toMutableMap()
+        aliases.keys.toList().forEach { key ->
+            if (resolveVodSourceIdAlias(key, aliases) == oldSourceId) {
+                aliases[key] = canonicalSourceId
+            }
+        }
+        aliases[oldSourceId] = canonicalSourceId
+        aliases.remove(canonicalSourceId)
+        aliases.keys.toList().forEach { key ->
+            val resolved = resolveVodSourceIdAlias(key, aliases)
+            if (key == resolved) aliases.remove(key) else aliases[key] = resolved
+        }
+        val json = JSONObject()
+        aliases.forEach { (oldId, newId) -> json.put(oldId, newId) }
+        prefs.edit().putString(key(VOD_SOURCE_ID_ALIASES), json.toString()).apply()
+    }
+
+    fun remapVodFavoriteKeys(keys: Set<String>): Set<String> = synchronized(prefs) {
+        remapVodSourceKeys(keys, vodSourceIdAliasesLocked())
+    }
+
+    fun remapStoredVodFavoriteKeys(): Boolean = synchronized(prefs) {
+        val current = favoriteVodKeys()
+        val remapped = remapVodFavoriteKeys(current)
+        if (current == remapped) return@synchronized false
+        saveFavoriteVodKeys(remapped)
+        true
+    }
+
+    fun remapVodCategoryKeys(keys: Set<String>): Set<String> = synchronized(prefs) {
+        val aliases = vodSourceIdAliasesLocked()
+        keys.mapTo(LinkedHashSet()) { categoryKey ->
+            val parts = categoryKey.split('\u001f', limit = 3)
+            if (parts.size != 3) return@mapTo categoryKey
+            val canonicalSourceId = aliases[parts[1]] ?: return@mapTo categoryKey
+            "${parts[0]}\u001f$canonicalSourceId\u001f${parts[2]}"
+        }
+    }
+
+    fun remapStoredVodCategoryKeys(): Boolean = synchronized(prefs) {
+        val current = hiddenVodCategoryKeys()
+        val remapped = remapVodCategoryKeys(current)
+        if (current == remapped) return@synchronized false
+        saveHiddenVodCategoryKeys(remapped)
+        true
+    }
+
+    private fun remapVodSourceKeys(
+        keys: Set<String>,
+        aliases: Map<String, String>,
+    ): Set<String> = keys.mapTo(LinkedHashSet()) { value ->
+        val sourceSeparator = value.indexOf(':')
+        if (sourceSeparator <= 0) return@mapTo value
+        val sourceId = value.substring(0, sourceSeparator)
+        val afterSource = value.substring(sourceSeparator + 1)
+        val typeSeparator = afterSource.indexOf(':')
+        if (typeSeparator <= 0) return@mapTo value
+        val type = afterSource.substring(0, typeSeparator)
+        val itemId = afterSource.substring(typeSeparator + 1)
+        val canonicalSourceId = aliases[sourceId] ?: sourceId
+
+        // VOD IDs include the source ID too (source:type:source:type:providerId). When a local
+        // source is reconciled with the account-wide ID, update both parts of the favorite key.
+        val nestedSourceSeparator = itemId.indexOf(':')
+        val nestedTypeSeparator = itemId.indexOf(':', nestedSourceSeparator + 1)
+        val canonicalItemId = if (nestedSourceSeparator > 0 && nestedTypeSeparator > nestedSourceSeparator) {
+            val nestedSourceId = itemId.substring(0, nestedSourceSeparator)
+            val nestedType = itemId.substring(nestedSourceSeparator + 1, nestedTypeSeparator)
+            val canonicalNestedSourceId = aliases[nestedSourceId]
+            if (nestedType == type && canonicalNestedSourceId != null) {
+                "$canonicalNestedSourceId:${itemId.substring(nestedSourceSeparator + 1)}"
+            } else {
+                itemId
+            }
+        } else {
+            itemId
+        }
+        "$canonicalSourceId:$type:$canonicalItemId"
+    }
+
+    private fun vodSourceIdAliasesLocked(): Map<String, String> {
+        val raw = prefs.getString(key(VOD_SOURCE_ID_ALIASES), null) ?: return emptyMap()
+        val json = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyMap()
+        return json.keys().asSequence().mapNotNull { oldId ->
+            json.optString(oldId).takeIf(String::isNotBlank)?.let { oldId to it }
+        }.toMap()
+    }
+
+    private fun resolveVodSourceIdAlias(sourceId: String, aliases: Map<String, String>): String {
+        var current = sourceId
+        repeat(32) {
+            val next = aliases[current]?.takeIf(String::isNotBlank) ?: return current
+            if (next == current) return current
+            current = next
+        }
+        return current
+    }
+
     // region Hidden channels
 
     private val hiddenChannelsFile get() = File(playlistDir, "hidden_channels_$profileId.bin")
@@ -391,7 +494,18 @@ internal class LiveTvStorage(context: Context, private val profileId: Int) {
     /** Applies a remote snapshot only when no newer local VOD-favourite edit is waiting to sync. */
     fun applyRemoteFavoriteVodKeys(keys: Set<String>): Boolean = synchronized(prefs) {
         if (prefs.getBoolean(key(VOD_FAVORITES_SYNC_PENDING), false)) return@synchronized false
-        val value = keys.map(String::trim).filter(String::isNotBlank).toSortedSet().joinToString("\n")
+        val normalizedKeys = remapVodFavoriteKeys(keys.map(String::trim).filter(String::isNotBlank).toSet())
+        val value = normalizedKeys.toSortedSet().joinToString("\n")
+        if (normalizedKeys != keys) {
+            val baseValue = keys.map(String::trim).filter(String::isNotBlank).toSortedSet().joinToString("\n")
+            val editor = prefs.edit()
+                .putString(key(VOD_FAVORITES_SYNC_BASE), baseValue)
+                .putBoolean(key(VOD_FAVORITES_SYNC_PENDING), true)
+                .putString(key(VOD_FAVORITES_SYNC_VALUE), value)
+            if (value.isBlank()) editor.remove(key(VOD_FAVORITES)) else editor.putString(key(VOD_FAVORITES), value)
+            editor.apply()
+            return@synchronized false
+        }
         val editor = prefs.edit()
         if (value.isBlank()) editor.remove(key(VOD_FAVORITES))
         else editor.putString(key(VOD_FAVORITES), value)
@@ -530,6 +644,7 @@ internal class LiveTvStorage(context: Context, private val profileId: Int) {
         private const val VOD_FAVORITES_SYNC_PENDING = "favorite_vod_keys_sync_pending"
         private const val VOD_FAVORITES_SYNC_VALUE = "favorite_vod_keys_sync_value"
         private const val VOD_FAVORITES_SYNC_BASE = "favorite_vod_keys_sync_base"
+        private const val VOD_SOURCE_ID_ALIASES = "vod_source_id_aliases"
         private const val CUSTOM_LISTS = "custom_lists"
         private const val RECENT_URL = "recent_channel_url"
         private const val RECENT_NAME = "recent_channel_name"

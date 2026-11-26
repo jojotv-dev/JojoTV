@@ -66,7 +66,6 @@ import com.nuvio.tv.ui.util.rememberRawSvgPainter
 private const val NuvioRepositoryUrl = "https://github.com/NuvioMedia/NuvioTV"
 private const val TmdbUrl = "https://www.themoviedb.org"
 private const val TraktUrl = "https://trakt.tv"
-private const val SimklUrl = "https://simkl.com"
 private const val MdbListUrl = "https://mdblist.com"
 private const val IntroDbUrl = "https://introdb.app/"
 private const val ImdbDatasetsUrl = "https://developer.imdb.com/non-commercial-datasets/"
@@ -364,12 +363,6 @@ private fun dataAttributionItems() = listOf(
         body = stringResource(R.string.licenses_attributions_trakt_body),
         url = TraktUrl,
         logo = LicenseLogo.Raw(R.raw.trakt_tv_favicon)
-    ),
-    LicenseAttributionItem(
-        title = stringResource(R.string.licenses_attributions_simkl_title),
-        body = stringResource(R.string.licenses_attributions_simkl_body),
-        url = SimklUrl,
-        logo = LicenseLogo.Raw(R.raw.simkl_tv_glyph)
     ),
     LicenseAttributionItem(
         title = stringResource(R.string.licenses_attributions_mdblist_title),

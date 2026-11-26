@@ -315,7 +315,7 @@ fun CalendarScreen(
             else -> false
         }
         if (showHero) HeroBackdrop(hero)
-        Column(Modifier.fillMaxSize().padding(top = 15.dp)) {
+        Column(Modifier.fillMaxSize().padding(top = 72.dp)) {
             // ---------------------------------------------------------------- the big picture
             if (showHero) {
                 Hero(

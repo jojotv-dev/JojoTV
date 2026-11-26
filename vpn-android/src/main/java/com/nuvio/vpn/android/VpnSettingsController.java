@@ -10,6 +10,8 @@ import com.nuvio.vpn.core.ProfileEnvelope;
 import com.nuvio.vpn.core.ProfileImport;
 import com.nuvio.vpn.core.ProtectionMode;
 import com.nuvio.vpn.core.VpnPreferences;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -265,6 +267,21 @@ public final class VpnSettingsController {
                     text(R.string.vpn_profiles_import_failed), true, null));
             return;
         }
+        importProfileSource(uri, null, openVpn);
+    }
+
+    /** Import a file selected by the Fire TV D-pad browser. The same validation and encrypted store are used. */
+    public void importProfile(File file, boolean openVpn) {
+        if (state.busy) return;
+        if (file == null || !file.isFile() || !file.canRead()) {
+            publish(new State(false, true, state.shared, state.mode, state.profiles,
+                    text(R.string.vpn_profiles_import_failed), true, null));
+            return;
+        }
+        importProfileSource(null, file, openVpn);
+    }
+
+    private void importProfileSource(Uri uri, File file, boolean openVpn) {
         ProfileImport.Protocol protocol = openVpn ? ProfileImport.Protocol.OPENVPN : ProfileImport.Protocol.WIREGUARD;
         publish(new State(true, true, state.shared, state.mode, state.profiles,
                 text(R.string.vpn_profiles_importing), false, null));
@@ -273,16 +290,18 @@ public final class VpnSettingsController {
             boolean failed = false;
             String reason = null;
             String prompt = null;
-            try (InputStream input = app.getContentResolver().openInputStream(uri)) {
+            try (InputStream input = uri != null
+                    ? app.getContentResolver().openInputStream(uri)
+                    : new FileInputStream(file)) {
                 if (input == null) throw new IOException("Configuration is unavailable.");
                 try (ProfileImport.Candidate candidate = ProfileImport.read(input, protocol)) {
                     if (protocol == ProfileImport.Protocol.WIREGUARD) WireGuardProfiles.parse(candidate);
                     String id = java.util.UUID.randomUUID().toString();
                     if (protocol == ProfileImport.Protocol.OPENVPN && OpenVpnSession.evaluate(candidate.copyContents()) == 2)
                         prompt = id;
-                    store.save(id, displayName(uri, protocol), candidate);
+                    store.save(id, uri != null ? displayName(uri, protocol) : displayName(file, protocol), candidate);
                 }
-                // Keep no URI grant, plaintext copy, or persisted document reference.
+                // Keep no URI grant, plaintext copy, or persisted source-file reference.
             } catch (Exception | LinkageError e) {
                 message = R.string.vpn_profiles_import_failed;
                 failed = true;
@@ -327,6 +346,14 @@ public final class VpnSettingsController {
         try (Cursor cursor = app.getContentResolver().query(uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0);
         } catch (Exception ignored) { /* Display names are optional/untrusted metadata. */ }
+        return displayName(name, protocol);
+    }
+
+    private String displayName(File file, ProfileImport.Protocol protocol) {
+        return displayName(file == null ? null : file.getName(), protocol);
+    }
+
+    private String displayName(String name, ProfileImport.Protocol protocol) {
         if (name != null) {
             name = name.replaceFirst("(?i)\\.(ovpn|conf)$", "")
                     .replaceAll("[^\\p{L}\\p{N} ._()-]", "_").trim();

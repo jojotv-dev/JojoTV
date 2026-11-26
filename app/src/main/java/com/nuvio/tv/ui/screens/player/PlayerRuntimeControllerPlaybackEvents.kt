@@ -924,7 +924,7 @@ internal fun PlayerRuntimeController.currentWatchProgress(
 )
 
 internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, duration: Long, syncRemote: Boolean = true) {
-    // OneTube maintains its own local watch bar and, when signed in, reports progress to YouTube.
+    // OneTube maintains a local watch bar, syncs Continue Watching through Nuvio, and reports progress to YouTube.
     if (com.nuvio.tv.youtube.YouTubeProgress.isYouTubeId(contentId)) {
         if (!navigationArgs.youtubeLive && position >= 1000L) {
             com.nuvio.tv.youtube.YouTubeProgress.record(context, contentId, position, duration)
@@ -940,7 +940,7 @@ internal fun PlayerRuntimeController.saveWatchProgressInternal(position: Long, d
                     watchProgressRepository.saveProgress(
                         progress = youtubeProgress,
                         profileId = profileId,
-                        syncRemote = false
+                        syncRemote = true
                     )
                 } catch (error: IOException) {
                     Log.w(PlayerRuntimeController.TAG, "YouTube Home progress could not be saved", error)
@@ -1404,12 +1404,14 @@ fun PlayerRuntimeController.onEvent(
                 val playing = isPlaybackCurrentlyPlaying()
                 if (playing) {
                     userPausedManually = true
+                    userPauseStartedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
                     setPlaybackPaused(true)
                     stopProgressUpdates()
                     stopWatchProgressSaving()
                     emitPauseScrobbleForCurrentProgress()
                     schedulePauseOverlay()
                 } else {
+                    userPauseStartedAtElapsedMs = 0L
                     userPausedManually = false
                     cancelPauseOverlay()
                     setPlaybackPaused(false)
@@ -1422,12 +1424,40 @@ fun PlayerRuntimeController.onEvent(
                 _exoPlayer?.let { player ->
                     if (player.isPlaying) {
                         userPausedManually = true
+                        userPauseStartedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
                         player.pause()
                         schedulePauseOverlay()
                     } else {
+                        val pausedForMs = userPauseStartedAtElapsedMs
+                            .takeIf { it > 0L }
+                            ?.let { (android.os.SystemClock.elapsedRealtime() - it).coerceAtLeast(0L) }
+                            ?: 0L
+                        val isLongPausedFreebox = currentStreamUrl.startsWith("freebox:", ignoreCase = true) &&
+                            pausedForMs >= PlayerRuntimeController.FREEBOX_LONG_PAUSE_REOPEN_THRESHOLD_MS
+                        val resumePositionMs = currentPlaybackPositionMs()
+                            ?.coerceAtLeast(0L)
+                            ?: playbackTimeline.value.currentPosition.coerceAtLeast(0L)
+                        userPauseStartedAtElapsedMs = 0L
                         userPausedManually = false
                         cancelPauseOverlay()
-                        player.play()
+                        if (isLongPausedFreebox) {
+                            Log.i(
+                                PlayerRuntimeController.TAG,
+                                "FREEBOX_LONG_PAUSE_REOPEN pausedMs=$pausedForMs positionMs=$resumePositionMs"
+                            )
+                            _uiState.update {
+                                it.copy(
+                                    pendingSeekPosition = null,
+                                    error = null,
+                                    isBuffering = true,
+                                    showPauseOverlay = false,
+                                )
+                            }
+                            releasePlayer(flushPlaybackState = false)
+                            reinitializeCurrentStream(initialPositionOverrideMs = resumePositionMs)
+                        } else {
+                            player.play()
+                        }
                     }
                 }
             }

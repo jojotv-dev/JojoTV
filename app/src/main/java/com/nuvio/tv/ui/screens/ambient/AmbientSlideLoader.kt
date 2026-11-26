@@ -3,7 +3,6 @@ package com.nuvio.tv.ui.screens.ambient
 import android.content.Context
 import android.net.Uri
 import com.nuvio.tv.core.profile.ProfileManager
-import com.nuvio.tv.core.tmdb.MetaPreviewEnricher
 import com.nuvio.tv.core.tmdb.TmdbMetadataService
 import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.local.TmdbSettingsDataStore
@@ -16,6 +15,7 @@ import com.nuvio.tv.reshaped.livetv.LiveTvRepository
 import com.nuvio.tv.reshaped.livetv.LiveTvSourceType
 import com.nuvio.tv.reshaped.livetv.LiveTvVodCache
 import com.nuvio.tv.reshaped.livetv.LiveTvVodItem
+import com.nuvio.tv.reshaped.livetv.normalizeLiveTvVodTitleForTmdb
 import com.nuvio.tv.ui.screens.home.readHomeFavoriteArtworkOverride
 import com.nuvio.tv.ui.screens.home.HOME_IPTV_FAVORITE_ITEM_ID_PREFIX
 import com.nuvio.tv.ui.util.localizedGenreLabel
@@ -58,7 +58,6 @@ class AmbientSlideLoader @Inject constructor(
     private val profileManager: ProfileManager,
     private val libraryRepository: LibraryRepository,
     private val tmdbSettingsDataStore: TmdbSettingsDataStore,
-    private val metaPreviewEnricher: MetaPreviewEnricher,
     private val tmdbService: TmdbService,
     private val tmdbMetadataService: TmdbMetadataService,
 ) {
@@ -82,23 +81,17 @@ class AmbientSlideLoader @Inject constructor(
         val enriched = if (tmdbSettings.enabled) {
             val libraryItems = favoriteItems.filterNot { it.id.startsWith(HOME_IPTV_FAVORITE_ITEM_ID_PREFIX) }
             val iptvItems = favoriteItems.filter { it.id.startsWith(HOME_IPTV_FAVORITE_ITEM_ID_PREFIX) }
-            val libraryEnriched = metaPreviewEnricher.enrich(
-                libraryItems,
-                tmdbSettings.copy(useArtwork = true, useBasicInfo = true),
-            ).let { results ->
-                if (tmdbSettings.useArtwork) results
-                else libraryItems.zip(results).map { (original, enriched) ->
-                    enriched.copy(
-                        background = original.background,
-                        poster = original.poster,
-                        logo = enriched.logo ?: original.logo,
-                    )
-                }
-            }
-            val iptvEnriched = enrichIptvFavorites(
+            val libraryEnriched = enrichFavoriteItems(
+                items = libraryItems,
+                language = tmdbSettings.language,
+                useArtwork = tmdbSettings.useArtwork,
+                includePoster = true,
+            )
+            val iptvEnriched = enrichFavoriteItems(
                 items = iptvItems,
                 language = tmdbSettings.language,
                 useArtwork = tmdbSettings.useArtwork,
+                includePoster = false,
             )
             (libraryEnriched + iptvEnriched).associateBy { it.id }
                 .let { enrichedById -> favoriteItems.map { enrichedById[it.id] ?: it } }
@@ -140,16 +133,18 @@ class AmbientSlideLoader @Inject constructor(
             artworkItem.toSlide()
         }
 
-    private suspend fun enrichIptvFavorites(
+    private suspend fun enrichFavoriteItems(
         items: List<MetaPreview>,
         language: String,
         useArtwork: Boolean,
+        includePoster: Boolean,
     ): List<MetaPreview> = coroutineScope {
         val semaphore = Semaphore(AMBIENT_ENRICHMENT_CONCURRENCY)
         items.map { item ->
             async {
                 semaphore.withPermit {
-                    val cleanTitle = item.name.toCleanAmbientTitle()
+                    // Home favorites resolve artwork by this same normalized title, year, and type.
+                    val cleanTitle = normalizeLiveTvVodTitleForTmdb(item.name)
                     val match = try {
                         tmdbService.findExactTitleMatch(
                             title = cleanTitle,
@@ -178,7 +173,8 @@ class AmbientSlideLoader @Inject constructor(
                     item.copy(
                         background = backdrop ?: item.background,
                         landscapePoster = backdrop ?: item.landscapePoster,
-                        logo = enrichment?.logo ?: item.logo,
+                        poster = enrichment?.poster?.takeIf { useArtwork && includePoster } ?: item.poster,
+                        logo = enrichment?.logo?.takeIf { useArtwork } ?: item.logo,
                         genres = enrichment?.genres?.takeIf { it.isNotEmpty() } ?: item.genres,
                     )
                 }

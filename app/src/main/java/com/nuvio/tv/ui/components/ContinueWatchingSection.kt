@@ -1261,9 +1261,18 @@ fun ContinueWatchingOptionsDialog(
     onMarkWatched: () -> Unit = {},
     onMarkUnwatched: () -> Unit = {},
     onChangeHeroArtwork: () -> Unit = {},
-    onDeleteFromFreebox: () -> Unit = {}
+    onDeleteFromFreebox: () -> Unit = {},
+    showLocalIptvStartFromBeginning: Boolean = false
 ) {
     val isPlayEnabled = LocalPlaybackAvailability.current.canStream(item)
+    val hasLocalIptvPlayback = showLocalIptvStartFromBeginning &&
+        (item as? ContinueWatchingItem.InProgress)?.progress?.let { progress ->
+            (progress.contentType.equals("movie", ignoreCase = true) &&
+                progress.contentId.contains(":movie:", ignoreCase = true)) ||
+                (progress.contentType.equals("series", ignoreCase = true) &&
+                    progress.contentId.contains(":series:", ignoreCase = true))
+        } == true
+    val canStartFromBeginning = isPlayEnabled || hasLocalIptvPlayback
     val title = when (item) {
         is ContinueWatchingItem.InProgress -> item.progress.name
         is ContinueWatchingItem.NextUp -> item.info.name
@@ -1278,7 +1287,7 @@ fun ContinueWatchingOptionsDialog(
     val primaryActionFocusRequester = remember { FocusRequester() }
     val primaryAction = when {
         item.canMarkWatched() -> "watched"
-        item is ContinueWatchingItem.InProgress && isPlayEnabled -> "restart"
+        item is ContinueWatchingItem.InProgress && canStartFromBeginning -> "restart"
         else -> "artwork"
     }
 
@@ -1319,7 +1328,7 @@ fun ContinueWatchingOptionsDialog(
             }
         }
 
-        if (item is ContinueWatchingItem.InProgress && isPlayEnabled) {
+        if (item is ContinueWatchingItem.InProgress && canStartFromBeginning) {
             Button(
                 onClick = onStartFromBeginning,
                 colors = ButtonDefaults.colors(

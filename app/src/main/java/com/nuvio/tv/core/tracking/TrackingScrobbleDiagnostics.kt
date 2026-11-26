@@ -1,6 +1,6 @@
 package com.nuvio.tv.core.tracking
 
-internal const val TRACKING_SCROBBLE_DIAGNOSTIC_TAG = "SimklScrobbleDiag"
+internal const val TRACKING_SCROBBLE_DIAGNOSTIC_TAG = "TrackingScrobble"
 
 internal fun TrackingMediaReference.scrobbleDiagnosticIdentity(): String {
     val episodeIdentity = episode?.let { value ->

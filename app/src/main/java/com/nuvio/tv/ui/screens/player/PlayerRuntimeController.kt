@@ -113,6 +113,7 @@ class PlayerRuntimeController(
         // advancing during STATE_BUFFERING. Fires before OkHttp's readTimeout.
         internal const val STALL_WATCHDOG_THRESHOLD_MS = 15_000L
         internal const val STALL_WATCHDOG_POLL_INTERVAL_MS = 1_000L
+        internal const val FREEBOX_LONG_PAUSE_REOPEN_THRESHOLD_MS = 60_000L
         internal const val MAX_TIMEOUT_RECOVERY_ATTEMPTS = 2
         internal const val ADDON_SUBTITLE_TRACK_ID_PREFIX = "nuvio-addon-sub:"
     }
@@ -167,7 +168,7 @@ class PlayerRuntimeController(
     internal val streamName: String? = navigationArgs.streamName
     internal val year: String? = navigationArgs.year
     internal val headersJson: String? = navigationArgs.headersJson
-    internal val contentId: String? = navigationArgs.contentId
+    internal var contentId: String? = navigationArgs.contentId
     internal val contentType: String? = navigationArgs.contentType
     internal val contentName: String? = navigationArgs.contentName
     internal val poster: String? = navigationArgs.poster
@@ -288,6 +289,24 @@ class PlayerRuntimeController(
     internal var currentSeason: Int? = initialSeason
     internal var currentEpisode: Int? = initialEpisode
     internal var currentEpisodeTitle: String? = initialEpisodeTitle
+    internal val freeboxEpisodeVideos: List<Video> = navigationArgs.freeboxEpisodes
+        .map { episode ->
+            Video(
+                id = episode.contentId,
+                title = episode.title,
+                released = episode.released,
+                thumbnail = episode.thumbnail,
+                season = episode.season,
+                episode = episode.episode,
+                overview = episode.overview,
+                runtime = episode.runtimeMinutes,
+            )
+        }
+        .sortedWith(
+            compareBy<Video> { it.season ?: Int.MAX_VALUE }
+                .thenBy { it.episode ?: Int.MAX_VALUE }
+                .thenBy { it.title },
+        )
 
     internal val _uiState = MutableStateFlow(
         PlayerUiState(
@@ -307,6 +326,13 @@ class PlayerRuntimeController(
             castMembers = navigationArgs.initialCastMembers,
             director = navigationArgs.initialDirector,
             showLoadingOverlay = true,
+            episodesAll = freeboxEpisodeVideos,
+            episodesAvailableSeasons = freeboxEpisodeVideos.mapNotNull { it.season }.distinct().sorted(),
+            episodesSelectedSeason = currentSeason ?: freeboxEpisodeVideos.firstOrNull()?.season,
+            episodes = freeboxEpisodeVideos
+                .filter { it.season == (currentSeason ?: freeboxEpisodeVideos.firstOrNull()?.season) }
+                .ifEmpty { freeboxEpisodeVideos },
+            isFreeboxEpisodePlayback = freeboxEpisodeVideos.isNotEmpty(),
             currentSeason = currentSeason,
             currentEpisode = currentEpisode,
             currentVideoId = currentVideoId,
@@ -510,6 +536,7 @@ class PlayerRuntimeController(
     internal var nextEpisodePreloadJob: Job? = null
     internal var nextEpisodePreloadTriggered: Boolean = false
     internal var userPausedManually = false
+    internal var userPauseStartedAtElapsedMs: Long = 0L
 
     internal var isInBackground: Boolean = false
     internal var releaseDecoderOnBackground: Boolean = false

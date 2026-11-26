@@ -5,6 +5,7 @@ package com.nuvio.tv.ui.screens.home
 import android.content.Intent
 import android.provider.Settings
 import android.view.KeyEvent as AndroidKeyEvent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -29,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -65,6 +67,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.core.apps.InstalledApp
 import com.nuvio.tv.core.apps.launchInstalledApp
+import com.nuvio.tv.core.shizuku.ShizukuStorageBrowser
 import com.nuvio.tv.ui.components.InstalledAppArtwork
 import com.nuvio.tv.ui.screens.ambient.AmbientDialogEffect
 import com.nuvio.tv.ui.screens.apps.AppContextMenuModal
@@ -179,6 +182,20 @@ fun HomeSettingsDrawer(
                                     )
                                 }
                             },
+                            onRestartDevice = {
+                                val errorMessage = when (ShizukuStorageBrowser.availability()) {
+                                    ShizukuStorageBrowser.Availability.READY -> runCatching {
+                                        ShizukuStorageBrowser.restartDevice()
+                                    }.exceptionOrNull()?.let { R.string.settings_menu_restart_failed }
+                                    ShizukuStorageBrowser.Availability.PERMISSION_REQUIRED ->
+                                        R.string.settings_menu_restart_shizuku_authorize
+                                    ShizukuStorageBrowser.Availability.UNAVAILABLE ->
+                                        R.string.settings_menu_restart_shizuku_connect
+                                }
+                                errorMessage?.let { messageId ->
+                                    Toast.makeText(context, context.getString(messageId), Toast.LENGTH_LONG).show()
+                                }
+                            },
                             initialFocusRequester = initialFocusRequester
                         )
                     }
@@ -235,6 +252,7 @@ private fun SettingsMenuContent(
     onOpenAllApps: () -> Unit,
     onOpenNuvioSettings: () -> Unit,
     onOpenAndroidSettings: () -> Unit,
+    onRestartDevice: () -> Unit,
     initialFocusRequester: FocusRequester
 ) {
     val dateText = remember {
@@ -296,6 +314,14 @@ private fun SettingsMenuContent(
                 title = stringResource(R.string.settings_menu_android_settings),
                 icon = Icons.Default.Android,
                 onClick = onOpenAndroidSettings
+            )
+        }
+
+        item {
+            DrawerActionRow(
+                title = stringResource(R.string.settings_menu_restart_device),
+                icon = Icons.Default.RestartAlt,
+                onClick = onRestartDevice
             )
         }
     }

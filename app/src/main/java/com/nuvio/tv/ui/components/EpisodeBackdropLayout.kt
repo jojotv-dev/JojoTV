@@ -451,6 +451,12 @@ fun EpisodeBackdropLayout(
         ) {
             itemsIndexed(episodeFocusIds, key = { _, focusId -> focusId }) { index, focusId ->
                 val episode = episodes[index]
+                val episodeProgress = remember(episode.season, episode.episode, episodeProgressMap) {
+                    val season = episode.season
+                    val number = episode.episode
+                    if (season != null && number != null) episodeProgressMap[season to number] else null
+                }
+                val isEpisodeInProgress = episodeProgress?.isInProgress() == true
                 var focused by remember(focusId) { mutableStateOf(false) }
                 val shape = NuvioTheme.configuredShape(RoundedCornerShape(12.dp))
                 Column(Modifier.width(if (showRichEpisodes) 300.dp else 222.dp)) {
@@ -543,7 +549,7 @@ fun EpisodeBackdropLayout(
                                     }
                                 }
                             }
-                            if (!showRichEpisodes) {
+                            if (!showRichEpisodes && !isEpisodeInProgress) {
                                 episode.airDate.formatUpcomingDate(dateFormatter)?.let { date ->
                                     Text(
                                         text = date,
@@ -556,6 +562,11 @@ fun EpisodeBackdropLayout(
                                             .padding(horizontal = 7.dp, vertical = 4.dp),
                                     )
                                 }
+                            }
+                            if (isEpisodeInProgress) {
+                                InProgressBadge(
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
+                                )
                             }
                         }
                     }

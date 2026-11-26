@@ -1945,7 +1945,6 @@ private fun MetaDetailsContent(
     val moreLikeThisSourceLabel = when (moreLikeThisSource) {
         MoreLikeThisSource.TMDB -> stringResource(R.string.detail_more_like_this_powered_by_tmdb)
         MoreLikeThisSource.TRAKT -> stringResource(R.string.detail_more_like_this_powered_by_trakt)
-        MoreLikeThisSource.SIMKL -> stringResource(R.string.detail_more_like_this_powered_by_simkl)
         null -> null
     }
     val peopleTabItems = remember(
@@ -2783,6 +2782,9 @@ private fun MetaDetailsContent(
                     Box(modifier = Modifier.bringIntoViewResponder(episodeRowStayVerticalResponder)) {
                         EpisodesRow(
                             episodes = episodesForSeason,
+                            episodeArtworkFallbackUrl = heroBackdropUrl
+                                ?: meta.backdropUrl
+                                ?: meta.poster,
                             episodeProgressMap = episodeProgressMap,
                             episodeRatings = visibleEpisodeImdbRatings,
                             watchedEpisodes = watchedEpisodes,

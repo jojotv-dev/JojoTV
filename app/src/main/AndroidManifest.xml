@@ -51,6 +51,7 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.READ_LOGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -142,6 +143,17 @@
 
         <receiver
             android:name=".core.launcher.LauncherBootReceiver"
+            android:directBootAware="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".core.server.LanFileShareBootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
@@ -163,6 +175,11 @@
             android:name=".core.player.ExternalPlaybackKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <service
+            android:name=".core.server.LanFileShareService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <receiver
             android:name=".livetv.record.RecordingAlarmReceiver"
@@ -189,6 +206,11 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/launcher_accessibility_service_config" />
         </service>
+
+        <service
+            android:name=".core.launcher.FireOsHomeButtonService"
+            android:directBootAware="true"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"

@@ -1,14 +1,18 @@
-@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.tv.material3.ExperimentalTvMaterial3Api::class,
+)
 
 package com.nuvio.tv.ui.reshaped.livetv
 
 import android.util.Log
+import android.content.Context
+import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,12 +27,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed as rowItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -55,8 +61,9 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -64,15 +71,15 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardBorder
 import androidx.tv.material3.CardDefaults
@@ -82,6 +89,7 @@ import androidx.tv.material3.Text
 import android.text.format.DateUtils
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
+import coil3.BitmapImage
 import coil3.compose.AsyncImage
 import com.nuvio.tv.R
 import com.nuvio.tv.domain.model.WatchProgress
@@ -90,6 +98,7 @@ import com.nuvio.tv.ui.components.EpisodeBackdropInfo
 import com.nuvio.tv.ui.components.EpisodeBackdropLayout
 import com.nuvio.tv.ui.components.EpisodeRailItem
 import com.nuvio.tv.ui.components.TrailerPlayer
+import com.nuvio.tv.ui.screens.home.ModernHeroGradientLayer
 import com.nuvio.tv.reshaped.livetv.LiveTvRepository
 import com.nuvio.tv.reshaped.livetv.LiveTvVodCache
 import com.nuvio.tv.reshaped.livetv.LiveTvSource
@@ -102,8 +111,8 @@ import com.nuvio.tv.reshaped.livetv.LIVE_TV_STREAM_HEADERS
 import com.nuvio.tv.reshaped.livetv.LiveTvStalker
 import com.nuvio.tv.reshaped.livetv.LiveTvXtream
 import com.nuvio.tv.ui.components.NuvioDialog
-import com.nuvio.tv.ui.screens.detail.SharedTrailerOverlay
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.util.logoContrastTint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -111,22 +120,38 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
 private enum class IptvVodPanel { Sources, Favorites, History }
 private const val VOD_FOCUS_PREVIEW_DELAY_MS = 220L
-private const val VOD_TRAILER_AUTO_PREVIEW_DELAY_MS = 5_000L
-private const val VOD_FOCUSED_HERO_ASPECT_RATIO = 2.25f
+private const val VOD_TRAILER_PREVIEW_DELAY_MS = 5_000L
+private val VOD_SINGLE_POSTER_ROW_HEIGHT = 180.dp
+private const val VOD_DETAILS_PANEL_WIDTH = 0.20f
+private const val VOD_HERO_PANEL_WIDTH = 0.80f
+private val VOD_HERO_START_PADDING = 22.dp
+private const val VOD_GRID_COLUMNS = 6
+private val VOD_GRID_HORIZONTAL_CONTENT_PADDING = 4.dp
+private val VOD_GRID_VERTICAL_CONTENT_PADDING = 6.dp
+private val VOD_GRID_ITEM_SPACING = 10.dp
+private val VOD_POSTER_LABEL_HEIGHT = 32.dp
 
 @Composable
 private fun Modifier.navigateRightTo(
     target: FocusRequester?,
     onNavigate: () -> Unit,
+    upTarget: FocusRequester? = null,
 ): Modifier {
-    if (target == null) return this
+    if (target == null && upTarget == null) return this
+    val focusModifier = focusProperties {
+        if (target != null) right = target
+        if (upTarget != null) up = upTarget
+    }
+    if (target == null) return focusModifier
     val scope = rememberCoroutineScope()
-    return focusProperties { right = target }
+    return focusModifier
         .onPreviewKeyEvent { event ->
             if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionRight) {
                 return@onPreviewKeyEvent false
@@ -149,6 +174,13 @@ private val expandedSourceIdsSaver = listSaver<Set<String>, String>(
 
 private fun String.displayableIptvCategoryName(): String? =
     trim().takeIf { it.isNotEmpty() && it.toLongOrNull() == null }
+
+private fun String.isSyntheticAllIptvCategory(allLabel: String): Boolean {
+    val normalizedName = trim()
+    return normalizedName.equals(allLabel.trim(), ignoreCase = true) ||
+        normalizedName.equals("all", ignoreCase = true) ||
+        normalizedName.equals("tout", ignoreCase = true)
+}
 
 private fun List<LiveTvVodCategory>.withDisplayableIptvCategoryNames(): List<LiveTvVodCategory> =
     mapNotNull { category ->
@@ -186,7 +218,6 @@ private fun IptvVodScreenContent(
     val liveTvModel: LiveTvScreenModel = hiltViewModel()
     val context = LocalContext.current.applicationContext
     val liveTvState by LiveTvRepository.uiState.collectAsStateWithLifecycle()
-    val lifecycleOwner = LocalLifecycleOwner.current
     val favoriteVodKeys = liveTvState.favoriteVodKeys
     val playbackHistory by liveTvModel.watchProgressHistory.collectAsStateWithLifecycle(initialValue = emptyList())
     val sources = remember(liveTvState.sources) {
@@ -199,10 +230,19 @@ private fun IptvVodScreenContent(
     val firstSourceFocusRequester = remember(type) { FocusRequester() }
     val firstVodItemFocusRequester = remember(type) { FocusRequester() }
     val selectedVodRailFocusRequester = remember(type) { FocusRequester() }
+    val favoritesRailFocusRequester = remember(type) { FocusRequester() }
+    val firstHistoryEntryFocusRequester = remember(type) { FocusRequester() }
+    val historyTrashFocusRequester = remember(type) { FocusRequester() }
+    val allVodCategoryLabel = stringResource(R.string.iptv_vod_all)
     val firstSourceId = sources.firstOrNull()?.id
     var selectedSourceId by rememberSaveable(type) { mutableStateOf<String?>(null) }
     var catalogRefreshVersion by remember(type) { mutableIntStateOf(0) }
+    val categoryLoadKey = remember(sources, type, catalogRefreshVersion) {
+        "$type:$catalogRefreshVersion:${sources.hashCode()}"
+    }
+    var categoriesReadyKey by remember(type) { mutableStateOf<String?>(null) }
     var selectedPanel by rememberSaveable(type) { mutableStateOf(IptvVodPanel.Sources) }
+    var confirmedVodRailKey by rememberSaveable(type) { mutableStateOf<String?>(null) }
     var expandedSourceIds by rememberSaveable(type, stateSaver = expandedSourceIdsSaver) {
         mutableStateOf(emptySet<String>())
     }
@@ -214,38 +254,29 @@ private fun IptvVodScreenContent(
     var episodes by remember(type) { mutableStateOf<List<LiveTvVodItem>>(emptyList()) }
     var selectedSeason by rememberSaveable(type) { mutableIntStateOf(1) }
     var seriesPresentation by remember(type) { mutableStateOf<LiveTvSeriesPresentation?>(null) }
-    var categoryFallbackItemsByKey by remember(type) {
-        mutableStateOf<Map<String, List<LiveTvVodItem>>>(emptyMap())
-    }
-    var categoryProviderOrderByKey by remember(type, catalogRefreshVersion) {
-        mutableStateOf<Map<String, List<LiveTvVodItem>>>(emptyMap())
-    }
     var focusedVodItem by remember(type) { mutableStateOf<LiveTvVodItem?>(null) }
     var focusedVodPresentation by remember(type) { mutableStateOf<LiveTvVodPresentation?>(null) }
+    var fallbackVodPresentation by remember(type) { mutableStateOf<LiveTvVodPresentation?>(null) }
     var vodTrailerSource by remember(type) { mutableStateOf<TrailerPlaybackSource?>(null) }
     var isVodTrailerPreviewActive by remember(type) { mutableStateOf(false) }
-    var pendingFullScreenVodTrailerSource by remember(type) { mutableStateOf<TrailerPlaybackSource?>(null) }
-    var fullScreenVodTrailerSource by remember(type) { mutableStateOf<TrailerPlaybackSource?>(null) }
-    var fullScreenVodTrailerTitle by remember(type) { mutableStateOf("") }
     var posterLookupBatch by remember(type) { mutableIntStateOf(0) }
     val posterLookupAttemptedKeys = remember(type) { mutableSetOf<String>() }
     var isLoadingSources by remember(type) { mutableStateOf(false) }
     var isLoadingItems by remember(type) { mutableStateOf(false) }
-    var loadingCategoryFallbackKey by remember(type) { mutableStateOf<String?>(null) }
-    var categoryFallbackCachePendingSource by remember(type) { mutableStateOf<String?>(null) }
-    val categoryFallbackAttemptedKeys = remember(type) { mutableSetOf<String>() }
     var categoryLoadErrorSourceIds by remember(type) { mutableStateOf<Set<String>>(emptySet()) }
     var hasLoadError by remember(type) { mutableStateOf(false) }
     var hasPlaybackError by remember(type) { mutableStateOf(false) }
     var showClearHistoryDialog by remember(type) { mutableStateOf(false) }
 
-    // Providers can change their catalog while the viewer is in another page. Reload on return
-    // while still showing the cached catalog immediately; skip the observer's initial RESUME.
+    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, type) {
-        var skipInitialResume = true
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                if (skipInitialResume) skipInitialResume = false else catalogRefreshVersion++
+                selectedCategoryId = null
+                focusedVodItem = null
+                focusedVodPresentation = null
+                isVodTrailerPreviewActive = false
+                vodTrailerSource = null
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -269,11 +300,19 @@ private fun IptvVodScreenContent(
     }
 
     LaunchedEffect(sources, type, catalogRefreshVersion) {
-        val cachedCategories = sources.mapNotNull { source ->
-            LiveTvVodCache.readCategories(context, source.id, type)
+        categoriesReadyKey = null
+        isLoadingSources = sources.isNotEmpty()
+        isLoadingItems = sources.isNotEmpty()
+        val cachedCategories = sources.associate { source ->
+            source.id to LiveTvVodCache.readCategories(context, source.id, type)
                 .withDisplayableIptvCategoryNames()
-                .takeIf { it.isNotEmpty() }?.let { source.id to it }
-        }.toMap()
+        }
+        val categoryRefreshRequiredSourceIds = sources
+            .filter { source ->
+                catalogRefreshVersion > 0 ||
+                    !LiveTvVodCache.isCategoryListComplete(context, source, type)
+            }
+            .mapTo(mutableSetOf(), LiveTvSource::id)
         categoriesBySource = cachedCategories
         categoryLoadErrorSourceIds = emptySet()
         if (sources.isEmpty()) {
@@ -283,6 +322,8 @@ private fun IptvVodScreenContent(
             episodes = emptyList()
             items = emptyList()
             isLoadingSources = false
+            isLoadingItems = false
+            categoriesReadyKey = categoryLoadKey
             return@LaunchedEffect
         }
 
@@ -295,12 +336,21 @@ private fun IptvVodScreenContent(
             items = emptyList()
         }
         selectedSourceId = initialSourceId
-        isLoadingSources = true
+        isLoadingSources = categoryRefreshRequiredSourceIds.isNotEmpty()
         try {
             val results = coroutineScope {
                 sources.map { source -> async {
                     try {
-                        source.id to loadVodCategories(source, type)
+                        if (source.id !in categoryRefreshRequiredSourceIds) {
+                            source.id to cachedCategories[source.id].orEmpty()
+                        } else {
+                            val categories = loadVodCategories(source, type).withDisplayableIptvCategoryNames()
+                            if (categories.isEmpty() && cachedCategories[source.id].orEmpty().isNotEmpty()) {
+                                throw IllegalStateException("Provider returned no $type categories; keeping the cached list")
+                            }
+                            LiveTvVodCache.writeCategoriesAndMarkComplete(context, source, type, categories)
+                            source.id to categories
+                        }
                     } catch (failure: Exception) {
                         if (failure is CancellationException) throw failure
                         Log.w("LiveTvVod", "Failed to load $type categories from ${source.type}", failure)
@@ -317,9 +367,6 @@ private fun IptvVodScreenContent(
                 else cachedCategories[source.id].orEmpty()
             }
             categoriesBySource = mergedCategories
-            mergedCategories.forEach { (sourceId, categories) ->
-                LiveTvVodCache.writeCategories(context, sourceId, type, categories)
-            }
             val successfulSourceIds = successful.mapTo(mutableSetOf()) { it.first }
             categoryLoadErrorSourceIds = sources.mapNotNull { source ->
                 source.id.takeIf { it !in successfulSourceIds }
@@ -329,54 +376,83 @@ private fun IptvVodScreenContent(
             categoryLoadErrorSourceIds = sources.mapTo(mutableSetOf()) { it.id }
         } finally {
             isLoadingSources = false
+            categoriesReadyKey = categoryLoadKey
         }
     }
 
-    LaunchedEffect(sources, type, selectedSourceId, selectedCategoryId, catalogRefreshVersion) {
+    LaunchedEffect(sources, type, selectedSourceId, catalogRefreshVersion, categoryLoadKey, categoriesReadyKey) {
+        if (categoriesReadyKey != categoryLoadKey) return@LaunchedEffect
         val source = sources.firstOrNull { it.id == selectedSourceId }
         if (source == null) {
             items = emptyList()
+            isLoadingItems = false
             return@LaunchedEffect
         }
+        isLoadingItems = true
         items = emptyList()
         items = LiveTvVodCache.read(context, source.id, type)
         cachedVodItems = mergeVodItems(cachedVodItems, items)
         hasLoadError = false
         hasPlaybackError = false
-        if (selectedCategoryId != null) {
-            // A category has its own paged provider request below. Avoid loading thousands of
-            // unrelated Stalker items while displaying one category; that request can time out
-            // and incorrectly report an error even when the selected category loaded completely.
-            isLoadingItems = false
+        if (catalogRefreshVersion == 0 && LiveTvVodCache.isCatalogComplete(context, source, type)) {
+            val categories = categoriesBySource[source.id].orEmpty()
+            if (categories.isEmpty()) {
+                isLoadingItems = false
+                return@LaunchedEffect
+            }
+            isLoadingItems = true
+            try {
+                items = hydrateMissingVodCategories(
+                    context = context,
+                    source = source,
+                    type = type,
+                    categories = categories,
+                    existingItems = items,
+                    forceRefresh = false,
+                    onItemsLoaded = { batch ->
+                        if (selectedCategoryId != null && batch.any { it.categoryId == selectedCategoryId }) {
+                            items = mergeVodItems(items, batch)
+                        }
+                    },
+                    onLoadError = { category, failure ->
+                        hasLoadError = true
+                        Log.w("LiveTvVod", "Failed to hydrate $type category ${category.name}", failure)
+                    },
+                )
+                cachedVodItems = mergeVodItems(cachedVodItems, items)
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                hasLoadError = true
+                Log.w("LiveTvVod", "Failed to hydrate cached $type catalogue from ${source.type}", failure)
+            } finally {
+                isLoadingItems = false
+            }
             return@LaunchedEffect
         }
         isLoadingItems = true
         try {
             coroutineScope {
                 val batches = Channel<List<LiveTvVodItem>>(Channel.UNLIMITED)
+                val cacheWriter = LiveTvVodCache.batchWriter(context, source.id, type)
                 val collector = launch {
-                    for (batch in batches) {
-                        val fallbackPrefix = "$type:${source.id}:"
-                        val categoryFallbackItems = categoryFallbackItemsByKey
-                            .filterKeys { it.startsWith(fallbackPrefix) && it.endsWith(":$catalogRefreshVersion") }
-                            .values
-                            .flatten()
-                        val knownCategoryItems = mergeVodItems(
-                            cachedVodItems.filter { it.sourceId == source.id && it.categoryId.isNotBlank() },
-                            categoryFallbackItems,
-                        )
-                        val correctedBatch = preserveVodCategoryAssignments(batch, knownCategoryItems)
-                        items = mergeVodItems(mergeVodItems(items, correctedBatch), categoryFallbackItems)
-                        cachedVodItems = mergeVodItems(
-                            mergeVodItems(cachedVodItems, correctedBatch), categoryFallbackItems,
-                        )
+                    try {
+                        for (batch in batches) {
+                            val knownCategoryItems = cachedVodItems
+                                .filter { it.sourceId == source.id && it.categoryId.isNotBlank() }
+                            val correctedBatch = preserveVodCategoryAssignments(batch, knownCategoryItems)
+                            items = mergeVodItems(items, correctedBatch)
+                            cachedVodItems = mergeVodItems(cachedVodItems, correctedBatch)
+                            cacheWriter.append(correctedBatch)
+                        }
+                    } finally {
+                        cacheWriter.finish()
                     }
                 }
                 var loadedItems: List<LiveTvVodItem>? = null
                 var loadTimedOut = false
                 try {
                     loadedItems = withTimeoutOrNull(VOD_LOAD_TIMEOUT_MS) {
-                        loadVodItems(source, type, "") { batch ->
+                        loadVodItems(source, type) { batch ->
                             batches.trySend(batch)
                         }
                     }
@@ -395,17 +471,9 @@ private fun IptvVodScreenContent(
                 if (loadedItems == null) {
                     hasLoadError = true
                 } else {
-                    val fallbackPrefix = "$type:${source.id}:"
-                    val categoryFallbackItems = categoryFallbackItemsByKey
-                        .filterKeys { it.startsWith(fallbackPrefix) && it.endsWith(":$catalogRefreshVersion") }
-                        .values
-                        .flatten()
-                    val knownCategoryItems = mergeVodItems(
-                        cachedVodItems.filter { it.sourceId == source.id && it.categoryId.isNotBlank() },
-                        categoryFallbackItems,
-                    )
-                    val assignedLoadedItems = preserveVodCategoryAssignments(loadedItems, knownCategoryItems)
-                    val refreshedItems = mergeVodItems(assignedLoadedItems, categoryFallbackItems)
+                    val knownCategoryItems = cachedVodItems
+                        .filter { it.sourceId == source.id && it.categoryId.isNotBlank() }
+                    val refreshedItems = preserveVodCategoryAssignments(loadedItems, knownCategoryItems)
                     items = refreshedItems
                     cachedVodItems = mergeVodItems(
                         cachedVodItems.filterNot { it.sourceId == source.id },
@@ -419,19 +487,42 @@ private fun IptvVodScreenContent(
                         episodes = emptyList()
                     }
                 }
-                // A failed or timed-out provider response can have emitted some batches already.
-                // Keep those visible, but don't replace the last complete on-disk catalog with them.
-                if (loadedItems != null) LiveTvVodCache.write(context, source.id, type, items)
+                // Partial pages are merged into the cache while loading. Only a complete response
+                // replaces the catalog, so a timeout cannot discard the prior catalog or new items.
+                if (loadedItems != null) {
+                    val catalogWritten = LiveTvVodCache.writeCompleteCatalog(context, source, type, items)
+                    if (catalogWritten) {
+                        val categories = categoriesBySource[source.id].orEmpty()
+                        if (categories.isNotEmpty()) {
+                            items = hydrateMissingVodCategories(
+                                context = context,
+                                source = source,
+                                type = type,
+                                categories = categories,
+                                existingItems = items,
+                                forceRefresh = catalogRefreshVersion > 0,
+                                onItemsLoaded = { batch ->
+                                    if (selectedCategoryId != null && batch.any { it.categoryId == selectedCategoryId }) {
+                                        items = mergeVodItems(items, batch)
+                                    }
+                                },
+                                onLoadError = { category, failure ->
+                                    hasLoadError = true
+                                    Log.w("LiveTvVod", "Failed to hydrate $type category ${category.name}", failure)
+                                },
+                            )
+                            cachedVodItems = mergeVodItems(cachedVodItems, items)
+                        }
+                    } else {
+                        hasLoadError = true
+                    }
+                }
             }
         } catch (failure: Exception) {
             if (failure is CancellationException) throw failure
             hasLoadError = true
         } finally {
             isLoadingItems = false
-            if (categoryFallbackCachePendingSource == source.id && selectedSourceId == source.id) {
-                categoryFallbackCachePendingSource = null
-                LiveTvVodCache.write(context, source.id, type, items)
-            }
         }
     }
 
@@ -507,7 +598,6 @@ private fun IptvVodScreenContent(
             return@LaunchedEffect
         }
         focusedVodPresentation = null
-        delay(VOD_FOCUS_PREVIEW_DELAY_MS)
         val presentation = liveTvModel.tmdbVodPresentationForVod(
             title = vodPosterLookupTitle(item),
             type = item.type,
@@ -515,16 +605,6 @@ private fun IptvVodScreenContent(
         )
         if (focusedVodItem?.let(::vodPosterLookupKey) == vodPosterLookupKey(item)) {
             focusedVodPresentation = presentation
-        }
-    }
-
-    LaunchedEffect(focusedVodItem?.favoriteKey, focusedVodItem?.title, focusedVodItem?.year) {
-        val item = focusedVodItem
-        isVodTrailerPreviewActive = false
-        if (item == null || item.type !in setOf("movie", "series")) return@LaunchedEffect
-        delay(VOD_TRAILER_AUTO_PREVIEW_DELAY_MS)
-        if (focusedVodItem?.favoriteKey == item.favoriteKey) {
-            isVodTrailerPreviewActive = true
         }
     }
 
@@ -549,27 +629,27 @@ private fun IptvVodScreenContent(
         }
     }
 
-    LaunchedEffect(pendingFullScreenVodTrailerSource) {
-        val pendingSource = pendingFullScreenVodTrailerSource ?: return@LaunchedEffect
-        withFrameNanos { }
-        if (pendingFullScreenVodTrailerSource == pendingSource) {
-            fullScreenVodTrailerSource = pendingSource
-            pendingFullScreenVodTrailerSource = null
-        }
-    }
-
-    val openFocusedVodTrailer = {
+    LaunchedEffect(
+        focusedVodItem?.favoriteKey,
+        focusedVodItem?.title,
+        focusedVodItem?.year,
+        vodTrailerSource?.videoUrl,
+    ) {
+        isVodTrailerPreviewActive = false
         val item = focusedVodItem
         val source = vodTrailerSource?.takeIf { it.videoUrl.isNotBlank() }
-        if (item != null && source != null) {
-            fullScreenVodTrailerTitle = focusedVodPresentation?.metadata?.localizedTitle
-                ?.takeIf(String::isNotBlank)
-                ?: normalizeLiveTvVodTitleForTmdb(item.title)
-            pendingFullScreenVodTrailerSource = source
+        if (item == null || item.type !in setOf("movie", "series") || source == null) {
+            return@LaunchedEffect
+        }
+        delay(VOD_TRAILER_PREVIEW_DELAY_MS)
+        if (focusedVodItem?.favoriteKey == item.favoriteKey &&
+            vodTrailerSource?.videoUrl == source.videoUrl
+        ) {
+            isVodTrailerPreviewActive = true
         }
     }
 
-    val selectedSource = sources.firstOrNull { it.id == selectedSourceId }
+    val displayedSourceId = selectedSourceId?.takeIf { id -> sources.any { it.id == id } } ?: firstSourceId
     val moduleFavorites = remember(cachedVodItems, items, favoriteVodKeys, type) {
         mergeVodItems(cachedVodItems, items).filter { it.type == type && it.favoriteKey in favoriteVodKeys }
     }
@@ -609,111 +689,18 @@ private fun IptvVodScreenContent(
         .filterNot { category ->
             LiveTvRepository.vodCategoryHideKey(type, category.sourceId, category.id) in hiddenVodCategoryKeys
         }
-    val selectedCategory = visibleCategories.firstOrNull { it.id == selectedCategoryId }
-    val selectedCategoryFallbackKey = selectedCategory?.let {
-        "$type:${it.sourceId}:${it.id}:$catalogRefreshVersion"
+    val sourceItems = remember(cachedVodItems, items, displayedSourceId) {
+        displayedSourceId?.let { sourceId ->
+            mergeVodItems(
+                cachedVodItems.filter { it.sourceId == sourceId },
+                items.filter { it.sourceId == sourceId },
+            )
+        }.orEmpty()
     }
-    val selectedCategoryHasItems = selectedCategory?.let { category ->
-        items.any { it.sourceId == category.sourceId && it.categoryId.trim() == category.id }
-    } == true
-    val providerOrderedSeriesItems = if (type == "series") {
-        selectedCategoryFallbackKey?.let(categoryProviderOrderByKey::get).orEmpty()
-    } else {
-        emptyList()
-    }
-    val visibleItems = (providerOrderedSeriesItems.takeIf { it.isNotEmpty() } ?: items).filter { item ->
+    val visibleItems = sourceItems.filter { item ->
         val hidden = item.categoryId.isNotBlank() &&
             LiveTvRepository.vodCategoryHideKey(type, item.sourceId, item.categoryId.trim()) in hiddenVodCategoryKeys
         !hidden && (selectedCategoryId == null || item.categoryId.trim() == selectedCategoryId)
-    }
-
-    // Use the provider's category list for series groups: the cached full catalogue can have a
-    // different order even when it already contains the group's items.
-    LaunchedEffect(
-        selectedPanel,
-        selectedSeries?.favoriteKey,
-        selectedSourceId,
-        selectedCategoryId,
-        selectedCategory?.sourceId,
-        selectedCategory?.id,
-        type,
-        catalogRefreshVersion,
-    ) {
-        if (selectedPanel != IptvVodPanel.Sources || selectedSeries != null) {
-            return@LaunchedEffect
-        }
-        val category = selectedCategory ?: return@LaunchedEffect
-        val source = sources.firstOrNull { it.id == category.sourceId } ?: return@LaunchedEffect
-        val fallbackKey = "$type:${source.id}:${category.id}:$catalogRefreshVersion"
-        if (type == "series" && categoryProviderOrderByKey[fallbackKey].orEmpty().isNotEmpty()) return@LaunchedEffect
-        if (fallbackKey in categoryFallbackAttemptedKeys) return@LaunchedEffect
-
-        try {
-            delay(VOD_FOCUS_PREVIEW_DELAY_MS)
-            if (!categoryFallbackAttemptedKeys.add(fallbackKey)) return@LaunchedEffect
-            if (!selectedCategoryHasItems) loadingCategoryFallbackKey = fallbackKey
-            val categoryItems = coroutineScope {
-                val batches = Channel<List<LiveTvVodItem>>(Channel.UNLIMITED)
-                val collector = launch {
-                    for (batch in batches) {
-                        val assigned = batch.map { item ->
-                            item.copy(
-                                categoryId = category.id,
-                                categoryName = item.categoryName.ifBlank { category.name },
-                            )
-                        }
-                        categoryFallbackItemsByKey = categoryFallbackItemsByKey + (
-                            fallbackKey to mergeVodItems(
-                                categoryFallbackItemsByKey[fallbackKey].orEmpty(),
-                                assigned,
-                            )
-                        )
-                        items = mergeVodItems(items, assigned)
-                        cachedVodItems = mergeVodItems(cachedVodItems, assigned)
-                    }
-                }
-                try {
-                    loadVodItems(source, type, category.id) { batch -> batches.trySend(batch) }
-                } finally {
-                    batches.close()
-                    collector.join()
-                }
-            }.map { item ->
-                item.copy(
-                    categoryId = category.id,
-                    categoryName = item.categoryName.ifBlank { category.name },
-                )
-            }
-            if (categoryItems.isNotEmpty()) {
-                val orderedCategoryItems = categoryItems.distinctBy(LiveTvVodItem::id)
-                if (type == "series") {
-                    categoryProviderOrderByKey = categoryProviderOrderByKey + (fallbackKey to orderedCategoryItems)
-                }
-                categoryFallbackItemsByKey = categoryFallbackItemsByKey + (
-                    fallbackKey to mergeVodItems(
-                        categoryFallbackItemsByKey[fallbackKey].orEmpty(),
-                        categoryItems,
-                    )
-                )
-                items = mergeVodItems(items, categoryItems)
-                cachedVodItems = mergeVodItems(cachedVodItems, categoryItems)
-                if (isLoadingItems) {
-                    categoryFallbackCachePendingSource = source.id
-                } else {
-                    LiveTvVodCache.write(context, source.id, type, items)
-                }
-            }
-        } catch (failure: Exception) {
-            if (failure is CancellationException) {
-                categoryFallbackAttemptedKeys.remove(fallbackKey)
-                throw failure
-            }
-            categoryFallbackAttemptedKeys.remove(fallbackKey)
-            hasLoadError = true
-            Log.w("LiveTvVod", "Failed to load $type category ${category.name} from ${source.type}", failure)
-        } finally {
-            if (loadingCategoryFallbackKey == fallbackKey) loadingCategoryFallbackKey = null
-        }
     }
 
     val seriesEpisodeItems = remember(episodes) { episodes.toNumberedSeriesEpisodes() }
@@ -742,7 +729,7 @@ private fun IptvVodScreenContent(
         seriesPresentation = null
     }
 
-    fun openVodItem(item: LiveTvVodItem) {
+    fun playVodItem(item: LiveTvVodItem) {
         val source = sources.firstOrNull { it.id == item.sourceId } ?: return
         if (type == "movie") {
             scope.launch {
@@ -764,9 +751,44 @@ private fun IptvVodScreenContent(
         }
     }
 
+    fun openVodItemDetails(item: LiveTvVodItem) {
+        if (item.type !in setOf("movie", "series")) return
+        scope.launch {
+            try {
+                val focusedPresentation = focusedVodPresentation.takeIf {
+                    focusedVodItem?.let(::vodPosterLookupKey) == vodPosterLookupKey(item)
+                }
+                val presentation = focusedPresentation ?: liveTvModel.tmdbVodPresentationForVod(
+                    title = vodPosterLookupTitle(item),
+                    type = item.type,
+                    year = item.year,
+                )
+                val tmdbId = presentation?.match?.tmdbId
+                if (tmdbId != null) {
+                    onNavigateToDetail("tmdb:$tmdbId", item.type, "")
+                } else {
+                    android.widget.Toast.makeText(
+                        context,
+                        R.string.error_meta_not_found,
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(
+                    context,
+                    R.string.error_meta_not_found,
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
     fun focusVodSource(sourceId: String) {
         val switchingSource = selectedSourceId != sourceId
         if (switchingSource) {
+            isLoadingItems = true
             selectedSourceId = sourceId
             selectedCategoryId = null
             selectedSeries = null
@@ -800,13 +822,18 @@ private fun IptvVodScreenContent(
         }
     }
 
+    val hasFocusableHistoryEntry = remember(moduleHistory, cachedVodItems, type) {
+        moduleHistory.any { entry ->
+            cachedVodItems.any { item -> item.type == type && item.id == entry.contentId }
+        }
+    }
     val seriesForDetail = selectedSeries
     Column(
         modifier = Modifier.fillMaxSize()
             .background(NuvioTheme.colors.Background)
             .then(
                 if (selectedSeries != null) Modifier
-                else Modifier.padding(start = 30.dp, end = 30.dp, top = 0.dp, bottom = 0.dp)
+                else Modifier.padding(start = 30.dp, end = 0.dp, top = 0.dp, bottom = 0.dp)
             )
     ) {
         if (seriesForDetail != null) {
@@ -925,7 +952,10 @@ private fun IptvVodScreenContent(
                         fullSeriesDetail = true,
                         richEpisodeCards = true,
                         isInLibrary = series.favoriteKey in favoriteVodKeys,
-                        onToggleLibrary = { LiveTvRepository.toggleVodFavorite(series) },
+                        onToggleLibrary = {
+                            LiveTvRepository.toggleVodFavorite(series)
+                            scope.launch { LiveTvVodCache.upsert(context, series) }
+                        },
                         onRelatedClick = { item ->
                             onNavigateToDetail(item.id, item.apiType, item.sourceAddonBaseUrl)
                         },
@@ -950,8 +980,7 @@ private fun IptvVodScreenContent(
         } else {
         val isCatalogLoading = selectedPanel == IptvVodPanel.Sources &&
             selectedSeries == null &&
-            (liveTvState.isLoading || isLoadingSources || isLoadingItems ||
-                loadingCategoryFallbackKey != null && loadingCategoryFallbackKey == selectedCategoryFallbackKey)
+            (liveTvState.isLoading || isLoadingSources || isLoadingItems || categoriesReadyKey != categoryLoadKey)
         val hasRelevantCategoryLoadError = if (selectedCategoryId == null) {
             categoryLoadErrorSourceIds.isNotEmpty()
         } else {
@@ -960,11 +989,78 @@ private fun IptvVodScreenContent(
         val hasPartialCatalogLoadError = selectedPanel == IptvVodPanel.Sources &&
             selectedSeries == null &&
             (hasRelevantCategoryLoadError || hasLoadError && items.isNotEmpty())
-        val showCatalogStatusOverlay = isCatalogLoading || hasPartialCatalogLoadError
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        val showCatalogStatusOverlay = (isCatalogLoading && visibleItems.isNotEmpty()) || hasPartialCatalogLoadError
+        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        val focusedDetailsItems = when (selectedPanel) {
+            IptvVodPanel.Favorites -> moduleFavorites
+            IptvVodPanel.Sources -> visibleItems
+            IptvVodPanel.History -> emptyList()
+        }
+        val focusedDetailsItem = focusedVodItem?.let { focused ->
+            focusedDetailsItems.firstOrNull { it.favoriteKey == focused.favoriteKey }
+        } ?: focusedDetailsItems.firstOrNull()
+        LaunchedEffect(focusedDetailsItem?.favoriteKey, focusedVodItem?.favoriteKey) {
+            val item = focusedDetailsItem
+            fallbackVodPresentation = null
+            if (item == null || item.type !in setOf("movie", "series") ||
+                focusedVodItem?.favoriteKey == item.favoriteKey
+            ) {
+                return@LaunchedEffect
+            }
+            val presentation = liveTvModel.tmdbVodPresentationForVod(
+                title = vodPosterLookupTitle(item),
+                type = item.type,
+                year = item.year,
+            )
+            if (focusedDetailsItem?.favoriteKey == item.favoriteKey &&
+                focusedVodItem?.favoriteKey != item.favoriteKey
+            ) {
+                fallbackVodPresentation = presentation
+            }
+        }
+        val detailsPresentation = if (focusedVodItem?.favoriteKey == focusedDetailsItem?.favoriteKey) {
+            focusedVodPresentation
+        } else {
+            fallbackVodPresentation
+        }
+        val hasFeaturedLayout = when (selectedPanel) {
+            IptvVodPanel.Sources -> true // Reserve the layout as soon as the module opens.
+            IptvVodPanel.Favorites -> moduleFavorites.isNotEmpty()
+            IptvVodPanel.History -> false
+        }
+        LaunchedEffect(
+            selectedPanel,
+            selectedSourceId,
+            selectedCategoryId,
+            focusedDetailsItems,
+            focusedVodItem?.favoriteKey,
+        ) {
+            val nextItem = focusedVodItem?.let { focused ->
+                focusedDetailsItems.firstOrNull { it.favoriteKey == focused.favoriteKey }
+            }
+            if (focusedVodItem?.favoriteKey != nextItem?.favoriteKey) {
+                focusedVodItem = nextItem
+            }
+        }
+        // Size the featured area for one full row of six posters below it.
+        val gridHorizontalInsets = VOD_GRID_HORIZONTAL_CONTENT_PADDING * 2f +
+            VOD_GRID_ITEM_SPACING * (VOD_GRID_COLUMNS - 1).toFloat()
+        val posterCardWidth = (
+            (maxWidth * VOD_HERO_PANEL_WIDTH - VOD_HERO_START_PADDING - gridHorizontalInsets) / VOD_GRID_COLUMNS
+        ).coerceAtLeast(0.dp)
+        val posterRowHeight = maxOf(
+            VOD_SINGLE_POSTER_ROW_HEIGHT,
+            posterCardWidth * 1.5f + VOD_POSTER_LABEL_HEIGHT + VOD_GRID_VERTICAL_CONTENT_PADDING * 2f,
+        )
+        val posterRowsHeight = minOf(posterRowHeight, maxHeight)
+        val heroHeight = if (hasFeaturedLayout) {
+            (maxHeight - posterRowsHeight).coerceAtLeast(0.dp)
+        } else {
+            0.dp
+        }
         Row(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
-                modifier = Modifier.weight(0.27f).fillMaxHeight().padding(top = 68.dp),
+                modifier = Modifier.weight(VOD_DETAILS_PANEL_WIDTH).fillMaxHeight().padding(top = 56.dp),
                 contentPadding = PaddingValues(bottom = 12.dp, end = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
@@ -972,20 +1068,37 @@ private fun IptvVodScreenContent(
                     VodPanelRow(
                         title = stringResource(R.string.iptv_vod_favorites),
                         selected = selectedPanel == IptvVodPanel.Favorites,
+                        confirmed = confirmedVodRailKey == "panel:favorites",
                         icon = Icons.Default.Star,
-                        focusRequester = selectedVodRailFocusRequester.takeIf { selectedPanel == IptvVodPanel.Favorites },
+                        focusRequester = when (selectedPanel) {
+                            IptvVodPanel.Favorites -> selectedVodRailFocusRequester
+                            IptvVodPanel.History -> favoritesRailFocusRequester
+                            IptvVodPanel.Sources -> null
+                        },
                         rightFocusRequester = firstVodItemFocusRequester.takeIf { selectedPanel == IptvVodPanel.Favorites },
                         onFocus = { focusVodPanel(IptvVodPanel.Favorites) },
-                        onClick = { focusVodPanel(IptvVodPanel.Favorites) },
+                        onClick = {
+                            confirmedVodRailKey = "panel:favorites"
+                            focusVodPanel(IptvVodPanel.Favorites)
+                        },
                     )
                 }
                 item(key = "vod-history") {
                     VodPanelRow(
                         title = stringResource(R.string.iptv_vod_history),
                         selected = selectedPanel == IptvVodPanel.History,
+                        confirmed = confirmedVodRailKey == "panel:history",
                         icon = Icons.Default.History,
+                        focusRequester = selectedVodRailFocusRequester.takeIf { selectedPanel == IptvVodPanel.History },
+                        rightFocusRequester = historyTrashFocusRequester.takeIf {
+                            selectedPanel == IptvVodPanel.History && moduleHistory.isNotEmpty()
+                        },
+                        upFocusRequester = favoritesRailFocusRequester.takeIf { selectedPanel == IptvVodPanel.History },
                         onFocus = { focusVodPanel(IptvVodPanel.History) },
-                        onClick = { focusVodPanel(IptvVodPanel.History) },
+                        onClick = {
+                            confirmedVodRailKey = "panel:history"
+                            focusVodPanel(IptvVodPanel.History)
+                        },
                     )
                 }
                 item(key = "sources-heading") {
@@ -1004,6 +1117,7 @@ private fun IptvVodScreenContent(
                         categoriesBySource[source.id].orEmpty() + observedCategoriesBySource[source.id].orEmpty()
                     })
                         .distinctBy { it.id }
+                        .filterNot { category -> category.name.isSyntheticAllIptvCategory(allVodCategoryLabel) }
                         .filterNot { category ->
                             LiveTvRepository.vodCategoryHideKey(type, source.id, category.id) in hiddenVodCategoryKeys
                         }
@@ -1011,6 +1125,7 @@ private fun IptvVodScreenContent(
                     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         VodSourceRow(
                             source = source,
+                            confirmed = confirmedVodRailKey == "source:${source.id}",
                             focusRequester = when {
                                 selectedPanel == IptvVodPanel.Sources &&
                                     selectedSourceId == source.id && source.id !in expandedSourceIds -> selectedVodRailFocusRequester
@@ -1025,8 +1140,10 @@ private fun IptvVodScreenContent(
                             expanded = expanded,
                             onFocus = { focusVodSource(source.id) },
                             onClick = {
+                                confirmedVodRailKey = "source:${source.id}"
                                 val wasSelected = selectedSourceId == source.id
                                 if (!wasSelected) {
+                                    isLoadingItems = true
                                     selectedSourceId = source.id
                                     selectedCategoryId = null
                                     selectedSeries = null
@@ -1042,27 +1159,54 @@ private fun IptvVodScreenContent(
                         )
                         if (expanded) {
                             VodCategoryRow(
-                                title = stringResource(R.string.iptv_vod_all),
+                                title = stringResource(R.string.iptv_vod_refresh_list),
+                                selected = false,
+                                confirmed = confirmedVodRailKey == "refresh:${source.id}",
+                                rightFocusRequester = firstVodItemFocusRequester,
+                                onFocus = { focusVodCategory(source.id, null) },
+                                onClick = {
+                                    if (!isCatalogLoading) {
+                                        confirmedVodRailKey = "refresh:${source.id}"
+                                        selectedPanel = IptvVodPanel.Sources
+                                        selectedSourceId = source.id
+                                        selectedCategoryId = null
+                                        selectedSeries = null
+                                        episodes = emptyList()
+                                        isLoadingItems = true
+                                        catalogRefreshVersion++
+                                    }
+                                },
+                            )
+                            VodCategoryRow(
+                                title = allVodCategoryLabel,
                                 selected = selectedSourceId == source.id && selectedCategoryId == null,
+                                confirmed = confirmedVodRailKey == "category:${source.id}:",
                                 focusRequester = selectedVodRailFocusRequester.takeIf {
                                     selectedPanel == IptvVodPanel.Sources &&
                                         selectedSourceId == source.id && selectedCategoryId == null
                                 },
                                 rightFocusRequester = firstVodItemFocusRequester,
                                 onFocus = { focusVodCategory(source.id, null) },
-                                onClick = { focusVodCategory(source.id, null) },
+                                onClick = {
+                                    confirmedVodRailKey = "category:${source.id}:"
+                                    focusVodCategory(source.id, null)
+                                },
                             )
                             categories.forEach { category ->
                                 VodCategoryRow(
                                     title = category.name,
                                     selected = selectedSourceId == source.id && selectedCategoryId == category.id,
+                                    confirmed = confirmedVodRailKey == "category:${source.id}:${category.id}",
                                     focusRequester = selectedVodRailFocusRequester.takeIf {
                                         selectedPanel == IptvVodPanel.Sources &&
                                             selectedSourceId == source.id && selectedCategoryId == category.id
                                     },
                                     rightFocusRequester = firstVodItemFocusRequester,
                                     onFocus = { focusVodCategory(source.id, category.id) },
-                                    onClick = { focusVodCategory(source.id, category.id) },
+                                    onClick = {
+                                        confirmedVodRailKey = "category:${source.id}:${category.id}"
+                                        focusVodCategory(source.id, category.id)
+                                    },
                                 )
                             }
                         }
@@ -1070,132 +1214,171 @@ private fun IptvVodScreenContent(
                 }
             }
             Box(
-                Modifier.fillMaxHeight().width(1.dp)
-                    .background(NuvioTheme.colors.SurfaceVariant)
-            )
-            Box(
-                modifier = Modifier.weight(0.73f).fillMaxHeight().padding(start = 22.dp),
+                modifier = Modifier.weight(VOD_HERO_PANEL_WIDTH).fillMaxHeight().padding(start = VOD_HERO_START_PADDING),
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    if (hasPlaybackError) {
-                        Text(
-                            text = stringResource(R.string.iptv_vod_playback_error),
-                            color = NuvioTheme.colors.TextSecondary,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    when {
-                        selectedSeries != null && isLoadingItems && episodes.isEmpty() -> CenterLabel(stringResource(R.string.iptv_vod_loading))
-                        selectedSeries != null && hasLoadError && episodes.isEmpty() -> CenterLabel(stringResource(R.string.iptv_vod_error))
-                        selectedSeries != null && episodes.isEmpty() -> CenterLabel(stringResource(R.string.iptv_vod_empty_episodes))
-                        selectedSeries != null -> VodGrid(items = episodes, favoriteVodKeys = favoriteVodKeys, onSelect = { episode ->
-                            val source = sources.firstOrNull { it.id == episode.sourceId } ?: return@VodGrid
-                            scope.launch {
-                                try {
-                                    hasPlaybackError = false
-                                    onPlay(source, episode, resolveIptvVod(source, episode))
-                                } catch (failure: Exception) {
-                                    if (failure is CancellationException) throw failure
-                                    hasPlaybackError = true
+                when {
+                    selectedSeries != null && isLoadingItems && episodes.isEmpty() ->
+                        CenterLabel(stringResource(R.string.iptv_vod_loading))
+                    selectedSeries != null && hasLoadError && episodes.isEmpty() ->
+                        CenterLabel(stringResource(R.string.iptv_vod_error))
+                    selectedSeries != null && episodes.isEmpty() ->
+                        CenterLabel(stringResource(R.string.iptv_vod_empty_episodes))
+                    selectedSeries != null -> VodGrid(items = episodes, favoriteVodKeys = favoriteVodKeys, onSelect = { episode ->
+                        val source = sources.firstOrNull { it.id == episode.sourceId } ?: return@VodGrid
+                        scope.launch {
+                            try {
+                                hasPlaybackError = false
+                                onPlay(source, episode, resolveIptvVod(source, episode))
+                            } catch (failure: Exception) {
+                                if (failure is CancellationException) throw failure
+                                hasPlaybackError = true
+                            }
+                        }
+                    })
+                    selectedPanel == IptvVodPanel.History && moduleHistory.isEmpty() ->
+                        CenterLabel(stringResource(R.string.iptv_vod_history_empty))
+                    selectedPanel == IptvVodPanel.History -> Column(Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().height(56.dp).padding(end = 12.dp),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Card(
+                                onClick = { showClearHistoryDialog = true },
+                                modifier = Modifier.size(32.dp)
+                                    .focusRequester(historyTrashFocusRequester)
+                                    .focusProperties {
+                                        left = selectedVodRailFocusRequester
+                                        down = if (hasFocusableHistoryEntry) {
+                                            firstHistoryEntryFocusRequester
+                                        } else {
+                                            selectedVodRailFocusRequester
+                                        }
+                                    },
+                                colors = CardDefaults.colors(
+                                    containerColor = NuvioTheme.colors.SurfaceVariant,
+                                    focusedContainerColor = NuvioTheme.colors.FocusBackground,
+                                ),
+                                shape = CardDefaults.shape(shape = NuvioTheme.shapes.iconButton),
+                                border = vodAccentBorder(selected = false),
+                                scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+                            ) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = stringResource(R.string.iptv_vod_history_clear),
+                                        modifier = Modifier.size(16.dp),
+                                        tint = NuvioTheme.colors.TextPrimary,
+                                    )
                                 }
                             }
-                        })
-                        selectedPanel == IptvVodPanel.Favorites && moduleFavorites.isEmpty() -> CenterLabel(stringResource(R.string.iptv_vod_empty_favorites))
-                        selectedPanel == IptvVodPanel.Favorites -> VodGridWithFocusedDetails(
-                            items = moduleFavorites,
-                            favoriteVodKeys = favoriteVodKeys,
-                            focusedItem = focusedVodItem,
-                            presentation = focusedVodPresentation,
-                            trailerPreviewVideoUrl = vodTrailerSource?.videoUrl
-                                ?.takeIf { isVodTrailerPreviewActive && it.isNotBlank() },
-                            trailerPreviewAudioUrl = vodTrailerSource?.audioUrl,
-                            onOpenTrailer = openFocusedVodTrailer,
-                            onTrailerError = { isVodTrailerPreviewActive = false },
-                            isTrailerOverlayVisible = fullScreenVodTrailerSource != null ||
-                                pendingFullScreenVodTrailerSource != null,
-                            onFocusedItemChanged = { focusedVodItem = it },
-                            firstItemFocusRequester = firstVodItemFocusRequester,
-                            leftFocusRequester = selectedVodRailFocusRequester,
-                            onToggleFavorite = { item ->
-                                LiveTvRepository.toggleVodFavorite(item)
-                                scope.launch { LiveTvVodCache.upsert(context, item) }
-                            },
-                            onSelect = ::openVodItem,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                        )
-                        selectedPanel == IptvVodPanel.History && moduleHistory.isEmpty() -> CenterLabel(stringResource(R.string.iptv_vod_history_empty))
-                        selectedPanel == IptvVodPanel.History -> VodHistoryList(
+                        }
+                        VodHistoryList(
                             entries = moduleHistory,
                             sources = sources,
                             cachedItems = cachedVodItems,
                             type = type,
-                            onSelect = ::openVodItem,
-                        )
-                        sources.isEmpty() && liveTvState.isLoading -> Unit
-                        sources.isEmpty() -> CenterLabel(stringResource(R.string.iptv_vod_no_xtream))
-                        isLoadingSources && selectedSource == null -> Unit
-                        selectedSource == null -> CenterLabel(stringResource(R.string.iptv_vod_empty))
-                        isLoadingItems && (if (selectedSeries == null) items.isEmpty() else episodes.isEmpty()) -> Unit
-                        loadingCategoryFallbackKey != null && loadingCategoryFallbackKey == selectedCategoryFallbackKey -> Unit
-                        hasLoadError && (selectedSeries == null && items.isEmpty() || selectedSeries != null && episodes.isEmpty()) ->
-                            CenterLabel(stringResource(R.string.iptv_vod_error))
-                        visibleItems.isEmpty() -> CenterLabel(stringResource(R.string.iptv_vod_empty))
-                        else -> VodGridWithFocusedDetails(
-                            items = visibleItems,
-                            favoriteVodKeys = favoriteVodKeys,
-                            focusedItem = focusedVodItem,
-                            presentation = focusedVodPresentation,
-                            trailerPreviewVideoUrl = vodTrailerSource?.videoUrl
-                                ?.takeIf { isVodTrailerPreviewActive && it.isNotBlank() },
-                            trailerPreviewAudioUrl = vodTrailerSource?.audioUrl,
-                            onOpenTrailer = openFocusedVodTrailer,
-                            onTrailerError = { isVodTrailerPreviewActive = false },
-                            isTrailerOverlayVisible = fullScreenVodTrailerSource != null ||
-                                pendingFullScreenVodTrailerSource != null,
-                            onFocusedItemChanged = { focusedVodItem = it },
-                            firstItemFocusRequester = firstVodItemFocusRequester,
-                            leftFocusRequester = selectedVodRailFocusRequester,
-                            onToggleFavorite = { item ->
-                                LiveTvRepository.toggleVodFavorite(item)
-                                scope.launch { LiveTvVodCache.upsert(context, item) }
-                            },
-                            onSelect = ::openVodItem,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            firstItemFocusRequester = firstHistoryEntryFocusRequester,
+                            trashFocusRequester = historyTrashFocusRequester,
+                            modifier = Modifier.weight(1f),
+                            onSelect = ::playVodItem,
                         )
                     }
-                }
-                if (showCatalogStatusOverlay) {
-                    Text(
-                        text = stringResource(
-                            if (isCatalogLoading) R.string.iptv_vod_loading
-                            else R.string.iptv_vod_partial_error
-                        ),
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 12.dp, bottom = 10.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(Color.Black.copy(alpha = 0.86f))
-                            .border(
-                                width = 1.dp,
-                                color = Color.White.copy(alpha = 0.18f),
-                                shape = RoundedCornerShape(999.dp),
-                            )
-                            .padding(horizontal = 11.dp, vertical = 6.dp),
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                    )
+                    else -> Spacer(Modifier.fillMaxSize())
                 }
             }
+        }
+
+        val focusedGridItems = when (selectedPanel) {
+            IptvVodPanel.Favorites -> moduleFavorites
+            IptvVodPanel.Sources -> visibleItems
+            IptvVodPanel.History -> null
+        }
+        if (selectedSeries == null) {
+            focusedGridItems?.let { gridItems ->
+                VodGridWithFocusedDetails(
+                    items = gridItems,
+                    favoriteVodKeys = favoriteVodKeys,
+                    focusedItem = focusedDetailsItem,
+                    presentation = detailsPresentation,
+                    heroHeight = heroHeight,
+                    trailerPreviewVideoUrl = vodTrailerSource?.videoUrl
+                        ?.takeIf {
+                            isVodTrailerPreviewActive && it.isNotBlank() &&
+                                focusedVodItem?.favoriteKey == focusedDetailsItem?.favoriteKey
+                        },
+                    trailerPreviewAudioUrl = vodTrailerSource?.audioUrl
+                        ?.takeIf { focusedVodItem?.favoriteKey == focusedDetailsItem?.favoriteKey },
+                    onTrailerError = { isVodTrailerPreviewActive = false },
+                    onTrailerEnded = { isVodTrailerPreviewActive = false },
+                    onFocusedItemChanged = { focusedVodItem = it },
+                    firstItemFocusRequester = firstVodItemFocusRequester,
+                    leftFocusRequester = selectedVodRailFocusRequester,
+                    onToggleFavorite = { item ->
+                        LiveTvRepository.toggleVodFavorite(item)
+                        scope.launch { LiveTvVodCache.upsert(context, item) }
+                    },
+                    onSelect = ::openVodItemDetails,
+                    gridWidthFraction = 1f,
+                    emptyMessage = when (selectedPanel) {
+                        IptvVodPanel.Favorites ->
+                            stringResource(R.string.iptv_vod_empty_favorites).takeIf { gridItems.isEmpty() }
+                        IptvVodPanel.Sources -> when {
+                            sources.isEmpty() && (liveTvState.isLoading || isCatalogLoading) ->
+                                stringResource(R.string.iptv_vod_loading)
+                            sources.isEmpty() -> stringResource(R.string.iptv_vod_no_xtream)
+                            isCatalogLoading -> stringResource(R.string.iptv_vod_loading)
+                            hasLoadError && visibleItems.isEmpty() -> stringResource(R.string.iptv_vod_error)
+                            visibleItems.isEmpty() -> stringResource(R.string.iptv_vod_empty)
+                            else -> null
+                        }
+                        IptvVodPanel.History -> null
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .fillMaxWidth(VOD_HERO_PANEL_WIDTH)
+                        .padding(start = VOD_HERO_START_PADDING)
+                        .fillMaxHeight(),
+                )
+            }
+        }
+        if (hasPlaybackError) {
+            Text(
+                text = stringResource(R.string.iptv_vod_playback_error),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = heroHeight + 8.dp, end = 12.dp),
+                color = NuvioTheme.colors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (showCatalogStatusOverlay) {
+            Text(
+                text = stringResource(
+                    if (isCatalogLoading) R.string.iptv_vod_loading
+                    else R.string.iptv_vod_partial_error
+                ),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 10.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color.Black.copy(alpha = 0.86f))
+                    .border(
+                        width = 1.dp,
+                        color = Color.White.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(999.dp),
+                    )
+                    .padding(horizontal = 11.dp, vertical = 6.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+            )
         }
         Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .fillMaxWidth(0.27f)
-                .height(68.dp)
+                .fillMaxWidth(VOD_DETAILS_PANEL_WIDTH)
+                .height(56.dp)
                 .background(NuvioTheme.colors.Background)
                 .padding(end = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1213,37 +1396,6 @@ private fun IptvVodScreenContent(
                     color = NuvioTheme.colors.TextPrimary,
                     fontWeight = FontWeight.Bold,
                 )
-                if (selectedPanel == IptvVodPanel.Sources && selectedSource != null) {
-                    Text(
-                        text = selectedSource.label,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = NuvioTheme.colors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            if (selectedPanel == IptvVodPanel.History) {
-                Card(
-                    onClick = { if (moduleHistory.isNotEmpty()) showClearHistoryDialog = true },
-                    modifier = Modifier.size(40.dp),
-                    colors = CardDefaults.colors(
-                        containerColor = NuvioTheme.colors.SurfaceVariant,
-                        focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                    ),
-                    shape = CardDefaults.shape(shape = NuvioTheme.configuredShape(RoundedCornerShape(10.dp))),
-                    border = vodAccentBorder(selected = false),
-                    scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = stringResource(R.string.iptv_vod_history_clear),
-                            modifier = Modifier.size(18.dp),
-                            tint = NuvioTheme.colors.TextPrimary,
-                        )
-                    }
-                }
             }
         }
         }
@@ -1276,17 +1428,6 @@ private fun IptvVodScreenContent(
         }
     }
 
-    fullScreenVodTrailerSource?.let { source ->
-        SharedTrailerOverlay(
-            title = fullScreenVodTrailerTitle,
-            trailerUrl = source.videoUrl,
-            trailerAudioUrl = source.audioUrl,
-            isLoading = false,
-            errorMessage = null,
-            onDismiss = { fullScreenVodTrailerSource = null },
-            onRetry = {},
-        )
-    }
 }
 
 }
@@ -1301,13 +1442,126 @@ private suspend fun loadVodCategories(source: LiveTvSource, type: String): List<
 private suspend fun loadVodItems(
     source: LiveTvSource,
     type: String,
-    categoryId: String,
-    onBatch: (List<LiveTvVodItem>) -> Unit,
+    categoryId: String = "",
+    onBatch: (List<LiveTvVodItem>) -> Unit = {},
 ): List<LiveTvVodItem> = when (source.type) {
     LiveTvSourceType.Xtream -> LiveTvXtream.vodItems(source, type, categoryId, onBatch)
     LiveTvSourceType.Stalker -> LiveTvStalker.vodItems(source, type, categoryId, onBatch)
     LiveTvSourceType.M3u -> emptyList()
 }
+
+/**
+ * Some portals omit category IDs from the full VOD response. Hydrate categories during catalogue
+ * import so group selection can remain a local filter and never triggers a provider scan.
+ */
+private suspend fun hydrateMissingVodCategories(
+    context: Context,
+    source: LiveTvSource,
+    type: String,
+    categories: List<LiveTvVodCategory>,
+    existingItems: List<LiveTvVodItem>,
+    forceRefresh: Boolean,
+    onItemsLoaded: (List<LiveTvVodItem>) -> Unit,
+    onLoadError: (LiveTvVodCategory, Throwable) -> Unit,
+): List<LiveTvVodItem> {
+    val uniqueCategories = categories.distinctBy(LiveTvVodCategory::id)
+    if (uniqueCategories.isEmpty()) return existingItems
+    if (forceRefresh) LiveTvVodCache.clearCategoryCompletions(context, source, type)
+
+    val completedIds = if (forceRefresh) {
+        emptySet()
+    } else {
+        LiveTvVodCache.completedCategoryIds(context, source, type)
+    }
+    val categoriesToLoad = uniqueCategories.filter { category ->
+        forceRefresh || category.id !in completedIds
+    }
+    if (categoriesToLoad.isEmpty()) return existingItems
+
+    val semaphore = Semaphore(3)
+    val cacheWriter = LiveTvVodCache.batchWriter(context, source.id, type)
+    val successfulCategoryIds = mutableSetOf<String>()
+    val mergedById = LinkedHashMap<String, LiveTvVodItem>(existingItems.size)
+    existingItems.forEach { mergedById[it.id] = it }
+    try {
+        coroutineScope {
+            val results = Channel<Pair<LiveTvVodCategory, Result<List<LiveTvVodItem>>>>(Channel.RENDEZVOUS)
+            val workers = categoriesToLoad.map { category ->
+                launch {
+                    val result = try {
+                        Result.success(
+                            semaphore.withPermit {
+                                loadVodItems(source, type, category.id).map { item ->
+                                    item.copy(
+                                        categoryId = category.id,
+                                        categoryName = item.categoryName.ifBlank { category.name },
+                                    )
+                                }
+                            },
+                        )
+                    } catch (failure: CancellationException) {
+                        throw failure
+                    } catch (failure: Exception) {
+                        Result.failure(failure)
+                    }
+                    results.send(category to result)
+                }
+            }
+            try {
+                repeat(categoriesToLoad.size) {
+                    val (category, result) = results.receive()
+                    result.fold(
+                        onSuccess = { items ->
+                            successfulCategoryIds += category.id
+                            if (items.isNotEmpty()) {
+                                cacheWriter.append(items)
+                                items.forEach { item ->
+                                    val cached = mergedById[item.id]
+                                    mergedById[item.id] = cached?.let(item::withMissingVodFieldsFrom) ?: item
+                                }
+                                onItemsLoaded(items)
+                            }
+                        },
+                        onFailure = { failure -> onLoadError(category, failure) },
+                    )
+                }
+            } finally {
+                results.close()
+                workers.forEach { it.cancel() }
+            }
+        }
+    } finally {
+        cacheWriter.finish()
+    }
+
+    val mergedItems = mergedById.values.toList()
+    if (successfulCategoryIds.isNotEmpty()) {
+        val cacheReady = mergedItems == existingItems ||
+            LiveTvVodCache.writeCompleteCatalog(context, source, type, mergedItems)
+        if (cacheReady) {
+            LiveTvVodCache.markCategoriesComplete(context, source, type, successfulCategoryIds)
+        } else {
+            Log.w("LiveTvVod", "Could not persist hydrated $type categories from ${source.type}")
+        }
+    }
+    return mergedItems
+}
+
+private fun LiveTvVodItem.withMissingVodFieldsFrom(fallback: LiveTvVodItem): LiveTvVodItem = copy(
+    providerId = providerId.ifBlank { fallback.providerId },
+    title = title.ifBlank { fallback.title },
+    categoryId = categoryId.ifBlank { fallback.categoryId },
+    categoryName = categoryName.ifBlank { fallback.categoryName },
+    posterUrl = posterUrl.ifBlank { fallback.posterUrl },
+    extension = extension.ifBlank { fallback.extension },
+    year = year.ifBlank { fallback.year },
+    plot = plot.ifBlank { fallback.plot },
+    season = season.takeIf { it > 0 } ?: fallback.season,
+    episode = episode.takeIf { it > 0 } ?: fallback.episode,
+    command = command.ifBlank { fallback.command },
+    seriesId = seriesId.ifBlank { fallback.seriesId },
+    seriesTitle = seriesTitle.ifBlank { fallback.seriesTitle },
+)
 
 private const val VOD_LOAD_TIMEOUT_MS = 300_000L
 
@@ -1411,6 +1665,7 @@ internal suspend fun loadIptvSeriesEpisodes(source: LiveTvSource, series: LiveTv
 @Composable
 private fun VodSourceRow(
     source: LiveTvSource,
+    confirmed: Boolean,
     focusRequester: FocusRequester? = null,
     rightFocusRequester: FocusRequester? = null,
     count: Int?,
@@ -1433,14 +1688,15 @@ private fun VodSourceRow(
             .navigateRightTo(rightFocusRequester, onFocus)
             .onFocusChanged { focused = it.isFocused },
         colors = CardDefaults.colors(
-            containerColor = if (selected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.SurfaceVariant,
-            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+            containerColor = if (confirmed) NuvioTheme.colors.Secondary else NuvioTheme.colors.SurfaceVariant,
+            focusedContainerColor = if (confirmed) NuvioTheme.colors.Secondary else NuvioTheme.colors.SurfaceVariant,
         ),
-        shape = CardDefaults.shape(shape = NuvioTheme.configuredShape(RoundedCornerShape(12.dp))),
-        border = vodAccentBorder(selected),
+        shape = CardDefaults.shape(shape = NuvioTheme.shapes.button),
+        border = vodRailBorder(confirmed),
+        scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -1448,18 +1704,23 @@ private fun VodSourceRow(
                 text = source.label,
                 modifier = Modifier.weight(1f)
                     .then(if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                color = NuvioTheme.colors.TextPrimary,
+                color = if (confirmed) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
                 maxLines = 1,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             )
             if (count != null) {
-                Text(count.toString(), color = NuvioTheme.colors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                Text(
+                    count.toString(),
+                    color = if (confirmed) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextSecondary,
+                    style = MaterialTheme.typography.labelSmall,
+                )
             }
             Icon(
                 imageVector = if (expanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
                 contentDescription = null,
-                tint = NuvioTheme.colors.TextSecondary,
+                modifier = Modifier.size(18.dp),
+                tint = if (confirmed) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextSecondary,
             )
         }
     }
@@ -1469,9 +1730,11 @@ private fun VodSourceRow(
 private fun VodPanelRow(
     title: String,
     selected: Boolean,
+    confirmed: Boolean,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     focusRequester: FocusRequester? = null,
     rightFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
     onFocus: () -> Unit,
     onClick: () -> Unit,
 ) {
@@ -1481,41 +1744,40 @@ private fun VodPanelRow(
         delay(VOD_FOCUS_PREVIEW_DELAY_MS)
         if (focused && !selected) onFocus()
     }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .navigateRightTo(rightFocusRequester, onFocus, upFocusRequester)
+            .onFocusChanged { focused = it.isFocused },
+        colors = CardDefaults.colors(
+            containerColor = if (confirmed) NuvioTheme.colors.Secondary else NuvioTheme.colors.SurfaceVariant,
+            focusedContainerColor = if (confirmed) NuvioTheme.colors.Secondary else NuvioTheme.colors.SurfaceVariant,
+        ),
+        shape = CardDefaults.shape(shape = NuvioTheme.shapes.button),
+        border = vodRailBorder(confirmed),
+        scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
     ) {
-        Card(
-            onClick = onClick,
-            modifier = Modifier.weight(1f)
-                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                .navigateRightTo(rightFocusRequester, onFocus)
-                .onFocusChanged { focused = it.isFocused },
-            colors = CardDefaults.colors(
-                containerColor = if (selected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.SurfaceVariant,
-                focusedContainerColor = NuvioTheme.colors.FocusBackground,
-            ),
-            shape = CardDefaults.shape(shape = NuvioTheme.configuredShape(RoundedCornerShape(10.dp))),
-            border = vodAccentBorder(selected),
-            scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp), tint = NuvioTheme.colors.TextPrimary)
-                Text(
-                    text = title,
-                    modifier = Modifier.weight(1f)
-                        .then(if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    color = NuvioTheme.colors.TextPrimary,
-                    maxLines = 1,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                )
-            }
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (confirmed) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
+            )
+            Text(
+                text = title,
+                modifier = Modifier.weight(1f)
+                    .then(if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                color = if (confirmed) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
+                maxLines = 1,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            )
         }
     }
 }
@@ -1524,6 +1786,7 @@ private fun VodPanelRow(
 private fun VodCategoryRow(
     title: String,
     selected: Boolean,
+    confirmed: Boolean,
     focusRequester: FocusRequester? = null,
     rightFocusRequester: FocusRequester? = null,
     onFocus: () -> Unit,
@@ -1542,19 +1805,19 @@ private fun VodCategoryRow(
             .navigateRightTo(rightFocusRequester, onFocus)
             .onFocusChanged { focused = it.isFocused },
         colors = CardDefaults.colors(
-            containerColor = if (selected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.Background,
-            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+            containerColor = if (confirmed) NuvioTheme.colors.Secondary else NuvioTheme.colors.Background,
+            focusedContainerColor = if (confirmed) NuvioTheme.colors.Secondary else NuvioTheme.colors.SurfaceVariant,
         ),
-        shape = CardDefaults.shape(shape = NuvioTheme.configuredShape(RoundedCornerShape(10.dp))),
-        border = vodAccentBorder(selected),
+        shape = CardDefaults.shape(shape = NuvioTheme.shapes.button),
+        border = vodRailBorder(confirmed),
     ) {
         Text(
             text = title,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp)
                 .then(if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-            color = NuvioTheme.colors.TextPrimary,
+            color = if (confirmed) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
             maxLines = 1,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
         )
     }
@@ -1566,15 +1829,21 @@ private fun VodHistoryList(
     sources: List<LiveTvSource>,
     cachedItems: List<LiveTvVodItem>,
     type: String,
+    firstItemFocusRequester: FocusRequester,
+    trashFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
     onSelect: (LiveTvVodItem) -> Unit,
 ) {
     val context = LocalContext.current
+    val firstFocusableEntryIndex = entries.indexOfFirst { entry ->
+        cachedItems.any { item -> item.type == type && item.id == entry.contentId }
+    }
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(entries, key = { "${it.contentId}:${it.videoId}:${it.lastWatched}" }) { entry ->
+        rowItemsIndexed(entries, key = { _, entry -> "${entry.contentId}:${entry.videoId}:${entry.lastWatched}" }) { index, entry ->
             val source = sources.firstOrNull { entry.contentId.startsWith("${it.id}:$type:") }
             val item = cachedItems.firstOrNull { it.type == type && it.id == entry.contentId }
             var focused by remember { mutableStateOf(false) }
@@ -1592,7 +1861,11 @@ private fun VodHistoryList(
             Card(
                 onClick = { item?.let(onSelect) },
                 modifier = Modifier.fillMaxWidth()
-                    .focusProperties { canFocus = item != null }
+                    .then(if (index == firstFocusableEntryIndex) Modifier.focusRequester(firstItemFocusRequester) else Modifier)
+                    .focusProperties {
+                        canFocus = item != null
+                        if (index == firstFocusableEntryIndex && item != null) up = trashFocusRequester
+                    }
                     .onFocusChanged { focused = it.isFocused },
                 colors = CardDefaults.colors(
                     containerColor = NuvioTheme.colors.SurfaceVariant,
@@ -1655,86 +1928,97 @@ private fun VodGridWithFocusedDetails(
     favoriteVodKeys: Set<String>,
     focusedItem: LiveTvVodItem?,
     presentation: LiveTvVodPresentation?,
+    heroHeight: androidx.compose.ui.unit.Dp,
+    gridWidthFraction: Float = 1f,
     trailerPreviewVideoUrl: String?,
     trailerPreviewAudioUrl: String?,
-    onOpenTrailer: () -> Unit,
     onTrailerError: () -> Unit,
-    isTrailerOverlayVisible: Boolean,
+    onTrailerEnded: () -> Unit,
     onFocusedItemChanged: (LiveTvVodItem?) -> Unit,
     firstItemFocusRequester: FocusRequester,
     leftFocusRequester: FocusRequester,
     onToggleFavorite: ((LiveTvVodItem) -> Unit)? = null,
     onSelect: (LiveTvVodItem) -> Unit,
+    emptyMessage: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val heroItem = focusedItem?.let { focused ->
         items.firstOrNull { it.favoriteKey == focused.favoriteKey }
     }
     val previewUrl = trailerPreviewVideoUrl?.takeIf(String::isNotBlank)
-        .takeUnless { isTrailerOverlayVisible }
-    val heroFocusRequester = remember { FocusRequester() }
     BoxWithConstraints(
         modifier = modifier.onFocusChanged { state ->
-            if (!state.hasFocus && !isTrailerOverlayVisible) onFocusedItemChanged(null)
+            if (!state.hasFocus) onFocusedItemChanged(null)
         },
     ) {
-        val heroHeight = minOf(maxWidth / VOD_FOCUSED_HERO_ASPECT_RATIO, maxHeight * 0.52f)
+        val visibleHeroHeight = heroHeight
         heroItem?.let { item ->
             VodFocusedDetailsHero(
                 item = item,
                 presentation = presentation.takeIf { focusedItem?.favoriteKey == item.favoriteKey },
                 trailerVideoUrl = previewUrl,
                 trailerAudioUrl = trailerPreviewAudioUrl.takeIf { previewUrl != null },
-                heroFocusRequester = heroFocusRequester,
-                firstItemFocusRequester = firstItemFocusRequester,
-                leftFocusRequester = leftFocusRequester,
-                onOpenTrailer = onOpenTrailer,
                 onTrailerError = onTrailerError,
+                onTrailerEnded = onTrailerEnded,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(heroHeight),
+                    .height(visibleHeroHeight),
             )
         }
-        VodGrid(
-            items = items,
-            favoriteVodKeys = favoriteVodKeys,
-            onToggleFavorite = onToggleFavorite,
-            onSelect = onSelect,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .fillMaxHeight(if (heroItem == null) 1f else 0.52f),
-            onFocusedItemChanged = onFocusedItemChanged,
-            firstItemFocusRequester = firstItemFocusRequester,
-            leftFocusRequester = leftFocusRequester,
-            upFocusRequester = heroFocusRequester.takeIf { previewUrl != null },
-        )
+        if (heroItem == null && visibleHeroHeight > 0.dp) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(visibleHeroHeight)
+                    .background(NuvioTheme.colors.Background),
+            )
+        }
+        val gridHeight = (maxHeight - visibleHeroHeight).coerceAtLeast(0.dp)
+        val gridAlignment = if (gridWidthFraction < 1f) Alignment.BottomEnd else Alignment.BottomCenter
+        val gridStartPadding = if (gridWidthFraction < 1f) 22.dp else 0.dp
+        if (items.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .align(gridAlignment)
+                    .fillMaxWidth(gridWidthFraction)
+                    .padding(start = gridStartPadding)
+                    .height(gridHeight),
+                contentAlignment = Alignment.Center,
+            ) {
+                emptyMessage?.let { CenterLabel(it) }
+            }
+        } else {
+            VodGrid(
+                items = items,
+                favoriteVodKeys = favoriteVodKeys,
+                focusedItem = focusedItem,
+                onToggleFavorite = onToggleFavorite,
+                onSelect = onSelect,
+                modifier = Modifier
+                    .align(gridAlignment)
+                    .fillMaxWidth(gridWidthFraction)
+                    .padding(start = gridStartPadding)
+                    .height(gridHeight),
+                onFocusedItemChanged = onFocusedItemChanged,
+                firstItemFocusRequester = firstItemFocusRequester,
+                leftFocusRequester = leftFocusRequester,
+            )
+        }
     }
 }
 
 @Composable
-private fun VodFocusedDetailsHero(
+private fun VodFocusedDetailsInfoOverlay(
     item: LiveTvVodItem,
     presentation: LiveTvVodPresentation?,
-    trailerVideoUrl: String?,
-    trailerAudioUrl: String?,
-    heroFocusRequester: FocusRequester,
-    firstItemFocusRequester: FocusRequester,
-    leftFocusRequester: FocusRequester,
-    onOpenTrailer: () -> Unit,
-    onTrailerError: () -> Unit,
+    showSynopsis: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    var isFocused by remember(item.favoriteKey, trailerVideoUrl) { mutableStateOf(false) }
     val metadata = presentation?.metadata
     val title = metadata?.localizedTitle?.takeIf(String::isNotBlank)
         ?: normalizeLiveTvVodTitleForTmdb(item.title)
-    val artwork = metadata?.backdrop?.takeIf(String::isNotBlank)
-        ?: tmdbVodImageUrl(presentation?.match?.backdropPath, "w1280")
-        ?: item.posterUrl.takeIf(String::isNotBlank)
-        ?: metadata?.poster
-        ?: tmdbVodImageUrl(presentation?.match?.posterPath, "w500")
     val year = metadata?.releaseInfo?.take(4)?.takeIf(String::isNotBlank)
         ?: item.year.takeIf(String::isNotBlank)?.take(4)
     val details = buildList {
@@ -1751,127 +2035,152 @@ private fun VodFocusedDetailsHero(
     val director = metadata?.director?.firstOrNull()?.takeIf(String::isNotBlank)
     val synopsis = metadata?.description?.takeIf(String::isNotBlank)
         ?: item.plot.takeIf(String::isNotBlank)
+    var logoLoadFailed by remember(item.favoriteKey, metadata?.logo) { mutableStateOf(false) }
+    var logoBitmap by remember(item.favoriteKey, metadata?.logo) { mutableStateOf<Bitmap?>(null) }
+    val logoBackground = NuvioTheme.colors.Background
+    val logoColorFilter = remember(logoBitmap, logoBackground) {
+        logoBitmap
+            ?.let { logoContrastTint(it, backdrop = null, fallbackBackground = logoBackground) }
+            ?.let { ColorFilter.tint(it, BlendMode.SrcIn) }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        if (!metadata?.logo.isNullOrBlank() && !logoLoadFailed) {
+            AsyncImage(
+                model = metadata?.logo,
+                contentDescription = title,
+                contentScale = ContentScale.Fit,
+                alignment = Alignment.CenterStart,
+                modifier = Modifier
+                    .height(64.dp)
+                    .widthIn(max = 320.dp)
+                    .fillMaxWidth(),
+                colorFilter = logoColorFilter,
+                onSuccess = { state ->
+                    logoBitmap = (state.result.image as? BitmapImage)?.bitmap
+                },
+                onError = {
+                    logoLoadFailed = true
+                    logoBitmap = null
+                },
+            )
+        } else {
+            Text(
+                text = title,
+                color = Color.White,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (details.isNotBlank()) {
+            Text(
+                text = details,
+                color = Color.White.copy(alpha = 0.9f),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (cast.isNotBlank()) {
+            Text(
+                text = "${stringResource(R.string.episode_folder_cast)} : $cast",
+                color = Color.White.copy(alpha = 0.84f),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (director != null) {
+            Text(
+                text = stringResource(R.string.hero_director, director),
+                color = Color.White.copy(alpha = 0.84f),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (showSynopsis && !synopsis.isNullOrBlank()) {
+            Text(
+                text = synopsis,
+                color = Color.White,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = Int.MAX_VALUE,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VodFocusedDetailsHero(
+    item: LiveTvVodItem,
+    presentation: LiveTvVodPresentation?,
+    trailerVideoUrl: String?,
+    trailerAudioUrl: String?,
+    onTrailerError: () -> Unit,
+    onTrailerEnded: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val metadata = presentation?.metadata
+    val artwork = metadata?.backdrop?.takeIf(String::isNotBlank)
+        ?: tmdbVodImageUrl(presentation?.match?.backdropPath, "w1280")
+        ?: item.posterUrl.takeIf(String::isNotBlank)
+        ?: metadata?.poster
+        ?: tmdbVodImageUrl(presentation?.match?.posterPath, "w500")
     val isTrailerPreviewPlaying = !trailerVideoUrl.isNullOrBlank()
 
     Box(
         modifier = modifier
             .clip(NuvioTheme.configuredShape(RoundedCornerShape(12.dp)))
-            .background(Color.Black)
-            .focusRequester(heroFocusRequester)
-            .focusProperties {
-                left = leftFocusRequester
-                down = firstItemFocusRequester
-            }
-            .onFocusChanged { isFocused = it.isFocused }
-            .clickable(enabled = !trailerVideoUrl.isNullOrBlank(), onClick = onOpenTrailer),
+            .background(NuvioTheme.colors.Background),
     ) {
-        if (!isTrailerPreviewPlaying && !artwork.isNullOrBlank()) {
-            AsyncImage(
-                model = artwork,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                alignment = Alignment.Center,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-        TrailerPlayer(
-            trailerUrl = trailerVideoUrl,
-            trailerAudioUrl = trailerAudioUrl,
-            isPlaying = !trailerVideoUrl.isNullOrBlank(),
-            onEnded = {},
-            onError = onTrailerError,
-            muted = true,
-            cropToFill = true,
-            modifier = Modifier.fillMaxSize(),
-        )
-        if (!isTrailerPreviewPlaying) {
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.horizontalGradient(
-                        0f to Color.Black.copy(alpha = 0.96f),
-                        0.58f to Color.Black.copy(alpha = 0.78f),
-                        1f to Color.Transparent,
-                    )
-                )
-            )
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.08f),
-                        0.55f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.62f),
-                    )
-                )
-            )
-            Column(
-                modifier = Modifier.align(Alignment.TopStart)
-                    .fillMaxWidth(0.64f)
+        Row(Modifier.fillMaxSize()) {
+            VodFocusedDetailsInfoOverlay(
+                item = item,
+                presentation = presentation,
+                showSynopsis = !isTrailerPreviewPlaying,
+                modifier = Modifier
+                    .weight(0.42f)
                     .fillMaxHeight()
-                    .padding(start = 18.dp, top = 12.dp, end = 14.dp, bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                if (!metadata?.logo.isNullOrBlank()) {
-                    AsyncImage(
-                        model = metadata?.logo,
-                        contentDescription = title,
-                        contentScale = ContentScale.Fit,
-                        alignment = Alignment.CenterStart,
-                        modifier = Modifier.fillMaxWidth().height(54.dp),
-                    )
-                } else {
-                    Text(
-                        text = title,
-                        color = Color.White,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (details.isNotBlank()) {
-                    Text(
-                        text = details,
-                        color = Color.White.copy(alpha = 0.9f),
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (cast.isNotBlank()) {
-                    Text(
-                        text = "${stringResource(R.string.episode_folder_cast)} : $cast",
-                        color = Color.White.copy(alpha = 0.84f),
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (director != null) {
-                    Text(
-                        text = stringResource(R.string.hero_director, director),
-                        color = Color.White.copy(alpha = 0.84f),
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (!synopsis.isNullOrBlank()) {
-                    Text(
-                        text = synopsis,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = Int.MAX_VALUE,
-                    )
-                }
-            }
-        }
-        if (isFocused && !trailerVideoUrl.isNullOrBlank()) {
-            Box(
-                Modifier.fillMaxSize().border(
-                    BorderStroke(3.dp, NuvioTheme.colors.FocusRing),
-                    NuvioTheme.configuredShape(RoundedCornerShape(12.dp)),
-                ),
+                    .background(NuvioTheme.colors.Background)
+                    .padding(start = 22.dp, end = 16.dp, top = 18.dp, bottom = 18.dp),
             )
+            Box(
+                modifier = Modifier
+                    .weight(0.58f)
+                    .fillMaxHeight(),
+            ) {
+                if (!isTrailerPreviewPlaying && !artwork.isNullOrBlank()) {
+                    AsyncImage(
+                        model = artwork,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        alignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                TrailerPlayer(
+                    trailerUrl = trailerVideoUrl,
+                    trailerAudioUrl = trailerAudioUrl,
+                    isPlaying = !trailerVideoUrl.isNullOrBlank(),
+                    onEnded = onTrailerEnded,
+                    onError = onTrailerError,
+                    muted = false,
+                    cropToFill = true,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                ModernHeroGradientLayer(
+                    bgColor = NuvioTheme.colors.Background,
+                    isFullScreen = { false },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 }
@@ -1891,89 +2200,136 @@ private fun vodAccentBorder(selected: Boolean): CardBorder = CardDefaults.border
 )
 
 @Composable
+private fun vodRailBorder(confirmed: Boolean): CardBorder {
+    val amber = Border(BorderStroke(2.dp, NuvioTheme.colors.Secondary))
+    return CardDefaults.border(
+        border = if (confirmed) amber else Border.None,
+        focusedBorder = if (confirmed) amber else Border(
+            BorderStroke(2.dp, NuvioTheme.colors.TextPrimary),
+        ),
+    )
+}
+
+@Composable
 internal fun VodGrid(
     items: List<LiveTvVodItem>,
     favoriteVodKeys: Set<String> = emptySet(),
+    focusedItem: LiveTvVodItem? = null,
     onToggleFavorite: ((LiveTvVodItem) -> Unit)? = null,
     onSelect: (LiveTvVodItem) -> Unit,
     modifier: Modifier = Modifier,
     onFocusedItemChanged: ((LiveTvVodItem?) -> Unit)? = null,
     firstItemFocusRequester: FocusRequester? = null,
     leftFocusRequester: FocusRequester? = null,
-    upFocusRequester: FocusRequester? = null,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val contentWidth = (maxWidth - 8.dp).coerceAtLeast(0.dp)
-        val columns = ((contentWidth.value + 10f) / 100f).toInt().coerceAtLeast(1)
+        val columns = VOD_GRID_COLUMNS
+        val focusedIndex = focusedItem?.let { focused ->
+            items.indexOfFirst { it.favoriteKey == focused.favoriteKey }
+        } ?: -1
+        val gridState = rememberLazyGridState()
+        LaunchedEffect(focusedIndex, columns) {
+            if (focusedIndex >= 0) {
+                val rowStartIndex = focusedIndex - focusedIndex % columns
+                // Snap each focused row below the hero instead of leaving the previous
+                // row's title strip at the top edge while the next posters are clipped.
+                gridState.scrollToItem(rowStartIndex)
+            }
+        }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 90.dp),
+            state = gridState,
+            columns = GridCells.Fixed(VOD_GRID_COLUMNS),
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 6.dp, horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(
+                vertical = VOD_GRID_VERTICAL_CONTENT_PADDING,
+                horizontal = VOD_GRID_HORIZONTAL_CONTENT_PADDING,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(VOD_GRID_ITEM_SPACING),
+            verticalArrangement = Arrangement.spacedBy(VOD_GRID_ITEM_SPACING),
         ) {
-            itemsIndexed(items, key = { _, item -> "${item.sourceId}:${item.id}" }) { index, item ->
-                var focused by remember { mutableStateOf(false) }
-                val isFavorite = item.favoriteKey in favoriteVodKeys
-                Card(
-                    onClick = { onSelect(item) },
-                    onLongClick = onToggleFavorite?.let { toggle -> ({ toggle(item) }) },
-                    modifier = Modifier.fillMaxWidth()
-                        .then(if (index == 0 && firstItemFocusRequester != null) Modifier.focusRequester(firstItemFocusRequester) else Modifier)
-                        .then(
-                            if ((index < columns && upFocusRequester != null) ||
-                                (index % columns == 0 && leftFocusRequester != null)
-                            ) {
-                                Modifier.focusProperties {
-                                    if (index < columns) upFocusRequester?.let { up = it }
-                                    if (index % columns == 0) leftFocusRequester?.let { left = it }
-                                }
-                            } else Modifier,
-                        )
-                        .onFocusChanged {
-                            focused = it.isFocused
-                            if (it.isFocused) onFocusedItemChanged?.invoke(item)
-                        },
-                    colors = CardDefaults.colors(
-                        containerColor = NuvioTheme.colors.SurfaceVariant,
-                        focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                    ),
-                    shape = CardDefaults.shape(shape = NuvioTheme.configuredShape(RoundedCornerShape(12.dp))),
-                    border = vodAccentBorder(selected = false),
-                    scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
-                ) {
-                    Column {
-                        Box {
-                            AsyncImage(
-                                model = item.posterUrl.takeIf(String::isNotBlank),
-                                contentDescription = normalizeLiveTvVodTitleForTmdb(item.title),
-                                contentScale = ContentScale.Fit,
-                                alignment = Alignment.TopCenter,
-                                modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)
-                                    .background(Color.Black)
-                                    .clip(NuvioTheme.configuredShape(RoundedCornerShape(10.dp))),
-                            )
-                            if (isFavorite) {
-                                Icon(
-                                    imageVector = Icons.Default.Star,
-                                    contentDescription = null,
-                                    tint = NuvioTheme.colors.Secondary,
-                                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(18.dp),
-                                )
-                            }
-                        }
-                        Text(
-                            text = normalizeLiveTvVodTitleForTmdb(item.title),
-                            modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 7.dp)
-                                .then(if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                            color = NuvioTheme.colors.TextPrimary,
-                            maxLines = 1,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium,
-                        )
+            gridItemsIndexed(items, key = { _, item -> "${item.sourceId}:${item.id}" }) { index, item ->
+                VodGridCard(
+                    item = item,
+                    index = index,
+                    favoriteVodKeys = favoriteVodKeys,
+                    onToggleFavorite = onToggleFavorite,
+                    onSelect = onSelect,
+                    onFocusedItemChanged = onFocusedItemChanged,
+                    firstItemFocusRequester = firstItemFocusRequester,
+                    leftFocusRequester = leftFocusRequester,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VodGridCard(
+    item: LiveTvVodItem,
+    index: Int,
+    favoriteVodKeys: Set<String>,
+    onToggleFavorite: ((LiveTvVodItem) -> Unit)?,
+    onSelect: (LiveTvVodItem) -> Unit,
+    onFocusedItemChanged: ((LiveTvVodItem?) -> Unit)?,
+    firstItemFocusRequester: FocusRequester?,
+    leftFocusRequester: FocusRequester?,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val isFavorite = item.favoriteKey in favoriteVodKeys
+    val isFirstInRow = index % VOD_GRID_COLUMNS == 0
+    Card(
+        onClick = { onSelect(item) },
+        onLongClick = onToggleFavorite?.let { toggle -> ({ toggle(item) }) },
+        modifier = Modifier.fillMaxWidth()
+            .then(if (index == 0 && firstItemFocusRequester != null) Modifier.focusRequester(firstItemFocusRequester) else Modifier)
+            .then(
+                if (isFirstInRow && leftFocusRequester != null) {
+                    Modifier.focusProperties {
+                        leftFocusRequester?.let { left = it }
                     }
+                } else Modifier,
+            )
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocusedItemChanged?.invoke(item)
+            },
+        colors = CardDefaults.colors(
+            containerColor = NuvioTheme.colors.SurfaceVariant,
+            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+        ),
+        shape = CardDefaults.shape(shape = NuvioTheme.shapes.posterCard),
+        border = vodAccentBorder(selected = false),
+        scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+    ) {
+        Column {
+            Box {
+                AsyncImage(
+                    model = item.posterUrl.takeIf(String::isNotBlank),
+                    contentDescription = normalizeLiveTvVodTitleForTmdb(item.title),
+                    contentScale = ContentScale.Fit,
+                    alignment = Alignment.TopCenter,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+                        .background(Color.Black)
+                        .clip(NuvioTheme.configuredShape(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))),
+                )
+                if (isFavorite) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = null,
+                        tint = NuvioTheme.colors.Secondary,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(18.dp),
+                    )
                 }
             }
+            Text(
+                text = normalizeLiveTvVodTitleForTmdb(item.title),
+                modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 7.dp)
+                    .then(if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                color = NuvioTheme.colors.TextPrimary,
+                maxLines = 1,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+            )
         }
     }
 }

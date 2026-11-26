@@ -92,12 +92,7 @@ class TmdbMetadataService(
             }
 
             try {
-                val includeImageLanguage = buildString {
-                    append(normalizedLanguage.substringBefore("-"))
-                    append(",")
-                    append(normalizedLanguage)
-                    append(",en,null")
-                }
+                val includeImageLanguage = buildIncludeImageLanguage(normalizedLanguage)
 
                 // Fetch details, credits, images, alt titles, and trailers in parallel
                 val (details, credits, images, ageRating, altTitles, trailers) = coroutineScope {
@@ -341,7 +336,7 @@ class TmdbMetadataService(
                     originalLanguage !in requestedLogoLanguages
                 ) {
                     val originalLanguageImages = try {
-                        val includeOriginalLanguage = "$originalLanguage,en,null"
+                        val includeOriginalLanguage = buildIncludeImageLanguage(originalLanguage)
                         when (tmdbType) {
                             "tv" -> tmdbApi.getTvImages(
                                 numericId,
@@ -739,12 +734,7 @@ class TmdbMetadataService(
             else -> "movie"
         }
 
-        val includeImageLanguage = buildString {
-            append(normalizedLanguage.substringBefore("-"))
-            append(",")
-            append(normalizedLanguage)
-            append(",en,null")
-        }
+        val includeImageLanguage = buildIncludeImageLanguage(normalizedLanguage)
 
         try {
             val recommendations = when (tmdbType) {
@@ -888,12 +878,7 @@ class TmdbMetadataService(
             // Show in release order
             val sortedParts = rawParts.sortedBy { it.releaseDate?.takeIf(String::isNotBlank) ?: "9999" }
 
-            val includeImageLanguage = buildString {
-                append(normalizedLanguage.substringBefore("-"))
-                append(",")
-                append(normalizedLanguage)
-                append(",en,null")
-            }
+            val includeImageLanguage = buildIncludeImageLanguage(normalizedLanguage)
 
             val items = coroutineScope {
                 sortedParts.map { part ->
@@ -1287,6 +1272,12 @@ class TmdbMetadataService(
             else -> normalized
         }
     }
+
+    /** TMDB image assets are keyed by ISO-639-1 language, not the user's locale region. */
+    private fun buildIncludeImageLanguage(language: String): String =
+        listOf(language.substringBefore("-").lowercase(Locale.US), "en", "null")
+            .distinct()
+            .joinToString(",")
 
     private fun selectBestLocalizedImagePath(
         images: List<TmdbImage>,

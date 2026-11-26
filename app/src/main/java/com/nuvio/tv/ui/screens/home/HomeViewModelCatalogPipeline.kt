@@ -615,6 +615,15 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
     val heroSectionEnabled = _uiState.value.heroSectionEnabled
     val hideUnreleased = _uiState.value.hideUnreleasedContent
     val titlesSnapshot = customCatalogTitles
+    val removedHomeCatalogItemMatchKeys = layoutPreferenceDataStore.removedHomeCatalogItemMatchKeys.first()
+
+    fun filterRemovedHomeCatalogItems(row: CatalogRow): CatalogRow {
+        if (removedHomeCatalogItemMatchKeys.isEmpty()) return row
+        val visibleItems = row.items.filterNot { item ->
+            item.isCurrentlyInProgress(removedHomeCatalogItemMatchKeys)
+        }
+        return if (visibleItems.size == row.items.size) row else row.copy(items = visibleItems)
+    }
 
     val (displayRows, baseHeroItems, baseGridItems, fullRowsFiltered) = withContext(Dispatchers.Default) {
         val rawRows = orderedKeys.mapNotNull { key ->
@@ -622,17 +631,18 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
             val custom = titlesSnapshot[key]
             if (!custom.isNullOrBlank()) row.copy(catalogName = custom) else row
         }
-        val orderedRows = if (hideUnreleased) {
+        val fullRowsFiltered = if (hideUnreleased) {
             val today = LocalDate.now()
             rawRows.map { it.filterReleasedItems(today) }
         } else {
             rawRows
         }
+        val homeVisibleRows = fullRowsFiltered.map(::filterRemovedHomeCatalogItems)
         val selectedHeroCatalogSet = heroCatalogKeys.toSet()
         val orderedKeySet = orderedKeys.toSet()
         val selectedHeroRows = if (selectedHeroCatalogSet.isNotEmpty()) {
             // Include hero catalogs from ordered rows
-            val fromOrdered = orderedRows.filter { row ->
+            val fromOrdered = homeVisibleRows.filter { row ->
                 val key = row.legacyKey()
                 key in selectedHeroCatalogSet
             }
@@ -641,6 +651,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
             val heroOnlyRows = selectedHeroCatalogSet
                 .filter { it !in orderedKeySet }
                 .mapNotNull { catalogSnapshot[it] }
+                .map(::filterRemovedHomeCatalogItems)
             val heroOnlyFiltered = if (hideUnreleased) {
                 val today = LocalDate.now()
                 heroOnlyRows.map { it.filterReleasedItems(today) }
@@ -689,17 +700,19 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
         )
         // When orderedRows is empty (all catalogs disabled), include any
         // hero-only loaded catalogs as fallback hero sources.
-        val allHeroFallbackRows = if (orderedRows.isNotEmpty()) {
-            orderedRows
+        val allHeroFallbackRows = if (homeVisibleRows.isNotEmpty()) {
+            homeVisibleRows
         } else {
             val nonOrderedRows = catalogSnapshot.keys
                 .filter { it !in orderedKeySet }
                 .mapNotNull { catalogSnapshot[it] }
             if (hideUnreleased) {
                 val today = LocalDate.now()
-                nonOrderedRows.map { it.filterReleasedItems(today) }
-            } else {
                 nonOrderedRows
+                    .map { it.filterReleasedItems(today) }
+                    .map(::filterRemovedHomeCatalogItems)
+            } else {
+                nonOrderedRows.map(::filterRemovedHomeCatalogItems)
             }
         }
         val fallbackHeroItemsWithArtwork = slotShuffled(
@@ -714,7 +727,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
             else -> emptyList()
         }
 
-        val computedDisplayRows = orderedRows.map { row ->
+        val computedDisplayRows = homeVisibleRows.map { row ->
             val shouldKeepFullRowInModern = currentLayout == HomeLayout.MODERN
             val gridTruncateLimit = 24
             if (row.items.size > gridTruncateLimit && !shouldKeepFullRowInModern) {
@@ -743,7 +756,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
             }
         }
 
-        CatalogUpdateResult(computedDisplayRows, computedHeroItems, emptyList(), orderedRows)
+        CatalogUpdateResult(computedDisplayRows, computedHeroItems, emptyList(), fullRowsFiltered)
     }
 
     _fullCatalogRows.update { rows ->
@@ -786,18 +799,24 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                         genres = emptyList(),
                     )
                 }
-                add(HomeRow.Catalog(CatalogRow(
-                    addonId = SERVER_BROWSER_SHORTCUTS_ADDON_ID,
-                    addonName = "Serveurs",
-                    addonBaseUrl = "",
-                    catalogId = SERVER_BROWSER_SHORTCUTS_CATALOG_ID,
-                    catalogName = "Raccourcis serveurs",
-                    type = com.nuvio.tv.domain.model.ContentType.MOVIE,
-                    rawType = "movie",
-                    items = shortcutItems,
-                    isLoading = false,
-                    hasMore = false,
-                )))
+                add(
+                    HomeRow.Catalog(
+                        filterRemovedHomeCatalogItems(
+                            CatalogRow(
+                                addonId = SERVER_BROWSER_SHORTCUTS_ADDON_ID,
+                                addonName = "Serveurs",
+                                addonBaseUrl = "",
+                                catalogId = SERVER_BROWSER_SHORTCUTS_CATALOG_ID,
+                                catalogName = "Raccourcis serveurs",
+                                type = com.nuvio.tv.domain.model.ContentType.MOVIE,
+                                rawType = "movie",
+                                items = shortcutItems,
+                                isLoading = false,
+                                hasMore = false,
+                            )
+                        )
+                    )
+                )
             }
             val displayRowsByKey = displayRows.associateBy { it.legacyKey() }
             // Build a lookup of placeholder descriptors by key for lazy catalogs
@@ -805,9 +824,11 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                 placeholderDescriptors.associateBy { it.catalogKey }
             }
             val addedCollectionIds = mutableSetOf<String>()
-            val favoriteRowsByKey = favoriteHomeCatalogRows.value.associateBy { row ->
-                catalogKey(row.addonId, row.apiType, row.catalogId)
-            }
+            val favoriteRowsByKey = favoriteHomeCatalogRows.value
+                .map(::filterRemovedHomeCatalogItems)
+                .associateBy { row ->
+                    catalogKey(row.addonId, row.apiType, row.catalogId)
+                }
             collectionsCache.forEach { collection ->
                 val key = "collection_${collection.id}"
             if (collection.pinToTop && key !in disabledHomeCatalogKeys && addedCollectionIds.add(collection.id)) {

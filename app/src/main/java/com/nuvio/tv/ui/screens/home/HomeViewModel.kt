@@ -964,7 +964,10 @@ class HomeViewModel @Inject constructor(
     private fun markContinueWatchingWatched(item: ContinueWatchingItem) {
         if (!item.canMarkWatched()) return
         viewModelScope.launch {
-            runCatching { watchProgressRepository.markAsCompleted(item.toCompletedProgress()) }
+            runCatching {
+                watchProgressRepository.markAsCompleted(item.toCompletedProgress())
+                (item as? ContinueWatchingItem.InProgress)?.let { suppressHomeCatalogItem(it) }
+            }
                 .onFailure { error -> Log.w(TAG, "Failed to mark continue watching item as watched", error) }
         }
     }
@@ -972,6 +975,7 @@ class HomeViewModel @Inject constructor(
     private fun markContinueWatchingUnwatched(item: ContinueWatchingItem.InProgress) {
         viewModelScope.launch {
             runCatching {
+                restoreHomeCatalogItem(item)
                 watchProgressRepository.removeFromHistory(
                     contentId = item.progress.contentId,
                     videoId = item.progress.videoId,

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,9 +53,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.Border
 import androidx.tv.material3.Card
@@ -113,15 +116,6 @@ fun AppsScreen(
                     vertical = if (embedded) 8.dp else NuvioTheme.spacing.xl
                 )
         ) {
-            if (!embedded) {
-                Text(
-                    text = stringResource(R.string.nav_apps),
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = NuvioTheme.colors.TextPrimary,
-                    modifier = Modifier.padding(start = 12.dp, bottom = NuvioTheme.spacing.md)
-                )
-            }
-
             LazyVerticalGrid(
                 columns = GridCells.Fixed(5),
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -129,6 +123,23 @@ fun AppsScreen(
                 horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
                 verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm + 10.dp)
             ) {
+                item(
+                    key = "apps_title",
+                    span = { GridItemSpan(maxLineSpan) },
+                ) {
+                    Text(
+                        text = stringResource(R.string.nav_apps),
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        ),
+                        color = NuvioTheme.colors.TextPrimary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, bottom = NuvioTheme.spacing.md),
+                    )
+                }
+
                 itemsIndexed(
                     items = displayedApps,
                     key = { _, app -> "installed_${app.packageName}" }

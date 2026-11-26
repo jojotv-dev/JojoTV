@@ -400,8 +400,6 @@
 <string name="licenses_attributions_tmdb_body">JojoTV utilizza l\'API di TMDB per metadati di film e serie TV, locandine, trailer, cast, dettagli di produzione, collezioni e raccomandazioni. Questo prodotto utilizza l\'API di TMDB ma non è approvato o certificato da TMDB.</string>
 <string name="licenses_attributions_trakt_title">Trakt</string>
 <string name="licenses_attributions_trakt_body">JojoTV si connette a Trakt per l\'autenticazione dell\'account, la cronologia di visione, la sincronizzazione dei progressi, i dati della libreria, le valutazioni, le liste e i commenti. JojoTV non è affiliato né approvato da Trakt.</string>
-<string name="licenses_attributions_simkl_title">Simkl</string>
-<string name="licenses_attributions_simkl_body">JojoTV si collega a Simkl per l\'autenticazione dell\'account, le watchlist, la cronologia visti, i progressi di riproduzione e lo scrobbling. I dati di tracciamento di film, serie TV e anime sono forniti da Simkl. JojoTV non è affiliata né approvata da Simkl.</string>
 <string name="licenses_attributions_mdblist_title">MDBList</string>
 <string name="licenses_attributions_mdblist_body">JojoTV utilizza MDBList per le valutazioni e i dati di fornitori esterni. JojoTV non è affiliato né approvato da MDBList.</string>
 <string name="licenses_attributions_introdb_title">IntroDB</string>
@@ -435,13 +433,6 @@
 <string name="tracking_sources_subtitle">Scegli da dove JojoTV legge la tua libreria e i progressi di visione. La riproduzione viene sincronizzata (scrobbling) su ogni servizio collegato.</string>
 <string name="tracking_trakt_features_title">Funzioni Trakt</string>
 <string name="tracking_trakt_features_subtitle">Cronologia, recensioni e consigliati specifici di Trakt</string>
-<string name="tracking_simkl_features_title">Funzioni Simkl</string>
-<string name="tracking_simkl_features_subtitle">Impostazioni specifiche di Simkl</string>
-<string name="tracking_simkl_anime_id_title">Preferenza ID anime</string>
-<string name="tracking_simkl_anime_id_subtitle">Controlla come vengono identificate le serie anime. Scegliendo MAL o Kitsu, ogni stagione ottiene una voce propria invece di essere raggruppata sotto un unico ID IMDB.</string>
-<string name="tracking_simkl_anime_id_imdb">Preferisci IMDB</string>
-<string name="tracking_simkl_anime_id_mal">Preferisci MyAnimeList</string>
-<string name="tracking_simkl_anime_id_kitsu">Preferisci Kitsu</string>
 <string name="tracking_status_connected">Connesso</string>
 <string name="tracking_status_disconnected">Non connesso</string>
 <string name="tracking_status_waiting">In attesa di approvazione</string>
@@ -452,7 +443,6 @@
 <string name="tracking_library_source_dialog_subtitle">Scegli il servizio da cui JojoTV legge la tua Libreria. La riproduzione viene sincronizzata (scrobbling) su ogni servizio collegato.</string>
 <string name="tracking_trakt_progress_required">Disponibile quando Trakt è la fonte dei progressi di visione</string>
 <string name="trakt_name">Trakt</string>
-<string name="simkl_name">Simkl</string>
 <string name="settings_network">Velocità di rete</string>
 <string name="settings_network_subtitle">Diagnostica di latenza e download</string>
 <string name="settings_advanced">Avanzate</string>
@@ -1172,7 +1162,7 @@
 <string name="trakt_code_expires">Il codice scade in %1$s</string>
 <string name="trakt_token_refreshes">Il token di accesso Trakt si rinnoverà tra %1$s</string>
 <string name="trakt_login_instruction">Premi Accedi per avviare l\'autenticazione del dispositivo Trakt. Un codice QR apparirà qui.</string>
-<string name="trakt_missing_credentials">TRAKT_CLIENT_ID / TRAKT_CLIENT_SECRET mancanti in local.properties.</string>
+<string name="trakt_missing_credentials">TRAKT_CLIENT_ID mancanti in local.properties.</string>
 <string name="trakt_watch_progress_title">Avanzamento visione</string>
 <string name="trakt_watch_progress_subtitle">Scegli quale origine usa Riprendi e Continua a guardare</string>
 <string name="trakt_watch_progress_dialog_title">Avanzamento visione</string>
@@ -1768,10 +1758,6 @@
 <string name="library_empty_trakt_subtitle">Usa il tasto + nei dettagli per aggiungere elementi alla lista da guardare o alle tue liste</string>
 <string name="library_empty_trakt_not_auth_title">Trakt non connesso</string>
 <string name="library_empty_trakt_not_auth_subtitle">Connetti il tuo account Trakt nelle Impostazioni per visualizzare la tua libreria Trakt</string>
-<string name="library_empty_simkl_title">Nessun elemento in %1$s</string>
-<string name="library_empty_simkl_subtitle">Usa + nei dettagli per aggiungere elementi a uno stato Simkl</string>
-<string name="library_empty_simkl_not_auth_title">Simkl non connesso</string>
-<string name="library_empty_simkl_not_auth_subtitle">Collega il tuo account Simkl nelle Impostazioni per visualizzare la tua libreria Simkl</string>
 <string name="library_list_create_dialog_title">Crea lista</string>
 <string name="library_list_edit_dialog_title">Modifica lista</string>
 <string name="library_sync_btn">Sincronizza</string>
@@ -2559,46 +2545,13 @@
 <string name="trakt_library_error_list_limit_reached">Limite liste Trakt raggiunto. È richiesto un upgrade.</string>
 <string name="trakt_error_insufficient_ids_mark_watched">ID Trakt insufficienti per segnare come visto</string>
 <string name="trakt_error_request_failed">Richiesta Trakt fallita</string>
-<string name="simkl_account_title">Account Simkl</string>
-<string name="simkl_description">Collega Simkl per sincronizzare liste, cronologia visti, progressi di riproduzione e scrobbling.</string>
-<string name="simkl_connect">Collega Simkl</string>
-<string name="simkl_disconnect">Scollega Simkl</string>
-<string name="simkl_disconnect_title">Scollegare Simkl?</string>
-<string name="simkl_disconnect_subtitle">Questo rimuove l\'account Simkl e i dati Simkl in cache da questo profilo.</string>
-<string name="simkl_connected_as">Connesso come %1$s</string>
-<string name="simkl_user_fallback">Utente Simkl</string>
-<string name="simkl_awaiting_instruction">Apri la pagina di verifica Simkl e inserisci questo codice.</string>
-<string name="simkl_code_expires">Il codice scade tra %1$s</string>
-<string name="simkl_sync_now">Sincronizza ora</string>
-<string name="simkl_visit">Visita Simkl</string>
-<string name="simkl_sync_info_action">Come funziona la sincronizzazione</string>
-<string name="simkl_sync_info_title">Come funziona la sincronizzazione con Simkl</string>
-<string name="simkl_sync_info_description">JojoTV controlla automaticamente Simkl al massimo una volta ogni %1$d minuti. Le modifiche effettuate tramite un\'altra app o il sito web di Simkl possono impiegare fino a questo tempo per comparire.</string>
-<string name="simkl_sync_info_activity">Ogni aggiornamento verifica prima se Simkl segnala modifiche e scarica solo gli aggiornamenti. Questo rispetta le regole dell\'API di Simkl, riduce l\'uso di dati non necessario e aiuta a mantenere stabile il servizio.</string>
-<string name="simkl_sync_info_manual">Le modifiche effettuate in JojoTV vengono inviate a Simkl immediatamente. Usa Sincronizza ora ogni volta che vuoi che JojoTV controlli prima le modifiche remote.</string>
-<string name="simkl_sync_info_library_statuses">I contenuti inseriti nelle liste "In pausa" o "Abbandonati" di Simkl sono nascosti da Continua a guardare. Restano nascosti finché rimangono in una di queste liste.</string>
-<string name="simkl_sync_info_docs">Leggi la guida alla sincronizzazione Simkl</string>
 <string name="error_open_browser_failed">Impossibile aprire il browser</string>
-<string name="simkl_missing_credentials">SIMKL_CLIENT_ID mancante</string>
-<string name="simkl_status_enter_code">Inserisci il codice su Simkl per completare la connessione</string>
-<string name="simkl_status_waiting">In attesa dell\'approvazione di Simkl…</string>
-<string name="simkl_status_connected">Connesso a Simkl</string>
-<string name="simkl_status_disconnected">Disconnesso da Simkl</string>
-<string name="simkl_status_syncing">Sincronizzazione Simkl in corso…</string>
-<string name="simkl_status_synced">Sincronizzazione Simkl completata</string>
-<string name="simkl_watch_progress_selected">Simkl selezionato per Continua a guardare</string>
-<string name="simkl_library_source_selected">Simkl selezionato per la Libreria</string>
-<string name="simkl_error_code_expired">Codice Simkl scaduto. Ricomincia.</string>
-<string name="simkl_error_authorization_revoked">L\'autorizzazione Simkl è stata revocata. Collegati di nuovo.</string>
-<string name="simkl_error_network">Impossibile raggiungere Simkl. Riprova.</string>
 <string name="tracking_removal_title">Rimuovere da %1$s?</string>
 <string name="tracking_removal_message">Rimuovendo "%1$s" da %2$s verrà cancellato anche il/la relativo/a %3$s su quel servizio. Questa azione non può essere annullata.</string>
 <string name="tracking_removal_impact_history">cronologia visti</string>
 <string name="tracking_removal_impact_rating">valutazione</string>
 <string name="tracking_removal_impact_history_rating">cronologia visti e valutazione</string>
 <string name="action_remove_anyway">Rimuovi comunque</string>
-<string name="cd_simkl_qr">QR di attivazione Simkl</string>
-<string name="cd_simkl_logo">Logo Simkl</string>
 <string name="trakt_error_mark_watched_failed">Segnatura come visto su Trakt fallita (%1$d)</string>
 
     <!-- Detail / poster options errors -->
@@ -2853,7 +2806,6 @@
 
     <string name="playback_unavailable">Riproduzione non disponibile</string>
     <string name="playback_unavailable_message">La riproduzione non è disponibile per questo titolo con la configurazione attuale.</string>
-    <string name="detail_more_like_this_powered_by_simkl">Offerto da Simkl</string>
     <string name="theme_color_custom">Personalizzato</string>
     <string name="custom_theme_title">Il tuo gradiente personalizzato</string>
     <string name="custom_theme_subtitle">Scegli tre colori per il tema. Seleziona un colore per modificarlo.</string>
@@ -2894,7 +2846,6 @@
     <string name="licenses_attributions_section_ui">LIBRERIE DELL\'INTERFACCIA</string>
     <string name="licenses_attributions_haze_title">Haze 1.7.2</string>
     <string name="licenses_attributions_haze_body">Usato per gli effetti di sfocatura dello sfondo. Creato da Chris Banes. Distribuito con licenza Apache 2.0.</string>
-    <string name="tracking_simkl_anime_id_tvdb">Preferisci TVDB</string>
     <string name="advanced_section_startup">Avvio e uscita</string>
     <string name="advanced_section_network_tests">Test di rete</string>
     <string name="playback_section_player_title">Lettore</string>
@@ -3007,7 +2958,6 @@
     <string name="mdblist_library_lists_summary">%1$d su %2$d visualizzate</string>
     <string name="tracking_mdblist_features_title">Funzioni MDBList</string>
     <string name="tracking_mdblist_features_subtitle">Impostazioni specifiche di MDBList</string>
-    <string name="trakt_more_like_this_source_simkl">Simkl</string>
     <string name="youtube_resolving_stream">Caricamento del video YouTube</string>
     <string name="youtube_resolution_failed">Impossibile caricare questo video di YouTube.</string>
     <string name="player_switch_to_mpv">Passa al lettore MPV</string>

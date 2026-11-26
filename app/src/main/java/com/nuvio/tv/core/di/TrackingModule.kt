@@ -1,24 +1,13 @@
 package com.nuvio.tv.core.di
 
-import com.nuvio.tv.data.simkl.AndroidSimklAuthStorage
-import com.nuvio.tv.data.simkl.AndroidSimklSyncStorage
-import com.nuvio.tv.data.simkl.SimklAuthStorage
-import com.nuvio.tv.data.simkl.SimklApiSyncRemote
-import com.nuvio.tv.data.simkl.SimklSyncRemote
-import com.nuvio.tv.data.simkl.SimklSyncStorage
 import com.nuvio.tv.core.tracking.TrackingLibraryProvider
 import com.nuvio.tv.core.tracking.TrackingProvider
 import com.nuvio.tv.data.repository.TraktTrackingLibraryProvider
 import com.nuvio.tv.data.repository.TraktTrackingProvider
-import com.nuvio.tv.data.simkl.SimklLibraryService
 import com.nuvio.tv.core.tracking.TrackingHistoryWriter
 import com.nuvio.tv.core.tracking.TrackingProgressProvider
 import com.nuvio.tv.data.repository.TraktTrackingHistoryWriter
 import com.nuvio.tv.data.repository.TraktTrackingProgressProvider
-import com.nuvio.tv.data.simkl.SimklTrackingHistoryWriter
-import com.nuvio.tv.data.simkl.SimklTrackingProgressProvider
-import com.nuvio.tv.data.simkl.SimklTrackingProvider
-import com.nuvio.tv.core.profile.ProfileScopedCredentialStore
 import com.nuvio.tv.data.mdblist.MdbListTrackingHistoryWriter
 import com.nuvio.tv.data.mdblist.MdbListTrackingProgressProvider
 import com.nuvio.tv.data.mdblist.MdbListTrackingProvider
@@ -49,33 +38,9 @@ abstract class TrackingModule {
     abstract fun bindMdbListHistory(writer: MdbListTrackingHistoryWriter): TrackingHistoryWriter
 
     @Binds
-    @Singleton
-    abstract fun bindSimklAuthStorage(storage: AndroidSimklAuthStorage): SimklAuthStorage
-
-    @Binds
-    @IntoSet
-    abstract fun bindSimklProfileScopedCredentialStore(
-        storage: AndroidSimklAuthStorage
-    ): ProfileScopedCredentialStore
-
-    @Binds
-    @Singleton
-    abstract fun bindSimklSyncStorage(storage: AndroidSimklSyncStorage): SimklSyncStorage
-
-    @Binds
-    @Singleton
-    abstract fun bindSimklSyncRemote(remote: SimklApiSyncRemote): SimklSyncRemote
-
-    @Binds
     @IntoSet
     abstract fun bindTraktTrackingLibraryProvider(
         provider: TraktTrackingLibraryProvider
-    ): TrackingLibraryProvider
-
-    @Binds
-    @IntoSet
-    abstract fun bindSimklTrackingLibraryProvider(
-        provider: SimklLibraryService
     ): TrackingLibraryProvider
 
     @Binds
@@ -86,20 +51,8 @@ abstract class TrackingModule {
 
     @Binds
     @IntoSet
-    abstract fun bindSimklTrackingProgressProvider(
-        provider: SimklTrackingProgressProvider
-    ): TrackingProgressProvider
-
-    @Binds
-    @IntoSet
     abstract fun bindTraktTrackingHistoryWriter(
         writer: TraktTrackingHistoryWriter
-    ): TrackingHistoryWriter
-
-    @Binds
-    @IntoSet
-    abstract fun bindSimklTrackingHistoryWriter(
-        writer: SimklTrackingHistoryWriter
     ): TrackingHistoryWriter
 
     @Binds
@@ -108,9 +61,4 @@ abstract class TrackingModule {
         provider: TraktTrackingProvider
     ): TrackingProvider
 
-    @Binds
-    @IntoSet
-    abstract fun bindSimklTrackingProvider(
-        provider: SimklTrackingProvider
-    ): TrackingProvider
 }

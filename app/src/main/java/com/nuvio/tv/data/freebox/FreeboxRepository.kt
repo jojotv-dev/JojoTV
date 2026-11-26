@@ -109,6 +109,17 @@ internal val FREEBOX_FOLDER_COVER_URI =
     "android.resource://${BuildConfig.APPLICATION_ID}/drawable/freebox_folder_cover"
 
 private val FREEBOX_VIDEO_EXTENSIONS = setOf("mkv", "mp4", "avi", "mov", "m4v", "ts", "webm", "mpg", "mpeg", "m2ts")
+private val FREEBOX_ARTWORK_EPISODE_ONLY_TITLE = Regex("(?iu)^(?:(?:episode|ep|épisode)\\s*)?\\d{1,4}$|^s\\d{1,3}e\\d{1,4}$|^e\\d{1,4}$")
+private val FREEBOX_ARTWORK_SEASON_FOLDER = Regex("(?iu)^(?:s\\d{1,3}|season\\s*\\d{1,3}|saison\\s*\\d{1,3})$")
+private val FREEBOX_ARTWORK_DATE_ONLY = Regex("(?iu)^(?:(?:19|20)\\d{2}[-_. ]\\d{1,2}[-_. ]\\d{1,2}|\\d{1,2}[-_. ]\\d{1,2}[-_. ](?:19|20)\\d{2}|(?:19|20)\\d{6})$")
+private val FREEBOX_ARTWORK_DATE_PREFIX = Regex("(?iu)^(?:(?:19|20)\\d{2}[-_. ]\\d{1,2}[-_. ]\\d{1,2}|\\d{1,2}[-_. ]\\d{1,2}[-_. ](?:19|20)\\d{2}|(?:19|20)\\d{6})[\\s._-]+")
+private val FREEBOX_ARTWORK_RECURRING_SUFFIX = Regex(
+    "(?iu)[\\s._-]+(?:(?:s\\d{1,3}\\s*e\\d{1,4}|\\d{1,2}\\s*x\\s*\\d{1,4})(?:.*)|(?:season|saison)\\s*\\d{1,3}[\\s._-]*(?:episode|ep|épisode|e)\\s*\\d{1,4}(?:.*)|(?:episode|ep|épisode)\\s*\\d{1,4}(?:.*)|(?:(?:19|20)\\d{2}[-_. ]\\d{1,2}[-_. ]\\d{1,2}|\\d{1,2}[-_. ]\\d{1,2}[-_. ](?:19|20)\\d{2}|(?:19|20)\\d{6})(?:.*))$"
+)
+private val FREEBOX_ARTWORK_GENERIC_FOLDER_KEYS = setOf(
+    "video", "videos", "film", "films", "movie", "movies", "serie", "series", "série", "séries",
+    "show", "shows", "recording", "recordings", "enregistrement", "enregistrements", "tv", "media", "freebox",
+)
 
 /** An open, seekable jCIFS file handle used to read Freebox files. */
 class FreeboxPlaybackFile internal constructor(
@@ -251,6 +262,8 @@ class FreeboxRepository @Inject constructor(
     private val videoMetadataCache = ConcurrentHashMap<String, FreeboxVideoMetadata>()
     private val homeVideoPresentations = ConcurrentHashMap<String, MetaPreview>()
     private val homeVideoPresentationFlows = ConcurrentHashMap<String, MutableStateFlow<MetaPreview?>>()
+    private val homeVideoPresentationsByPath = ConcurrentHashMap<String, MetaPreview>()
+    private val homeVideoPresentationPathFlows = ConcurrentHashMap<String, MutableStateFlow<MetaPreview?>>()
 
     internal fun registerPlaybackProxy(relativePath: String, closeAndAwait: () -> Unit): Closeable {
         val key = playbackProxyPathKey(relativePath)
@@ -268,8 +281,12 @@ class FreeboxRepository @Inject constructor(
 
     private fun closePlaybackProxiesAndAwait(relativePath: String) {
         val key = playbackProxyPathKey(relativePath)
+        val prefix = "$key/"
         val callbacks = synchronized(playbackProxyRegistryLock) {
-            playbackProxyClosersByPath[key]?.toList().orEmpty()
+            playbackProxyClosersByPath.asSequence()
+                .filter { (registeredPath, _) -> registeredPath == key || registeredPath.startsWith(prefix) }
+                .flatMap { (_, closers) -> closers.asSequence() }
+                .toList()
         }
         var firstFailure: Exception? = null
         callbacks.forEach { closeAndAwait ->
@@ -379,9 +396,9 @@ class FreeboxRepository @Inject constructor(
             val anyVideoNameKey = videoArtworkNameKey(path)
             val videoNameKey = anyVideoNameKey.takeIf { matchVideosByName }
             val old = if (matchVideosByName) {
-                anyVideoNameKey?.let(config.videoArtworkByName::get) ?: config.folderArtwork[path]
+                findVideoArtworkByName(config.videoArtworkByName, anyVideoNameKey) ?: config.folderArtwork[path]
             } else {
-                config.folderArtwork[path] ?: anyVideoNameKey?.let(config.videoArtworkByName::get)
+                config.folderArtwork[path] ?: findVideoArtworkByName(config.videoArtworkByName, anyVideoNameKey)
             }
                 ?: FreeboxFolderArtwork()
             val updatedArt = if (portrait) old.copy(portrait = normalizedUrl)
@@ -400,12 +417,14 @@ class FreeboxRepository @Inject constructor(
             val artwork: Map<String, FreeboxFolderArtwork>
             val videoArtworkByName: Map<String, FreeboxFolderArtwork>
             if (videoNameKey != null) {
-                // Keep weekly file art name-based, while preserving episode-specific path overrides.
+                // Keep recurring programme art under one stable key and retire old episode-specific keys.
                 artwork = config.folderArtwork
+                val legacyKeys = config.videoArtworkByName.keys
+                    .filter { normalizeFreeboxArtworkTitle(it) == videoNameKey }
                 videoArtworkByName = if (replacement.portrait == null && replacement.landscape == null) {
-                    config.videoArtworkByName - videoNameKey
+                    config.videoArtworkByName - legacyKeys.toSet()
                 } else {
-                    config.videoArtworkByName + (videoNameKey to replacement)
+                    (config.videoArtworkByName - legacyKeys.toSet()) + (videoNameKey to replacement)
                 }
             } else {
                 val isPathScopedVideoOverride = anyVideoNameKey != null && !matchVideosByName
@@ -430,54 +449,114 @@ class FreeboxRepository @Inject constructor(
 
     /** Delete a folder below a selected Freebox root, then remove its Home metadata. */
     suspend fun deleteHomeFolder(relativePath: String): List<String> = withContext(Dispatchers.IO) {
-        val path = normalizeRelativePath(relativePath)
-        val current = mutableState.value
-        val config = current.toStored()
-        require(config.selectedRoots.any { root ->
-            val normalizedRoot = normalizeRelativePath(root)
-            !path.equals(normalizedRoot, ignoreCase = true) && isSameOrDescendant(path, normalizedRoot)
-        }) { "La suppression est limitée aux dossiers affichés depuis l’accueil." }
-        require(config.address.isNotBlank()) { "Connectez-vous d’abord à la Freebox." }
+        homeRowsRefreshMutex.withLock {
+            val path = normalizeRelativePath(relativePath)
+            val current = mutableState.value
+            val config = current.toStored()
+            require(config.selectedRoots.any { root ->
+                val normalizedRoot = normalizeRelativePath(root)
+                !path.equals(normalizedRoot, ignoreCase = true) && isSameOrDescendant(path, normalizedRoot)
+            }) { "La suppression est limitée aux dossiers affichés depuis l’accueil." }
+            require(config.address.isNotBlank()) { "Connectez-vous d’abord à la Freebox." }
 
-        val target = SmbAddress.parse(config.address)
-        val safeParts = path.split('/')
-        val smbPath = listOf(target.share) +
-            target.path.split('\\').filter(String::isNotBlank) + safeParts
-        val smbUrl = "smb://${target.host}/" + smbPath.joinToString("/") { Uri.encode(it) }
-        ensureJcifsCryptoProvider()
-        val cifsContext = createPlaybackCifsContext(config)
-        val deletedVideoPaths = mutableListOf<String>()
-        try {
-            val folder = JcifsSmbFile(smbUrl, cifsContext)
-            require(folder.exists() && folder.isDirectory) { "Le dossier Freebox n’existe plus." }
-            deleteRemoteTree(folder, path, deletedVideoPaths)
-            if (folder.exists()) throw IOException("La Freebox n’a pas confirmé la suppression du dossier.")
-        } finally {
-            runCatching { cifsContext.close() }
-        }
+            val target = SmbAddress.parse(config.address)
+            val sharePath = listOf(target.path, path)
+                .filter(String::isNotBlank)
+                .joinToString("\\") { it.replace('/', '\\') }
+            val deletedVideoPaths = mutableListOf<String>()
+            var deletionFailure: Exception? = null
+            val client = SMBClient(
+                SmbConfig.builder()
+                    .withTimeout(SMB_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .withSoTimeout(SMB_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .build()
+            )
+            try {
+                val connection = client.connect(target.host)
+                try {
+                    val session = connection.authenticate(
+                        AuthenticationContext(config.username, config.password.toCharArray(), null)
+                    )
+                    try {
+                        val share = session.connectShare(target.share) as DiskShare
+                        try {
+                            require(share.folderExists(sharePath)) { "Le dossier Freebox n’existe plus." }
 
-        val selectedRoots = config.selectedRoots.filterNot { root ->
-            isSameOrDescendant(normalizeRelativePath(root), path)
-        }.toSet()
-        val hiddenHomePaths = config.hiddenHomePaths.filterNot { hidden ->
-            isSameOrDescendant(normalizeRelativePath(hidden), path)
-        }.toSet()
-        val folderArtwork = config.folderArtwork.filterKeys { artworkPath ->
-            !isSameOrDescendant(normalizeRelativePath(artworkPath), path)
+                            fun collectVideoPaths(folderSharePath: String, folderRelativePath: String) {
+                                share.list(folderSharePath).forEach { entry ->
+                                    val childName = entry.fileName.trimEnd('/', '\\')
+                                    if (childName.isBlank() || childName == "." || childName == "..") return@forEach
+                                    val childSharePath = listOf(folderSharePath, childName)
+                                        .filter(String::isNotBlank)
+                                        .joinToString("\\")
+                                    val childRelativePath = listOf(folderRelativePath, childName)
+                                        .filter(String::isNotBlank)
+                                        .joinToString("/")
+                                    val isDirectory = entry.fileAttributes and
+                                        FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value != 0L
+                                    if (isDirectory) {
+                                        collectVideoPaths(childSharePath, childRelativePath)
+                                    } else if (
+                                        childName.substringAfterLast('.', "").lowercase() in FREEBOX_VIDEO_EXTENSIONS
+                                    ) {
+                                        deletedVideoPaths += childRelativePath
+                                    }
+                                }
+                            }
+
+                            collectVideoPaths(sharePath, path)
+                            closePlaybackProxiesAndAwait(path)
+                            try {
+                                share.rmdir(sharePath, true)
+                            } catch (error: Exception) {
+                                deletionFailure = error
+                            }
+                        } finally {
+                            // Removal is verified below; stale logoff errors must not mask that result.
+                            runCatching { share.close() }
+                        }
+                    } finally {
+                        runCatching { session.close() }
+                    }
+                } finally {
+                    runCatching { connection.close() }
+                }
+            } finally {
+                runCatching { client.close() }
+            }
+            val deletionConfirmed = try {
+                !homeVideoExistsOnFreebox(config, target, sharePath)
+            } catch (error: Exception) {
+                deletionFailure?.takeIf { it !== error }?.let(error::addSuppressed)
+                throw IOException("Impossible de vérifier la suppression sur la Freebox.", error)
+            }
+            if (!deletionConfirmed) {
+                throw IOException("La Freebox n’a pas confirmé la suppression du dossier.", deletionFailure)
+            }
+
+            val selectedRoots = config.selectedRoots.filterNot { root ->
+                isSameOrDescendant(normalizeRelativePath(root), path)
+            }.toSet()
+            val hiddenHomePaths = config.hiddenHomePaths.filterNot { hidden ->
+                isSameOrDescendant(normalizeRelativePath(hidden), path)
+            }.toSet()
+            val folderArtwork = config.folderArtwork.filterKeys { artworkPath ->
+                !isSameOrDescendant(normalizeRelativePath(artworkPath), path)
+            }
+            val updated = config.copy(
+                selectedRoots = selectedRoots,
+                hiddenHomePaths = hiddenHomePaths,
+                folderArtwork = folderArtwork,
+            )
+            save(updated)
+            mutableState.value = current.copy(
+                selectedRoots = selectedRoots,
+                hiddenHomePaths = hiddenHomePaths,
+                folderArtwork = folderArtwork,
+            )
+            mutableHomeRows.value = selectedRows(updated)
+            deletedVideoPaths
         }
-        val updated = config.copy(
-            selectedRoots = selectedRoots,
-            hiddenHomePaths = hiddenHomePaths,
-            folderArtwork = folderArtwork,
-        )
-        save(updated)
-        mutableState.value = current.copy(
-            selectedRoots = selectedRoots,
-            hiddenHomePaths = hiddenHomePaths,
-            folderArtwork = folderArtwork,
-        )
-        mutableHomeRows.value = selectedRows(updated)
-        deletedVideoPaths
     }
 
     /** Delete one video below a Freebox root selected on Home; never accepts folders or other files. */
@@ -499,6 +578,8 @@ class FreeboxRepository @Inject constructor(
             val sharePath = listOf(target.path, path)
                 .filter(String::isNotBlank)
                 .joinToString("\\") { it.replace('/', '\\') }
+            val deletionFailureMessage =
+                "La vidéo n'a pas pu être supprimée de la Freebox. Elle est peut-être occupée ; réessayez plus tard."
             var deletionFailure: Exception? = null
             try {
                 SMBClient(
@@ -527,10 +608,13 @@ class FreeboxRepository @Inject constructor(
             var deletionConfirmed = try {
                 confirmHomeVideoRemoved(config, target, sharePath)
             } catch (error: Exception) {
-                deletionFailure?.let(error::addSuppressed)
-                throw IOException("Impossible de vérifier la suppression sur la Freebox.", error)
+                deletionFailure?.takeIf { it !== error }?.let(error::addSuppressed)
+                deletionFailure = error
+                false
             }
             if (!deletionConfirmed) {
+                // A positive existence check means the first delete was not enough; try the
+                // alternate SMB client, then require a fresh check that the file is absent.
                 try {
                     deleteHomeVideoViaJcifs(config, target, path)
                 } catch (error: Exception) {
@@ -541,12 +625,12 @@ class FreeboxRepository @Inject constructor(
                 deletionConfirmed = try {
                     confirmHomeVideoRemoved(config, target, sharePath)
                 } catch (error: Exception) {
-                    deletionFailure?.let(error::addSuppressed)
+                    deletionFailure?.takeIf { it !== error }?.let(error::addSuppressed)
                     throw IOException("Impossible de vérifier la suppression sur la Freebox.", error)
                 }
             }
             if (!deletionConfirmed) {
-                throw IOException("La vidéo est toujours présente sur la Freebox.", deletionFailure)
+                throw IOException(deletionFailureMessage, deletionFailure)
             }
 
             mutableHomeRows.value = selectedRows(config)
@@ -558,23 +642,35 @@ class FreeboxRepository @Inject constructor(
         config: StoredFreebox,
         target: SmbAddress,
         sharePath: String,
-    ): Boolean = SMBClient(
-        SmbConfig.builder()
-            .withTimeout(SMB_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .withSoTimeout(SMB_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .build()
-    ).use { client ->
-        client.connect(target.host).use { connection ->
-            val session = connection.authenticate(
-                AuthenticationContext(config.username, config.password.toCharArray(), null)
-            )
+    ): Boolean {
+        val client = SMBClient(
+            SmbConfig.builder()
+                .withTimeout(SMB_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .withSoTimeout(SMB_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .build()
+        )
+        try {
+            val connection = client.connect(target.host)
             try {
-                (session.connectShare(target.share) as DiskShare).use { share ->
-                    share.fileExists(sharePath) || share.folderExists(sharePath)
+                val session = connection.authenticate(
+                    AuthenticationContext(config.username, config.password.toCharArray(), null)
+                )
+                try {
+                    val share = session.connectShare(target.share) as DiskShare
+                    try {
+                        return share.fileExists(sharePath) || share.folderExists(sharePath)
+                    } finally {
+                        // Preserve the existence result if teardown reports an already-closed session.
+                        runCatching { share.close() }
+                    }
+                } finally {
+                    runCatching { session.close() }
                 }
             } finally {
-                runCatching { session.close() }
+                runCatching { connection.close() }
             }
+        } finally {
+            runCatching { client.close() }
         }
     }
 
@@ -735,7 +831,7 @@ class FreeboxRepository @Inject constructor(
         val path = normalizeRelativePath(relativePath)
         val current = mutableState.value
         val pathArtwork = current.folderArtwork[path]
-        val nameArtwork = videoArtworkNameKey(path)?.let(current.videoArtworkByName::get)
+        val nameArtwork = findVideoArtworkByName(current.videoArtworkByName, videoArtworkNameKey(path))
         if (preferPathScopedVideoArtwork) pathArtwork ?: nameArtwork else nameArtwork ?: pathArtwork
     }.getOrNull()
 
@@ -755,13 +851,22 @@ class FreeboxRepository @Inject constructor(
     }
 
     fun rememberHomeVideoPresentation(item: MetaPreview) {
-        if (!item.id.startsWith("freebox:", ignoreCase = true) &&
-            !item.id.startsWith(FREEBOX_FOLDER_ID_PREFIX, ignoreCase = true)
-        ) return
+        val isFolderPresentation = item.id.startsWith(FREEBOX_FOLDER_ID_PREFIX, ignoreCase = true)
+        if (!item.id.startsWith("freebox:", ignoreCase = true) && !isFolderPresentation) return
         homeVideoPresentations[item.id] = item
         homeVideoPresentationFlows[item.id]?.value = item
         homeVideoPresentationFlows.forEach { (requestedId, flow) ->
             if (item.matchesHomeVideoContentId(requestedId)) flow.value = item
+        }
+        if (!isFolderPresentation) {
+            freeboxPathFromContentId(item.id)?.let { path ->
+                homeVideoPresentationsByPath[path] = item
+                homeVideoPresentationPathFlows[path]?.value = item
+                if (homeVideoPresentationsByPath.size > 96) {
+                    homeVideoPresentationsByPath.keys.firstOrNull { it != path }
+                        ?.let(homeVideoPresentationsByPath::remove)
+                }
+            }
         }
         if (homeVideoPresentations.size > 96) {
             homeVideoPresentations.keys.firstOrNull { it != item.id }?.let(homeVideoPresentations::remove)
@@ -776,6 +881,13 @@ class FreeboxRepository @Inject constructor(
         homeVideoPresentationFlows.computeIfAbsent(contentId) {
             MutableStateFlow(homeVideoPresentation(contentId))
         }.asStateFlow()
+
+    fun observeHomeVideoPresentationForPath(relativePath: String): StateFlow<MetaPreview?> {
+        val path = normalizeRelativePath(relativePath)
+        return homeVideoPresentationPathFlows.computeIfAbsent(path) {
+            MutableStateFlow(homeVideoPresentationsByPath[path])
+        }.asStateFlow()
+    }
 
     private fun MetaPreview.matchesHomeVideoContentId(contentId: String): Boolean {
         if (id == contentId) return true
@@ -799,22 +911,46 @@ class FreeboxRepository @Inject constructor(
     ) = withContext(Dispatchers.IO) {
         // Use the same jCIFS random-access path as Freebox playback. Some Freebox SMB shares
         // invalidate SMBJ file handles between reads, which breaks document copies mid-file.
-        openPlaybackSession(relativePath).use { session ->
-            session.openFile().use { source ->
-                FileOutputStream(destination).buffered().use { output ->
-                    val buffer = ByteArray(128 * 1024)
-                    val totalBytes = source.length
-                    var copiedBytes = 0L
-                    onProgress(0L, totalBytes)
-                    while (copiedBytes < totalBytes) {
-                        val requested = minOf(buffer.size.toLong(), totalBytes - copiedBytes).toInt()
-                        val count = source.read(buffer, 0, requested)
-                        if (count <= 0) throw IOException("Le fichier Freebox a été interrompu pendant sa copie.")
-                        output.write(buffer, 0, count)
-                        copiedBytes += count
-                        onProgress(copiedBytes, totalBytes)
-                    }
+        try {
+            openPlaybackSession(relativePath).use { session ->
+                copyBrowserPlaybackFileToCache(session.openFile(), destination, onProgress)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (jcifsError: Exception) {
+            // The browser listing uses SMBJ paths, and some names fail to resolve through the
+            // equivalent jCIFS URL. Retry the copy through the same SMBJ path as image files.
+            destination.delete()
+            try {
+                openPlaybackFile(relativePath).use { source ->
+                    copyBrowserPlaybackFileToCache(source, destination, onProgress)
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (smbjError: Exception) {
+                jcifsError.addSuppressed(smbjError)
+                throw jcifsError
+            }
+        }
+    }
+
+    private fun copyBrowserPlaybackFileToCache(
+        source: FreeboxPlaybackFile,
+        destination: File,
+        onProgress: (copiedBytes: Long, totalBytes: Long) -> Unit,
+    ) = source.use { playbackFile ->
+        FileOutputStream(destination).buffered().use { output ->
+            val buffer = ByteArray(128 * 1024)
+            val totalBytes = playbackFile.length
+            var copiedBytes = 0L
+            onProgress(0L, totalBytes)
+            while (copiedBytes < totalBytes) {
+                val requested = minOf(buffer.size.toLong(), totalBytes - copiedBytes).toInt()
+                val count = playbackFile.read(buffer, 0, requested)
+                if (count <= 0) throw IOException("Le fichier Freebox a été interrompu pendant sa copie.")
+                output.write(buffer, 0, count)
+                copiedBytes += count
+                onProgress(copiedBytes, totalBytes)
             }
         }
     }
@@ -1099,40 +1235,39 @@ class FreeboxRepository @Inject constructor(
         val config = mutableState.value.toStored()
         require(config.address.isNotBlank()) { "Connectez-vous d’abord à la Freebox." }
         val target = SmbAddress.parse(config.address)
-        return SMBClient(
+        val client = SMBClient(
             SmbConfig.builder()
                 .withTimeout(SMB_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .withSoTimeout(SMB_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .build()
-        ).use { client ->
-            client.connect(target.host).use { connection ->
+        )
+        try {
+            val connection = client.connect(target.host)
+            try {
                 val session = connection.authenticate(
-                    AuthenticationContext(config.username, config.password.toCharArray(), null)
+                    AuthenticationContext(config.username, config.password.toCharArray(), null),
                 )
                 try {
-                    (session.connectShare(target.share) as DiskShare).use { share -> block(share, target) }
+                    val share = session.connectShare(target.share) as DiskShare
+                    try {
+                        return block(share, target)
+                    } finally {
+                        // SMB teardown can report a stale logoff even after the transfer completed.
+                        runCatching { share.close() }
+                    }
                 } finally {
                     runCatching { session.close() }
                 }
+            } finally {
+                runCatching { connection.close() }
             }
+        } finally {
+            runCatching { client.close() }
         }
     }
 
     private fun browserSharePath(target: SmbAddress, relativePath: String): String =
         listOf(target.path, relativePath.replace('/', '\\')).filter(String::isNotBlank).joinToString("\\")
-
-    private fun deleteRemoteTree(file: JcifsSmbFile, relativePath: String, deletedVideos: MutableList<String>) {
-        if (file.isDirectory) {
-            file.listFiles().orEmpty().forEach { child ->
-                val childName = child.name.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
-                if (childName.isBlank() || childName == "." || childName == "..") return@forEach
-                deleteRemoteTree(child, "$relativePath/$childName", deletedVideos)
-            }
-        } else if (file.name.substringAfterLast('.', "").lowercase() in FREEBOX_VIDEO_EXTENSIONS) {
-            deletedVideos += relativePath
-        }
-        file.delete()
-    }
 
     private fun selectedRows(
         config: StoredFreebox,
@@ -1168,7 +1303,7 @@ class FreeboxRepository @Inject constructor(
                 rawType = type.toApiString(),
                 items = entries.map { entry ->
                     val isFolder = entry.isDirectory
-                    val artwork = videoArtworkNameKey(entry.path)?.let(config.videoArtworkByName::get)
+                    val artwork = findVideoArtworkByName(config.videoArtworkByName, videoArtworkNameKey(entry.path))
                         ?: config.folderArtwork[normalizeRelativePath(entry.path)]
                     MetaPreview(
                         id = if (isFolder) "$FREEBOX_FOLDER_ID_PREFIX${entry.path}" else "freebox:${entry.path}",
@@ -1234,11 +1369,61 @@ class FreeboxRepository @Inject constructor(
     }
 
     private fun videoArtworkNameKey(rawPath: String): String? {
-        val filename = rawPath.replace('\\', '/').substringAfterLast('/')
+        val pathParts = rawPath.replace('\\', '/').split('/').filter(String::isNotBlank)
+        val filename = pathParts.lastOrNull() ?: return null
         val extension = filename.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
         if (extension !in FREEBOX_VIDEO_EXTENSIONS) return null
-        val title = filename.substringBeforeLast('.').trim().replace(Regex("\\s+"), " ")
-        return title.takeIf(String::isNotBlank)?.lowercase(java.util.Locale.ROOT)
+        val title = normalizeFreeboxArtworkTitle(filename.substringBeforeLast('.'))
+        if (title != null && !FREEBOX_ARTWORK_EPISODE_ONLY_TITLE.matches(title)) return title
+
+        for (folder in pathParts.dropLast(1).asReversed()) {
+            val folderTitle = normalizeFreeboxArtworkTitle(folder) ?: continue
+            if (folderTitle in FREEBOX_ARTWORK_GENERIC_FOLDER_KEYS ||
+                FREEBOX_ARTWORK_EPISODE_ONLY_TITLE.matches(folderTitle) ||
+                FREEBOX_ARTWORK_SEASON_FOLDER.matches(folder.trim()) ||
+                FREEBOX_ARTWORK_DATE_ONLY.matches(folder.trim())
+            ) continue
+            return folderTitle
+        }
+        return null
+    }
+
+    private fun normalizeFreeboxArtworkTitle(rawTitle: String): String? {
+        var title = rawTitle.trim().replace(Regex("\\s+"), " ")
+        if (title.isBlank()) return null
+        title = FREEBOX_ARTWORK_DATE_PREFIX.replaceFirst(title, "").trim()
+
+        while (true) {
+            val before = title
+            val suffix = FREEBOX_ARTWORK_RECURRING_SUFFIX.find(title)
+            if (suffix != null) title = title.substring(0, suffix.range.first)
+            title = title.trim().trimEnd(' ', '-', '_', '.')
+            if (title == before) break
+        }
+
+        return title
+            .replace(Regex("[\\s._-]+"), " ")
+            .trim()
+            .lowercase(java.util.Locale.ROOT)
+            .takeIf(String::isNotBlank)
+    }
+
+    private fun findVideoArtworkByName(
+        artworkByName: Map<String, FreeboxFolderArtwork>,
+        key: String?,
+    ): FreeboxFolderArtwork? {
+        if (key == null) return null
+        val matches = artworkByName.entries.filter { normalizeFreeboxArtworkTitle(it.key) == key }
+        if (matches.isEmpty()) return null
+        val exact = artworkByName[key]
+        val fallback = matches.asReversed()
+        return FreeboxFolderArtwork(
+            portrait = exact?.portrait ?: fallback.firstNotNullOfOrNull { it.value.portrait },
+            landscape = exact?.landscape ?: fallback.firstNotNullOfOrNull { it.value.landscape },
+            tmdbId = exact?.tmdbId ?: fallback.firstNotNullOfOrNull { it.value.tmdbId },
+            tmdbContentType = exact?.tmdbContentType
+                ?: fallback.firstNotNullOfOrNull { it.value.tmdbContentType },
+        )
     }
 
     private fun isSameOrDescendant(path: String, parent: String): Boolean =

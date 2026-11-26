@@ -233,7 +233,6 @@
   <string name="detail_tab_trailer">Τρέιλερ</string>
   <string name="detail_more_like_this_powered_by_tmdb">Με την υποστήριξη του TMDB</string>
   <string name="detail_more_like_this_powered_by_trakt">Με την υποστήριξη του Trakt</string>
-  <string name="detail_more_like_this_powered_by_simkl">Με την υποστήριξη του Simkl</string>
   <string name="detail_comments_title">Σχόλια</string>
   <string name="detail_comments_subtitle">Κριτικές από το Trakt</string>
   <string name="detail_comments_subtitle_episode">Κριτικές από το Trakt για S%1$dE%2$d</string>
@@ -416,8 +415,6 @@
   <string name="licenses_attributions_tmdb_body">Το JojoTV χρησιμοποιεί το API του TMDB για μεταδεδομένα ταινιών και σειρών, εικόνες, τρέιλερ, ηθοποιούς, λεπτομέρειες παραγωγής, συλλογές και προτάσεις. Αυτό το προϊόν χρησιμοποιεί το API του TMDB αλλά δεν υποστηρίζεται ούτε πιστοποιείται από το TMDB.</string>
   <string name="licenses_attributions_trakt_title">Trakt</string>
   <string name="licenses_attributions_trakt_body">Το JojoTV συνδέεται με το Trakt για ταυτοποίηση λογαριασμού, ιστορικό παρακολούθησης, συγχρονισμό προόδου, δεδομένα βιβλιοθήκης, βαθμολογίες, λίστες και σχόλια. Το JojoTV δεν συνδέεται ούτε υποστηρίζεται από το Trakt.</string>
-  <string name="licenses_attributions_simkl_title">Simkl</string>
-  <string name="licenses_attributions_simkl_body">Το JojoTV συνδέεται με το Simkl για ταυτοποίηση λογαριασμού, λίστες παρακολούθησης, ιστορικό προβολής, πρόοδο αναπαραγωγής και scrobbling. Τα δεδομένα παρακολούθησης ταινιών, σειρών και anime παρέχονται από το Simkl. Το JojoTV δεν συνδέεται ούτε υποστηρίζεται επίσημα από το Simkl.</string>
   <string name="licenses_attributions_mdblist_title">MDBList</string>
   <string name="licenses_attributions_mdblist_body">Το JojoTV χρησιμοποιεί το MDBList για βαθμολογίες και δεδομένα εξωτερικών παρόχων βαθμολογίας. Το JojoTV δεν συνδέεται ούτε υποστηρίζεται από το MDBList.</string>
   <string name="licenses_attributions_introdb_title">IntroDB</string>
@@ -1175,7 +1172,7 @@
   <string name="trakt_code_expires">Ο κωδικός λήγει σε %1$s</string>
   <string name="trakt_token_refreshes">Το token πρόσβασης Trakt ανανεώνεται σε %1$s</string>
   <string name="trakt_login_instruction">Πατήστε Σύνδεση για να ξεκινήσει η πιστοποίηση Trakt. Θα εμφανιστεί QR code εδώ.</string>
-  <string name="trakt_missing_credentials">Λείπουν TRAKT_CLIENT_ID / TRAKT_CLIENT_SECRET στο local.properties.</string>
+  <string name="trakt_missing_credentials">Λείπουν TRAKT_CLIENT_ID στο local.properties.</string>
   <string name="trakt_watch_progress_title">Πρόοδος παρακολούθησης</string>
   <string name="trakt_watch_progress_subtitle">Επιλέξτε ποια πηγή θα τροφοδοτεί την επανάληψη και τη Συνέχεια παρακολούθησης</string>
   <string name="trakt_watch_progress_dialog_title">Πρόοδος παρακολούθησης</string>
@@ -1214,7 +1211,6 @@
   <string name="trakt_more_like_this_source_dialog_subtitle">Επιλέξτε την πηγή προτάσεων στις σελίδες λεπτομερειών.</string>
   <string name="trakt_more_like_this_source_trakt">Trakt</string>
   <string name="trakt_more_like_this_source_tmdb">TMDB</string>
-  <string name="trakt_more_like_this_source_simkl">Simkl</string>
   <string name="trakt_cached_label">Αποθηκευμένο</string>
   <string name="trakt_stat_movies">Ταινίες</string>
   <string name="trakt_stat_shows">Σειρές</string>
@@ -1234,7 +1230,7 @@
   <string name="trakt_hide_unaired">Απόκρυψη επεισοδίων που δεν έχουν προβληθεί</string>
   <string name="trakt_all_history">Όλο το ιστορικό</string>
   <string name="trakt_days_format">%1$d ημέρες</string>
-  <!-- Tracking (Trakt / Simkl) -->
+  <!-- Tracking -->
   <string name="settings_tracking_title">Παρακολούθηση</string>
   <string name="settings_tracking_description">Συνδέστε υπηρεσίες παρακολούθησης και επιλέξτε ποια θα τροφοδοτεί τη Βιβλιοθήκη και τη Συνέχεια παρακολούθησης.</string>
   <string name="tracking_accounts_title">Λογαριασμοί</string>
@@ -1243,14 +1239,6 @@
   <string name="tracking_sources_subtitle">Επιλέξτε από πού διαβάζει το JojoTV τη βιβλιοθήκη και την πρόοδο παρακολούθησης. Το scrobbling γίνεται σε κάθε συνδεδεμένη υπηρεσία.</string>
   <string name="tracking_trakt_features_title">Δυνατότητες Trakt</string>
   <string name="tracking_trakt_features_subtitle">Ιστορικό, κριτικές και προτάσεις ειδικά για το Trakt</string>
-  <string name="tracking_simkl_features_title">Δυνατότητες Simkl</string>
-  <string name="tracking_simkl_features_subtitle">Ρυθμίσεις ειδικά για το Simkl</string>
-  <string name="tracking_simkl_anime_id_title">Προτίμηση αναγνωριστικού anime</string>
-  <string name="tracking_simkl_anime_id_subtitle">Ελέγχει πώς αναγνωρίζονται οι σειρές anime. Η επιλογή MAL ή Kitsu δίνει σε κάθε σεζόν δική της καταχώρηση αντί να ομαδοποιείται κάτω από ένα ID IMDb.</string>
-  <string name="tracking_simkl_anime_id_imdb">Προτίμηση IMDb</string>
-  <string name="tracking_simkl_anime_id_mal">Προτίμηση MyAnimeList</string>
-  <string name="tracking_simkl_anime_id_kitsu">Προτίμηση Kitsu</string>
-  <string name="tracking_simkl_anime_id_tvdb">Προτίμηση TVDB</string>
   <string name="tracking_status_connected">Συνδεδεμένο</string>
   <string name="tracking_status_disconnected">Δεν είναι συνδεδεμένο</string>
   <string name="tracking_status_waiting">Αναμονή έγκρισης</string>
@@ -1261,53 +1249,14 @@
   <string name="tracking_library_source_dialog_subtitle">Επιλέξτε την υπηρεσία από την οποία διαβάζει το JojoTV τη Βιβλιοθήκη. Το scrobbling αναπαραγωγής γίνεται σε κάθε συνδεδεμένη υπηρεσία.</string>
   <string name="tracking_trakt_progress_required">Διαθέσιμο όταν το Trakt είναι η πηγή Προόδου παρακολούθησης</string>
   <string name="trakt_name">Trakt</string>
-  <string name="simkl_name">Simkl</string>
-  <!-- SimklScreen -->
-  <string name="simkl_account_title">Λογαριασμός Simkl</string>
-  <string name="simkl_description">Συνδέστε το Simkl για συγχρονισμό λιστών, ιστορικού προβολής, προόδου αναπαραγωγής και scrobbles.</string>
-  <string name="simkl_connect">Σύνδεση με Simkl</string>
-  <string name="simkl_disconnect">Αποσύνδεση από το Simkl</string>
-  <string name="simkl_disconnect_title">Αποσύνδεση από το Simkl;</string>
-  <string name="simkl_disconnect_subtitle">Αυτό αφαιρεί τον λογαριασμό Simkl και τα αποθηκευμένα δεδομένα Simkl από αυτό το προφίλ.</string>
-  <string name="simkl_connected_as">Συνδεδεμένος ως %1$s</string>
-  <string name="simkl_user_fallback">Χρήστης Simkl</string>
-  <string name="simkl_awaiting_instruction">Ανοίξτε τη σελίδα επαλήθευσης του Simkl και εισάγετε αυτόν τον κωδικό.</string>
-  <string name="simkl_code_expires">Ο κωδικός λήγει σε %1$s</string>
-  <string name="simkl_sync_now">Συγχρονισμός τώρα</string>
-  <string name="simkl_visit">Επίσκεψη στο Simkl</string>
-  <string name="simkl_sync_info_action">Πώς λειτουργεί ο συγχρονισμός</string>
-  <string name="simkl_sync_info_title">Πώς λειτουργεί ο συγχρονισμός Simkl</string>
-  <string name="simkl_sync_info_description">Το JojoTV ελέγχει αυτόματα το Simkl το πολύ μία φορά κάθε %1$d λεπτά. Οι αλλαγές που γίνονται μέσω άλλης εφαρμογής ή του ιστότοπου Simkl μπορεί να χρειαστούν τόσο χρόνο για να εμφανιστούν.</string>
-  <string name="simkl_sync_info_activity">Κάθε ανανέωση ελέγχει πρώτα αν το Simkl αναφέρει αλλαγές και κατεβάζει μόνο τις ενημερώσεις. Αυτό ακολουθεί τους κανόνες API του Simkl, μειώνει την περιττή χρήση δεδομένων και βοηθά στη σταθερότητα της υπηρεσίας.</string>
-  <string name="simkl_sync_info_manual">Οι αλλαγές που γίνονται στο JojoTV αποστέλλονται αμέσως στο Simkl. Χρησιμοποιήστε το Συγχρονισμός τώρα όποτε θέλετε το JojoTV να ελέγξει νωρίτερα για απομακρυσμένες αλλαγές.</string>
-  <string name="simkl_sync_info_library_statuses">Οι σειρές που τοποθετούνται στις λίστες On Hold ή Dropped του Simkl κρύβονται από τη Συνέχεια παρακολούθησης. Παραμένουν κρυφές όσο βρίσκονται σε οποιαδήποτε από τις δύο λίστες.</string>
-  <string name="simkl_sync_info_docs">Διαβάστε τον οδηγό συγχρονισμού Simkl</string>
   <string name="error_open_browser_failed">Αποτυχία ανοίγματος προγράμματος περιήγησης</string>
-  <string name="simkl_missing_credentials">Λείπει το SIMKL_CLIENT_ID</string>
-  <string name="simkl_status_enter_code">Εισάγετε τον κωδικό στο Simkl για ολοκλήρωση σύνδεσης</string>
-  <string name="simkl_status_waiting">Αναμονή έγκρισης από το Simkl…</string>
-  <string name="simkl_status_connected">Συνδεδεμένο με το Simkl</string>
-  <string name="simkl_status_disconnected">Αποσυνδέθηκε από το Simkl</string>
-  <string name="simkl_status_syncing">Συγχρονισμός με το Simkl…</string>
-  <string name="simkl_status_synced">Ο συγχρονισμός Simkl ολοκληρώθηκε</string>
-  <string name="simkl_watch_progress_selected">Το Simkl επιλέχθηκε για τη Συνέχεια παρακολούθησης</string>
-  <string name="simkl_library_source_selected">Το Simkl επιλέχθηκε για τη Βιβλιοθήκη</string>
-  <string name="simkl_error_code_expired">Ο κωδικός Simkl έληξε. Ξεκινήστε ξανά.</string>
-  <string name="simkl_error_authorization_revoked">Η εξουσιοδότηση Simkl ανακλήθηκε. Συνδεθείτε ξανά.</string>
-  <string name="simkl_error_network">Δεν ήταν δυνατή η πρόσβαση στο Simkl. Δοκιμάστε ξανά.</string>
-  <!-- Simkl removal + library fallbacks -->
+  <!-- Tracking removal + library fallbacks -->
   <string name="tracking_removal_title">Αφαίρεση από το %1$s;</string>
   <string name="tracking_removal_message">Η αφαίρεση του «%1$s» από το %2$s θα διαγράψει επίσης το %3$s εκεί. Αυτό δεν μπορεί να αναιρεθεί.</string>
   <string name="tracking_removal_impact_history">ιστορικό προβολής</string>
   <string name="tracking_removal_impact_rating">βαθμολογία</string>
   <string name="tracking_removal_impact_history_rating">ιστορικό προβολής και βαθμολογία</string>
   <string name="action_remove_anyway">Αφαίρεση ούτως ή άλλως</string>
-  <string name="cd_simkl_qr">QR ενεργοποίησης Simkl</string>
-  <string name="cd_simkl_logo">Λογότυπο Simkl</string>
-  <string name="library_empty_simkl_title">Δεν υπάρχουν %1$s σε αυτή την κατάσταση</string>
-  <string name="library_empty_simkl_subtitle">Χρησιμοποιήστε το + στις λεπτομέρειες για προσθήκη στοιχείων σε κατάσταση Simkl</string>
-  <string name="library_empty_simkl_not_auth_title">Το Simkl δεν είναι συνδεδεμένο</string>
-  <string name="library_empty_simkl_not_auth_subtitle">Συνδέστε τον λογαριασμό Simkl στις Ρυθμίσεις για να δείτε τη βιβλιοθήκη Simkl</string>
   <!-- DebugSettingsScreen -->
   <string name="debug_title">Αποσφαλμάτωση</string>
   <string name="debug_subtitle">Εργαλεία προγραμματιστή και σημαίες χαρακτηριστικών (μόνο σε debug builds)</string>

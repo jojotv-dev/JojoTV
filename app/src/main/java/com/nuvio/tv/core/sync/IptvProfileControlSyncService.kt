@@ -11,8 +11,13 @@ import com.nuvio.tv.domain.model.isIptvVodProgress
 import com.nuvio.tv.domain.model.isIptvVodProgressKey
 import com.nuvio.tv.reshaped.livetv.LiveTvRepository
 import com.nuvio.tv.reshaped.livetv.LiveTvSource
+import com.nuvio.tv.reshaped.livetv.LiveTvSourceType
+import com.nuvio.tv.reshaped.livetv.LiveTvStalker
 import com.nuvio.tv.reshaped.livetv.LiveTvStorage
 import com.nuvio.tv.reshaped.livetv.LiveTvVodCache
+import com.nuvio.tv.reshaped.livetv.LiveTvVodCategory
+import com.nuvio.tv.reshaped.livetv.LiveTvVodItem
+import com.nuvio.tv.reshaped.livetv.LiveTvXtream
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -39,6 +44,7 @@ private const val IPTV_PROFILE_CONTROL_TAG = "IptvProfileControlSync"
 private const val IPTV_CONFIG_DEBOUNCE_MS = 700L
 private const val IPTV_CATALOG_DEBOUNCE_MS = 1_000L
 private const val IPTV_PROGRESS_DEBOUNCE_MS = 1_000L
+private const val IPTV_SERIES_CATEGORY_RETRY_COOLDOWN_MS = 15L * 60L * 1_000L
 private const val IPTV_UNGROUPED_KEY = "\uE000"
 private const val IPTV_CATALOG_LIMIT = 50_000
 private const val IPTV_MAX_CATALOG_BYTES = 6_500_000
@@ -84,6 +90,10 @@ class IptvProfileControlSyncService @Inject constructor(
     )
     private val progressSyncPreferences = context.applicationContext.getSharedPreferences(
         "nuvio_iptv_progress_sync",
+        Context.MODE_PRIVATE,
+    )
+    private val categoryImportPreferences = context.applicationContext.getSharedPreferences(
+        "nuvio_iptv_category_import",
         Context.MODE_PRIVATE,
     )
     private val syncMutex = Mutex()
@@ -632,7 +642,14 @@ class IptvProfileControlSyncService @Inject constructor(
             store.saveHiddenGroups(stringSet(config, "hiddenGroups").mapTo(LinkedHashSet(), ::fromControlGroupKey))
         }
         if ("hiddenVodCategoryKeys" in fields && config.optJSONArray("hiddenVodCategoryKeys") != null) {
-            store.saveHiddenVodCategoryKeys(stringSet(config, "hiddenVodCategoryKeys"))
+            val remoteKeys = stringSet(config, "hiddenVodCategoryKeys")
+            val normalizedKeys = store.remapVodCategoryKeys(remoteKeys)
+            store.saveHiddenVodCategoryKeys(normalizedKeys)
+            if (normalizedKeys != remoteKeys) {
+                remoteAppliedConfigValues.remove(remoteAppliedKey(profileId, "hiddenVodCategoryKeys"))
+                markConfigFieldPending(profileId, "hiddenVodCategoryKeys")
+                scheduleConfigSyncRetry(profileId)
+            }
         }
         if ("hiddenChannelKeys" in fields && config.optJSONArray("hiddenChannelKeys") != null) {
             store.saveHiddenChannelKeys(stringSet(config, "hiddenChannelKeys").mapNotNull(String::toLongOrNull).toSet())
@@ -797,6 +814,80 @@ class IptvProfileControlSyncService @Inject constructor(
         }
     }
 
+    private fun scheduleSeriesCategoryRetry(profileId: Int) {
+        scope.launch {
+            delay(IPTV_SERIES_CATEGORY_RETRY_COOLDOWN_MS)
+            if (profileId == profileManager.activeProfileId.value && authManager.isAuthenticated) {
+                requestCatalogSync(profileId)
+            }
+        }
+    }
+
+    /** Import missing Series category lists before publishing the profile catalog. */
+    private suspend fun importMissingSeriesCategories(profileId: Int) {
+        val sources = LiveTvStorage(context, profileId).synchronizedSources()
+        val now = System.currentTimeMillis()
+        sources.forEach { source ->
+            if (source.type == LiveTvSourceType.M3u) return@forEach
+
+            val cached = LiveTvVodCache.readCategories(context, source.id, "series")
+            val complete = LiveTvVodCache.isCategoryListComplete(context, source, "series")
+            if (cached.isNotEmpty() && complete) return@forEach
+
+            val attemptKey = "series_categories_${source.id}"
+            val lastAttempt = categoryImportPreferences.getLong(attemptKey, 0L)
+            if (lastAttempt > 0L && now - lastAttempt < IPTV_SERIES_CATEGORY_RETRY_COOLDOWN_MS) {
+                return@forEach
+            }
+            categoryImportPreferences.edit().putLong(attemptKey, now).apply()
+
+            try {
+                val received = when (source.type) {
+                    LiveTvSourceType.Xtream -> LiveTvXtream.vodCategories(source, "series")
+                    LiveTvSourceType.Stalker -> LiveTvStalker.vodCategories(source, "series")
+                    LiveTvSourceType.M3u -> emptyList()
+                }
+                val categories = received.asSequence()
+                    .mapNotNull { category ->
+                        val id = category.id.trim()
+                        val name = category.name.trim()
+                        if (id.isEmpty() || name.isEmpty()) null
+                        else category.copy(id = id, sourceId = source.id, name = name)
+                    }
+                    .distinctBy(LiveTvVodCategory::id)
+                    .toList()
+
+                if (categories.isEmpty()) {
+                    Log.w(
+                        IPTV_PROFILE_CONTROL_TAG,
+                        "No Series categories imported for provider type=${source.type}; retry is delayed",
+                    )
+                    scheduleSeriesCategoryRetry(profileId)
+                    return@forEach
+                }
+
+                LiveTvVodCache.writeCategoriesAndMarkComplete(context, source, "series", categories)
+                val storedIds = LiveTvVodCache.readCategories(context, source.id, "series")
+                    .mapTo(HashSet(), LiveTvVodCategory::id)
+                val importedCount = categories.count { it.id in storedIds }
+                if (importedCount == categories.size) {
+                    Log.i(IPTV_PROFILE_CONTROL_TAG, "Imported $importedCount Series categories for provider type=${source.type}")
+                } else {
+                    Log.w(IPTV_PROFILE_CONTROL_TAG, "Could not verify the Series category cache for provider type=${source.type}")
+                    scheduleSeriesCategoryRetry(profileId)
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Exception) {
+                Log.w(
+                    IPTV_PROFILE_CONTROL_TAG,
+                    "Series category import failed for provider type=${source.type} (${failure.javaClass.simpleName})",
+                )
+                scheduleSeriesCategoryRetry(profileId)
+            }
+        }
+    }
+
     private fun scheduleConfigSyncRetry(profileId: Int) {
         scope.launch {
             delay(IPTV_CONFIG_DEBOUNCE_MS)
@@ -806,14 +897,61 @@ class IptvProfileControlSyncService @Inject constructor(
         }
     }
 
+    /** Rehydrates favorite cards from the already-synced display catalog on devices with a cold VOD cache. */
+    private suspend fun cacheRemoteFavoriteVodMetadata(profileId: Int, catalog: JSONObject) {
+        val vodItems = catalog.optJSONArray("vodItems") ?: return
+        val store = LiveTvStorage(context, profileId)
+        val favoriteKeys = store.remapVodFavoriteKeys(store.favoriteVodKeys())
+        if (favoriteKeys.isEmpty()) return
+        val knownSources = store.synchronizedSources().mapTo(HashSet(), LiveTvSource::id)
+        if (knownSources.isEmpty()) return
+
+        val bySourceAndType = LinkedHashMap<Pair<String, String>, MutableList<LiveTvVodItem>>()
+        for (index in 0 until vodItems.length()) {
+            val entry = vodItems.optJSONObject(index) ?: continue
+            val type = entry.optString("type").takeIf { it == "movie" || it == "series" } ?: continue
+            val rawKey = entry.optString("key").takeIf(String::isNotBlank) ?: continue
+            val normalizedKey = store.remapVodFavoriteKeys(setOf(rawKey)).firstOrNull() ?: continue
+            if (normalizedKey !in favoriteKeys) continue
+
+            val sourceId = normalizedKey.substringBefore(':')
+            if (sourceId !in knownSources) continue
+            val itemPrefix = "$sourceId:$type:"
+            if (!normalizedKey.startsWith(itemPrefix)) continue
+            val encodedId = normalizedKey.removePrefix(itemPrefix)
+            val nestedPrefix = "$sourceId:$type:"
+            val providerId = encodedId.removePrefix(nestedPrefix).takeIf { encodedId.startsWith(nestedPrefix) }
+                ?: encodedId.takeIf(String::isNotBlank)
+                ?: continue
+            val title = entry.optString("title").trim().takeIf(String::isNotBlank) ?: continue
+            val item = LiveTvVodItem(
+                id = "$sourceId:$type:$providerId",
+                sourceId = sourceId,
+                providerId = providerId,
+                title = title,
+                type = type,
+                categoryId = entry.optString("categoryId"),
+                categoryName = entry.optString("categoryName"),
+                year = entry.optString("year"),
+            )
+            bySourceAndType.getOrPut(sourceId to type) { mutableListOf() }.add(item)
+        }
+
+        bySourceAndType.forEach { (key, items) ->
+            LiveTvVodCache.merge(context, key.first, key.second, items)
+        }
+    }
+
     private suspend fun syncCatalogLocked(profileId: Int, knownRevision: Long?) {
         val state = LiveTvRepository.loadedStateForProfile(profileId) ?: return
+        val current = withJwtRefreshRetry { remote.pull(profileId) }
+        cacheRemoteFavoriteVodMetadata(profileId, current.catalog)
         if (state.sourceErrors.isNotEmpty()) {
             Log.w(IPTV_PROFILE_CONTROL_TAG, "Skipping incomplete IPTV catalogue for profile $profileId: ${state.sourceErrors.keys}")
             return
         }
+        importMissingSeriesCategories(profileId)
         val catalog = catalogFor(profileId, state)
-        val current = withJwtRefreshRetry { remote.pull(profileId) }
         if (!current.exists) {
             if (shouldWaitForLegacyFavoriteMigration(profileId)) {
                 Log.d(IPTV_PROFILE_CONTROL_TAG, "Waiting for IPTV channels before seeding profile $profileId")
@@ -877,6 +1015,7 @@ class IptvProfileControlSyncService @Inject constructor(
         val store = LiveTvStorage(context, profileId)
         val synchronizedSources = store.synchronizedSources()
         val sourceIds = synchronizedSources.mapTo(HashSet(), LiveTvSource::id)
+        val favoriteVodKeys = store.remapVodFavoriteKeys(store.favoriteVodKeys())
         val groups = JSONArray()
         val channels = JSONArray()
         state.groups.take(2_000).forEach { group ->
@@ -896,6 +1035,7 @@ class IptvProfileControlSyncService @Inject constructor(
 
         val vodItems = JSONArray()
         val vodGroups = LinkedHashMap<String, JSONObject>()
+        val vodCandidates = ArrayList<LiveTvVodItem>()
         for (source in synchronizedSources) {
             for (type in listOf("movie", "series")) {
                 LiveTvVodCache.readCategories(context, source.id, type).forEach { category ->
@@ -903,25 +1043,25 @@ class IptvProfileControlSyncService @Inject constructor(
                     vodGroups.putIfAbsent(key, JSONObject()
                         .put("key", key).put("kind", type).put("sourceId", source.id).put("name", category.name.take(180)))
                 }
-                val remaining = (IPTV_CATALOG_LIMIT - vodItems.length()).coerceAtLeast(0)
-                if (remaining == 0) break
-                LiveTvVodCache.read(context, source.id, type).take(remaining).forEach { item ->
-                    if (item.categoryId.isNotBlank()) {
-                        val key = LiveTvRepository.vodCategoryHideKey(type, source.id, item.categoryId)
-                        vodGroups.putIfAbsent(key, JSONObject()
-                            .put("key", key).put("kind", type).put("sourceId", source.id)
-                            .put("name", item.categoryName.take(180).ifBlank { "Uncategorised" }))
-                    }
-                    vodItems.put(JSONObject()
-                        .put("key", item.favoriteKey)
-                        .put("sourceId", item.sourceId)
-                        .put("type", item.type)
-                        .put("title", item.title.take(180))
-                        .put("categoryId", item.categoryId.take(180))
-                        .put("categoryName", item.categoryName.take(180))
-                        .put("year", item.year.take(16)))
-                }
+                vodCandidates += LiveTvVodCache.read(context, source.id, type)
             }
+        }
+        val (favoriteVodItems, otherVodItems) = vodCandidates.partition { it.favoriteKey in favoriteVodKeys }
+        (favoriteVodItems + otherVodItems).take(IPTV_CATALOG_LIMIT).forEach { item ->
+            if (item.categoryId.isNotBlank()) {
+                val key = LiveTvRepository.vodCategoryHideKey(item.type, item.sourceId, item.categoryId)
+                vodGroups.putIfAbsent(key, JSONObject()
+                    .put("key", key).put("kind", item.type).put("sourceId", item.sourceId)
+                    .put("name", item.categoryName.take(180).ifBlank { "Uncategorised" }))
+            }
+            vodItems.put(JSONObject()
+                .put("key", item.favoriteKey)
+                .put("sourceId", item.sourceId)
+                .put("type", item.type)
+                .put("title", item.title.take(180))
+                .put("categoryId", item.categoryId.take(180))
+                .put("categoryName", item.categoryName.take(180))
+                .put("year", item.year.take(16)))
         }
         vodGroups.values.take(3_000).forEach(groups::put)
         val catalog = JSONObject().put("groups", groups).put("channels", channels).put("vodItems", vodItems)

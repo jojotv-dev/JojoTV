@@ -13,7 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.Settings
-import android.text.format.DateUtils
+import android.text.format.DateFormat
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,11 +25,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.Visibility
@@ -72,13 +73,16 @@ import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Card
@@ -89,12 +93,13 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
+import com.nuvio.tv.core.tmdb.TmdbArtworkCandidate
+import com.nuvio.tv.ui.components.FocusMarqueeText
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.screens.home.HomeArtworkPickerDialog
 import com.nuvio.tv.ui.theme.NuvioTheme
-import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import android.widget.Toast
@@ -111,17 +116,31 @@ fun ServerBrowserScreen(
     onOpenFile: (ServerBrowserEntry) -> Unit,
     onPlayFromBeginning: (ServerBrowserEntry) -> Unit = onOpenFile,
     openPath: String = "",
-    onNavigateHome: () -> Unit = onBack,
     contentFocusRequester: FocusRequester? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val apkDownloadProgress by viewModel.apkDownloadProgress.collectAsStateWithLifecycle()
     val serverState by viewModel.servers.collectAsStateWithLifecycle()
     val freeboxState by viewModel.freebox.collectAsStateWithLifecycle()
+    val folderCounts by viewModel.folderCounts.collectAsStateWithLifecycle()
+    val videoDurations = remember(sourceId, path) {
+        androidx.compose.runtime.mutableStateMapOf<String, Long>()
+    }
+    var videoDurationScanComplete by remember(sourceId, path) { mutableStateOf(false) }
+    val videoDurationSnapshot = videoDurations.toMap()
+    val displayedEntries = remember(state.entries, videoDurationSnapshot, videoDurationScanComplete) {
+        if (videoDurationScanComplete) {
+            sortServerBrowserEntriesByDuration(state.entries, videoDurationSnapshot)
+        } else {
+            state.entries
+        }
+    }
+    val showVideoFolderBadge = sourceId == ServerBrowserViewModel.FREEBOX_SOURCE && isVideosFolderPath(path)
     val capacityState by capacityViewModel.capacityState.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
     val requesters = remember(path) { mutableMapOf<String, FocusRequester>() }
     var focusedPath by rememberSaveable(sourceId, path) { mutableStateOf<String?>(null) }
+    var showLanFileShareDialog by remember { mutableStateOf(false) }
     var optionsEntry by remember { mutableStateOf<ServerBrowserEntry?>(null) }
     var renameEntry by remember { mutableStateOf<ServerBrowserEntry?>(null) }
     var renameValue by remember { mutableStateOf("") }
@@ -129,23 +148,13 @@ fun ServerBrowserScreen(
     var selectionMode by rememberSaveable(sourceId, path) { mutableStateOf(false) }
     val selectedPaths = remember(sourceId, path) { mutableStateListOf<String>() }
     var autoOpenedTarget by rememberSaveable(sourceId, openPath) { mutableStateOf(false) }
-    val focusedEntry = remember(state.entries, focusedPath) {
-        state.entries.firstOrNull { it.path == focusedPath } ?: state.entries.firstOrNull()
-    }
-    var detailPreviewUri by remember(sourceId) { mutableStateOf<String?>(null) }
     val actionScope = androidx.compose.runtime.rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     var artworkTarget by remember { mutableStateOf<ServerBrowserEntry?>(null) }
-    val artworkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val target = artworkTarget
-        if (uri != null && target != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            viewModel.saveCustomArtwork(sourceId, target, uri)
-        }
-        artworkTarget = null
-    }
+    var artworkCandidates by remember { mutableStateOf<List<TmdbArtworkCandidate>>(emptyList()) }
+    var isLoadingArtwork by remember { mutableStateOf(false) }
+    var isSavingArtwork by remember { mutableStateOf(false) }
+    var artworkError by remember { mutableStateOf<String?>(null) }
     fun selectedEntries(): List<ServerBrowserEntry> =
         state.entries.filter { it.path in selectedPaths }
     fun selectionSupportsWriteActions(): Boolean {
@@ -167,16 +176,26 @@ fun ServerBrowserScreen(
         }
     }
 
-    fun runRemoteAction(action: suspend () -> Unit, successMessage: String, reload: Boolean = true) {
+    fun runRemoteAction(
+        action: suspend () -> Unit,
+        successMessage: String,
+        reload: Boolean = true,
+        reloadOnFailure: Boolean = false,
+    ) {
         actionScope.launch {
+            var actionSucceeded = false
+            var actionCancelled = false
             try {
                 action()
+                actionSucceeded = true
                 Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
-                if (reload) viewModel.load(sourceId, path)
             } catch (cancelled: CancellationException) {
+                actionCancelled = true
                 throw cancelled
             } catch (error: Exception) {
                 Toast.makeText(context, error.message ?: "L’action n’a pas pu être effectuée.", Toast.LENGTH_LONG).show()
+            } finally {
+                if (reload && !actionCancelled && (actionSucceeded || reloadOnFailure)) viewModel.load(sourceId, path)
             }
         }
     }
@@ -305,14 +324,6 @@ fun ServerBrowserScreen(
         ServerBrowserViewModel.FREEBOX_SOURCE -> capacityState.freebox
         else -> capacityState.servers[sourceId]
     }
-    val storageCapacity = when (sourceId) {
-        ServerBrowserViewModel.LOCAL_SOURCE -> capacityState.localCapacity
-        ServerBrowserViewModel.FREEBOX_SOURCE -> capacityState.freeboxCapacity
-        else -> capacityState.serverCapacities[sourceId]
-    }
-    val folderCount = state.entries.count { it.isDirectory }
-    val fileCount = state.entries.size - folderCount
-
     BackHandler(onBack = onBack)
     LaunchedEffect(sourceId) { capacityViewModel.refreshStorageCapacity() }
     LaunchedEffect(sourceId, path, openPath) {
@@ -337,275 +348,249 @@ fun ServerBrowserScreen(
         repeat(2) { withFrameNanos { } }
         runCatching { requesters[targetPath]?.requestFocus() }
     }
-
-    LaunchedEffect(sourceId, focusedEntry?.path, state.artworkRevision) {
-        val customArtwork = focusedEntry?.let { viewModel.customArtworkUri(sourceId, it) }
-        detailPreviewUri = customArtwork?.toString()
-        val entry = focusedEntry ?: return@LaunchedEffect
-        if (customArtwork != null || entry.fileType != ServerBrowserFileType.IMAGE) return@LaunchedEffect
-        delay(180L)
-        detailPreviewUri = runCatching {
-            viewModel.prepareThumbnailUri(sourceId, entry)?.toString()
-        }.getOrNull()
+    LaunchedEffect(sourceId, path, state.entries, state.isLoading) {
+        if (state.isLoading) return@LaunchedEffect
+        videoDurations.clear()
+        videoDurationScanComplete = false
+        for (entry in state.entries) {
+            if (entry.fileType != ServerBrowserFileType.VIDEO) continue
+            viewModel.videoDurationMs(sourceId, entry)?.let { duration ->
+                videoDurations[entry.path] = duration
+            }
+        }
+        videoDurationScanComplete = true
     }
 
+    val localSourceEntry = moduleNavEntries.first { it.id == ServerBrowserViewModel.LOCAL_SOURCE }
+    val currentRemoteSource = moduleNavEntries.firstOrNull { it.id == sourceId && it.id != ServerBrowserViewModel.LOCAL_SOURCE }
+        ?: moduleNavEntries.firstOrNull { it.id == ServerBrowserViewModel.FREEBOX_SOURCE }
+        ?: moduleNavEntries.firstOrNull { it.id != ServerBrowserViewModel.LOCAL_SOURCE }
+    val pageTitle = if (sourceId == ServerBrowserViewModel.LOCAL_SOURCE) {
+        "Stockage local et USB"
+    } else {
+        "Réseau SMB"
+    }
+    val currentSourceName = when (sourceId) {
+        ServerBrowserViewModel.LOCAL_SOURCE -> "Local"
+        ServerBrowserViewModel.FREEBOX_SOURCE -> "NAS"
+        else -> moduleNavEntries.firstOrNull { it.id == sourceId }?.label ?: state.sourceName
+    }
+    val locationSummary = state.location.ifBlank { path.ifBlank { currentSourceName } }
+    val capacitySummary = storageText?.let { "$currentSourceName : $it" }
+        ?: if (state.isLoading) "$currentSourceName : Calcul de l’espace…"
+        else "$currentSourceName : Espace indisponible"
+
     Box(Modifier.fillMaxSize()) {
-        ServerModuleScaffold(
-            navEntries = moduleNavEntries,
-            selectedNavId = sourceId,
-            storageTitle = "Stockage ${state.sourceName}",
-            storageText = storageText,
-            storageCapacity = storageCapacity,
-            onNavigateHome = onNavigateHome,
-            sidebarDetailsContent = {
-                val entry = focusedEntry
-                Text(
-                    text = "SÉLECTION",
-                    color = NuvioTheme.colors.TextTertiary,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                if (entry == null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(NuvioTheme.colors.Background)
+                .padding(start = 30.dp, top = 95.dp, end = 24.dp, bottom = 24.dp),
+        ) {
+            Text(
+                text = pageTitle,
+                color = NuvioTheme.colors.TextPrimary,
+                style = TextStyle(
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     Text(
-                        text = "Aucun élément dans ce dossier.",
+                        text = locationSummary,
                         color = NuvioTheme.colors.TextSecondary,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        maxLines = 1,
+                        overflow = if (sourceId == ServerBrowserViewModel.LOCAL_SOURCE) {
+                            TextOverflow.StartEllipsis
+                        } else {
+                            TextOverflow.Ellipsis
+                        },
                     )
-                } else {
-                    if (entry.fileType == ServerBrowserFileType.IMAGE && !detailPreviewUri.isNullOrBlank()) {
-                        AsyncImage(
-                            model = detailPreviewUri,
-                            contentDescription = entry.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxWidth().height(78.dp)
-                                .clip(NuvioTheme.configuredShape(RoundedCornerShape(8.dp))),
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(NuvioTheme.configuredShape(RoundedCornerShape(10.dp)))
-                                .background(NuvioTheme.colors.Secondary.copy(alpha = 0.16f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            androidx.tv.material3.Icon(
-                                imageVector = if (entry.isDirectory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
-                                contentDescription = null,
-                                tint = NuvioTheme.colors.Secondary,
-                                modifier = Modifier.size(24.dp),
-                            )
-                        }
-                    }
                     Text(
-                        text = entry.name,
-                        color = NuvioTheme.colors.TextPrimary,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
+                        text = capacitySummary,
+                        color = NuvioTheme.colors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    ServerModuleInfoRow("Type", entry.fileType.label)
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = "Emplacement",
-                            color = NuvioTheme.colors.TextSecondary,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                        Text(
-                            text = entry.path.replace("/", "/\n"),
-                            color = NuvioTheme.colors.TextPrimary,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 5,
-                            overflow = TextOverflow.Clip,
-                        )
-                    }
-                    if (entry.sizeBytes > 0L) ServerModuleInfoRow("Taille", formatBrowserSize(entry.sizeBytes))
-                    if (entry.lastModifiedMs > 0L) {
-                        ServerModuleInfoRow(
-                            "Modifié",
-                            DateUtils.formatDateTime(
-                                context,
-                                entry.lastModifiedMs,
-                                DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_YEAR,
-                            ),
-                        )
-                    }
                 }
-            },
-            mainContent = {
-                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = state.location.ifBlank { state.sourceName },
-                                color = NuvioTheme.colors.TextPrimary,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = when {
-                                    state.error != null -> "Indisponible"
-                                    state.isLoading -> "Connexion…"
-                                    else -> "$folderCount dossiers · $fileCount fichiers"
-                                },
-                                color = NuvioTheme.colors.TextSecondary,
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (sourceId == ServerBrowserViewModel.LOCAL_SOURCE) {
-                            ServerModuleActionButton(
-                                label = when {
-                                    hasDocumentTreePicker -> "Choisir un dossier"
-                                    state.localStorageAccessGranted -> "Choisir un stockage"
-                                    else -> "Autoriser l’accès local / USB"
-                                },
-                                icon = Icons.Default.Folder,
-                                onClick = { openLocalStorage() },
-                                modifier = Modifier.width(
-                                    if (!hasDocumentTreePicker && !state.localStorageAccessGranted) 244.dp else 204.dp,
-                                ),
-                            )
-                        }
-                        ServerModuleActionButton(
-                            label = "Actualiser",
-                            icon = Icons.Default.Refresh,
-                            onClick = { viewModel.load(sourceId, path) },
-                            modifier = Modifier.width(124.dp),
-                        )
-                        ServerModuleActionButton(
-                            label = "Grille",
-                            icon = Icons.Default.GridView,
-                            onClick = { if (!state.isGridView) viewModel.toggleGridView(sourceId, path) },
-                            modifier = Modifier.width(96.dp),
-                            emphasized = state.isGridView,
-                        )
-                        ServerModuleActionButton(
-                            label = "Liste",
-                            icon = Icons.Default.ViewList,
-                            onClick = { if (state.isGridView) viewModel.toggleGridView(sourceId, path) },
-                            modifier = Modifier.width(92.dp),
-                            emphasized = !state.isGridView,
-                        )
-                        ServerModuleActionButton(
-                            label = "Fichiers cachés",
-                            icon = if (state.showHiddenFiles) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            onClick = { viewModel.toggleShowHiddenFiles(sourceId, path) },
-                            modifier = Modifier.width(178.dp),
-                            emphasized = state.showHiddenFiles,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    BrowserActionCard(
+                        icon = Icons.Default.Refresh,
+                        label = "Actualiser le dossier",
+                        onClick = { viewModel.load(sourceId, path) },
+                        modifier = Modifier.size(42.dp),
+                        showLabel = false,
+                    )
+                    if (sourceId == ServerBrowserViewModel.LOCAL_SOURCE) {
+                        BrowserActionCard(
+                            icon = Icons.Default.Share,
+                            label = context.getString(R.string.lan_share_open_browser),
+                            onClick = { showLanFileShareDialog = true },
+                            modifier = Modifier.size(42.dp),
+                            showLabel = false,
                         )
                     }
-                    if (selectionMode) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = "${selectedPaths.size} sélectionné(s)",
-                                color = NuvioTheme.colors.TextPrimary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (selectionSupportsCopyActions()) {
-                                BrowserActionCard(Icons.Default.Folder, "Copier", {
-                                    viewModel.copyToClipboard(sourceId, selectedEntries(), cut = false)
-                                }, modifier = Modifier.width(112.dp).height(46.dp), showLabel = true)
+                    ServerBrowserSourceChip(
+                        label = if (localSourceEntry.id == ServerBrowserViewModel.LOCAL_SOURCE) "Local / USB" else localSourceEntry.label,
+                        selected = sourceId == localSourceEntry.id,
+                        onClick = localSourceEntry.onClick,
+                    )
+                    currentRemoteSource?.takeIf { it.id != localSourceEntry.id }?.let { remote ->
+                        ServerBrowserSourceChip(
+                            label = if (remote.id == ServerBrowserViewModel.FREEBOX_SOURCE) "NAS" else remote.label,
+                            selected = sourceId == remote.id,
+                            onClick = remote.onClick,
+                        )
+                    }
+                    BrowserActionCard(
+                        icon = if (state.showHiddenFiles) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        label = if (state.showHiddenFiles) "Masquer les fichiers cachés" else "Afficher les fichiers cachés",
+                        onClick = { viewModel.toggleShowHiddenFiles(sourceId, path) },
+                        modifier = Modifier.size(42.dp),
+                        showLabel = false,
+                        selected = state.showHiddenFiles,
+                    )
+                    BrowserActionCard(
+                        icon = if (state.isGridView) Icons.Default.ViewList else Icons.Default.GridView,
+                        label = if (state.isGridView) "Afficher en liste" else "Afficher en grille",
+                        onClick = { viewModel.toggleGridView(sourceId, path) },
+                        modifier = Modifier.size(width = 48.dp, height = 42.dp),
+                        showLabel = false,
+                    )
+                }
+            }
+            if (selectionMode) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${selectedPaths.size} sélectionné(s)",
+                        color = NuvioTheme.colors.TextPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (selectionSupportsCopyActions()) {
+                        BrowserActionCard(Icons.Default.Folder, "Copier", {
+                            val targets = selectedEntries()
+                            viewModel.copyToClipboard(sourceId, targets, cut = false)
+                            val message = if (targets.size == 1) {
+                                "Élément copié dans le presse-papiers."
+                            } else {
+                                "${targets.size} éléments copiés dans le presse-papiers."
                             }
-                            if (selectionSupportsWriteActions()) {
-                                BrowserActionCard(Icons.Default.Folder, "Couper", {
-                                    viewModel.copyToClipboard(sourceId, selectedEntries(), cut = true)
-                                }, modifier = Modifier.width(112.dp).height(46.dp), showLabel = true)
-                                BrowserActionCard(Icons.Default.Folder, "Supprimer", {
-                                    deleteEntries = selectedEntries()
-                                }, modifier = Modifier.width(132.dp).height(46.dp), showLabel = true)
-                            }
-                            BrowserActionCard(Icons.AutoMirrored.Filled.ArrowBack, "Terminer", {
-                                selectionMode = false
-                                selectedPaths.clear()
-                            }, modifier = Modifier.width(118.dp).height(46.dp), showLabel = true)
-                        }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }, modifier = Modifier.width(112.dp).height(46.dp), showLabel = true)
                     }
+                    if (selectionSupportsWriteActions()) {
+                        BrowserActionCard(Icons.Default.Folder, "Couper", {
+                            val targets = selectedEntries()
+                            viewModel.copyToClipboard(sourceId, targets, cut = true)
+                            val message = if (targets.size == 1) {
+                                "Élément prêt à être déplacé."
+                            } else {
+                                "${targets.size} éléments prêts à être déplacés."
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }, modifier = Modifier.width(112.dp).height(46.dp), showLabel = true)
+                        BrowserActionCard(Icons.Default.Folder, "Supprimer", {
+                            deleteEntries = selectedEntries()
+                        }, modifier = Modifier.width(132.dp).height(46.dp), showLabel = true)
+                    }
+                    BrowserActionCard(Icons.AutoMirrored.Filled.ArrowBack, "Terminer", {
+                        selectionMode = false
+                        selectedPaths.clear()
+                    }, modifier = Modifier.width(118.dp).height(46.dp), showLabel = true)
+                }
+            }
 
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                        when {
-                            sourceId == ServerBrowserViewModel.LOCAL_SOURCE &&
-                                state.localTreeUri == null && !state.localStorageAccessGranted ->
-                                BrowserMessage(
-                                    title = if (hasDocumentTreePicker) "Parcourir un stockage local ou USB" else "Accès au stockage local / USB",
-                                    description = if (hasDocumentTreePicker) {
-                                        state.error ?: "Choisissez un dossier pour autoriser son accès à l’application."
-                                    } else {
-                                        "Ce téléviseur ne fournit pas de sélecteur de dossiers. Autorisez JojoTV dans Paramètres Android > Applications > Accès spécial > Accès à tous les fichiers pour parcourir le stockage interne et USB."
-                                    },
-                                    actionLabel = if (hasDocumentTreePicker) "Choisir un dossier" else "Autoriser l’accès",
-                                    onAction = { openLocalStorage() },
-                                )
-                            state.isLoading && state.entries.isEmpty() ->
-                                BrowserMessage("Lecture du serveur…", "Les dossiers et fichiers apparaîtront ici.")
-                            state.error != null ->
-                                BrowserMessage(
-                                    title = "Impossible d’ouvrir ce serveur",
-                                    description = state.error.orEmpty(),
-                                    actionLabel = if (sourceId == ServerBrowserViewModel.LOCAL_SOURCE) {
-                                        when {
-                                            hasDocumentTreePicker -> "Choisir un autre dossier"
-                                            state.localStorageAccessGranted -> "Rouvrir les stockages"
-                                            else -> "Autoriser l’accès"
-                                        }
-                                    } else null,
-                                    onAction = if (sourceId == ServerBrowserViewModel.LOCAL_SOURCE) ::openLocalStorage else null,
-                                )
-                            state.entries.isEmpty() -> BrowserMessage("Ce dossier est vide", "Aucun fichier ni sous-dossier n’a été trouvé.")
-                            else -> LazyVerticalGrid(
-                                state = gridState,
-                                columns = if (state.isGridView) GridCells.Adaptive(112.dp) else GridCells.Fixed(1),
-                                modifier = Modifier.fillMaxSize().focusRestorer {
-                                    focusedPath?.let { requesters[it] } ?: FocusRequester.Default
-                                },
-                                contentPadding = PaddingValues(bottom = 12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                gridItems(state.entries, key = ServerBrowserEntry::path) { entry ->
-                                    val requester = requesters.getOrPut(entry.path) {
-                                        if (entry.path == state.entries.firstOrNull()?.path) {
-                                            contentFocusRequester ?: FocusRequester()
-                                        } else {
-                                            FocusRequester()
-                                        }
-                                    }
-                                    BrowserEntryCard(
-                                        entry = entry,
-                                        modifier = Modifier
-                                            .focusRequester(requester)
-                                            .onFocusChanged { if (it.isFocused) focusedPath = entry.path },
-                                        isGridView = state.isGridView,
-                                        isFocused = focusedPath == entry.path,
-                                        isSelected = entry.path in selectedPaths,
-                                        sourceId = sourceId,
-                                        viewModel = viewModel,
-                                        onClick = { activateEntry(entry) },
-                                        onLongClick = { optionsEntry = entry },
-                                    )
+            Box(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)) {
+                when {
+                    sourceId == ServerBrowserViewModel.LOCAL_SOURCE &&
+                        state.localTreeUri == null && !state.localStorageAccessGranted ->
+                        BrowserMessage(
+                            title = if (hasDocumentTreePicker) "Parcourir un stockage local ou USB" else "Accès au stockage local / USB",
+                            description = if (hasDocumentTreePicker) {
+                                state.error ?: "Choisissez un dossier pour autoriser son accès à l’application."
+                            } else {
+                                "Ce téléviseur ne fournit pas de sélecteur de dossiers. Autorisez JojoTV dans Paramètres Android > Applications > Accès spécial > Accès à tous les fichiers pour parcourir le stockage interne et USB."
+                            },
+                            actionLabel = if (hasDocumentTreePicker) "Choisir un dossier" else "Autoriser l’accès",
+                            onAction = { openLocalStorage() },
+                        )
+                    state.isLoading && state.entries.isEmpty() ->
+                        BrowserMessage("Lecture du serveur…", "Les dossiers et fichiers apparaîtront ici.")
+                    state.error != null ->
+                        BrowserMessage(
+                            title = "Impossible d’ouvrir ce serveur",
+                            description = state.error.orEmpty(),
+                            actionLabel = if (sourceId == ServerBrowserViewModel.LOCAL_SOURCE) {
+                                when {
+                                    hasDocumentTreePicker -> "Choisir un autre dossier"
+                                    state.localStorageAccessGranted -> "Rouvrir les stockages"
+                                    else -> "Autoriser l’accès"
+                                }
+                            } else null,
+                            onAction = if (sourceId == ServerBrowserViewModel.LOCAL_SOURCE) ::openLocalStorage else null,
+                        )
+                    state.entries.isEmpty() -> BrowserMessage("Aucun fichier dans cet emplacement.", "")
+                    else -> LazyVerticalGrid(
+                        state = gridState,
+                        columns = if (state.isGridView) GridCells.Fixed(7) else GridCells.Fixed(1),
+                        modifier = Modifier.fillMaxSize().focusRestorer {
+                            focusedPath?.let { requesters[it] } ?: FocusRequester.Default
+                        },
+                        horizontalArrangement = Arrangement.spacedBy(0.dp),
+                        verticalArrangement = Arrangement.spacedBy(0.dp),
+                    ) {
+                        gridItems(displayedEntries, key = ServerBrowserEntry::path) { entry ->
+                            val requester = requesters.getOrPut(entry.path) {
+                                if (entry.path == displayedEntries.firstOrNull()?.path) {
+                                    contentFocusRequester ?: FocusRequester()
+                                } else {
+                                    FocusRequester()
                                 }
                             }
+                            BrowserEntryCard(
+                                entry = entry,
+                                videoDurationMs = videoDurationSnapshot[entry.path],
+                                showVideoFolderBadge = showVideoFolderBadge && entry.isDirectory,
+                                modifier = Modifier
+                                    .focusRequester(requester)
+                                    .onFocusChanged { if (it.isFocused) focusedPath = entry.path },
+                                isGridView = state.isGridView,
+                                isFocused = focusedPath == entry.path,
+                                isSelected = entry.path in selectedPaths,
+                                sourceId = sourceId,
+                                viewModel = viewModel,
+                                artworkRevision = state.artworkRevision,
+                                showHiddenFiles = state.showHiddenFiles,
+                                folderCountRevision = state.folderCountRevision,
+                                folderCounts = folderCounts,
+                                onClick = { activateEntry(entry) },
+                                onLongClick = { optionsEntry = entry },
+                            )
                         }
                     }
                 }
-            },
-        )
+            }
+        }
 
         apkDownloadProgress?.let { progress ->
             ApkDownloadProgressOverlay(
@@ -619,13 +604,22 @@ fun ServerBrowserScreen(
         }
     }
 
+    if (showLanFileShareDialog) {
+        LanFileShareDialog(onDismiss = { showLanFileShareDialog = false })
+    }
+
     optionsEntry?.let { entry ->
+        val actionEntries = if (selectionMode && entry.path in selectedPaths) {
+            selectedEntries().ifEmpty { listOf(entry) }
+        } else {
+            listOf(entry)
+        }
         ServerBrowserEntryOptionsDialog(
             entry = entry,
             isFreebox = sourceId == ServerBrowserViewModel.FREEBOX_SOURCE,
             supportsExport = sourceId != ServerBrowserViewModel.LOCAL_SOURCE,
-            supportsCopy = viewModel.supportsCopyActions(sourceId, entry.path),
-            supportsWrite = viewModel.supportsWriteActions(sourceId, entry.path),
+            supportsCopy = actionEntries.all { viewModel.supportsCopyActions(sourceId, it.path) },
+            supportsWrite = actionEntries.all { viewModel.supportsWriteActions(sourceId, it.path) },
             hasClipboard = state.hasClipboard,
             clipboardIsCut = state.clipboardIsCut,
             onDismiss = { optionsEntry = null },
@@ -650,23 +644,61 @@ fun ServerBrowserScreen(
                 }, "Archive ZIP prête.", reload = false)
             },
             onCopy = {
-                viewModel.copyToClipboard(sourceId, listOf(entry), cut = false)
+                viewModel.copyToClipboard(sourceId, actionEntries, cut = false)
                 optionsEntry = null
-                Toast.makeText(context, "Élément copié dans le presse-papiers.", Toast.LENGTH_SHORT).show()
+                val message = if (actionEntries.size == 1) {
+                    "Élément copié dans le presse-papiers."
+                } else {
+                    "${actionEntries.size} éléments copiés dans le presse-papiers."
+                }
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
             },
             onCut = {
-                viewModel.copyToClipboard(sourceId, listOf(entry), cut = true)
+                viewModel.copyToClipboard(sourceId, actionEntries, cut = true)
                 optionsEntry = null
-                Toast.makeText(context, "Élément prêt à être déplacé.", Toast.LENGTH_SHORT).show()
+                val message = if (actionEntries.size == 1) {
+                    "Élément prêt à être déplacé."
+                } else {
+                    "${actionEntries.size} éléments prêts à être déplacés."
+                }
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
             },
             onPaste = {
                 optionsEntry = null
-                runRemoteAction({ viewModel.pasteClipboard(sourceId, entry.path) }, "Collage terminé.")
+                val clipboardIsCut = state.clipboardIsCut
+                runRemoteAction({
+                    val result = viewModel.pasteClipboard(sourceId, entry.path)
+                    if (result.failures.isNotEmpty()) {
+                        val verb = if (clipboardIsCut) "déplacé(s)" else "copié(s)"
+                        val summary = if (result.completedCount == 0) {
+                            "Aucun élément n’a été ${if (clipboardIsCut) "déplacé" else "copié"}."
+                        } else {
+                            "${result.completedCount}/${result.requestedCount} élément(s) $verb."
+                        }
+                        error("$summary Échecs : ${result.failures.take(3).joinToString(" ; ")}")
+                    }
+                }, "Collage terminé.", reloadOnFailure = true)
             },
             onChangeThumbnail = {
-                artworkTarget = entry
                 optionsEntry = null
-                artworkPicker.launch(arrayOf("image/*"))
+                artworkTarget = entry
+                artworkCandidates = emptyList()
+                artworkError = null
+                isLoadingArtwork = true
+                actionScope.launch {
+                    try {
+                        artworkCandidates = viewModel.artworkCandidates(entry, portrait = false)
+                        if (artworkCandidates.isEmpty()) {
+                            artworkError = context.getString(R.string.home_freebox_artwork_empty)
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        artworkError = error.message ?: context.getString(R.string.home_freebox_artwork_empty)
+                    } finally {
+                        isLoadingArtwork = false
+                    }
+                }
             },
             onSetWallpaper = {
                 optionsEntry = null
@@ -699,8 +731,65 @@ fun ServerBrowserScreen(
                 runRemoteAction({ viewModel.removeFromList(sourceId, entry) }, "Vidéo retirée de la liste.", reload = false)
             },
             onDelete = {
-                deleteEntries = listOf(entry)
+                deleteEntries = actionEntries
                 optionsEntry = null
+            },
+        )
+    }
+
+    artworkTarget?.let { target ->
+        HomeArtworkPickerDialog(
+            title = target.name,
+            portrait = false,
+            candidates = artworkCandidates.map(TmdbArtworkCandidate::imageUrl),
+            candidateDetails = artworkCandidates,
+            isLoading = isLoadingArtwork,
+            isBusy = isSavingArtwork,
+            error = artworkError,
+            onDismiss = { if (!isSavingArtwork) artworkTarget = null },
+            onSelectWithDetails = { imageUrl, candidate ->
+                isSavingArtwork = true
+                artworkError = null
+                actionScope.launch {
+                    try {
+                        viewModel.saveCustomArtwork(
+                            sourceId = sourceId,
+                            entry = target,
+                            portrait = false,
+                            imageUrl = imageUrl,
+                            candidate = candidate,
+                        )
+                        artworkTarget = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        artworkError = error.message ?: context.getString(R.string.home_freebox_artwork_empty)
+                    } finally {
+                        isSavingArtwork = false
+                    }
+                }
+            },
+            onReset = {
+                isSavingArtwork = true
+                artworkError = null
+                actionScope.launch {
+                    try {
+                        viewModel.saveCustomArtwork(
+                            sourceId = sourceId,
+                            entry = target,
+                            portrait = false,
+                            imageUrl = null,
+                            candidate = null,
+                        )
+                        artworkTarget = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        artworkError = error.message ?: context.getString(R.string.home_freebox_artwork_empty)
+                    } finally {
+                        isSavingArtwork = false
+                    }
+                }
             },
         )
     }
@@ -726,9 +815,19 @@ fun ServerBrowserScreen(
             onConfirm = {
                 val targets = deleteEntries
                 deleteEntries = emptyList()
-                runRemoteAction({ targets.forEach { viewModel.deleteEntry(sourceId, it) } }, "Élément(s) supprimé(s).")
-                selectedPaths.removeAll(targets.map(ServerBrowserEntry::path).toSet())
-                if (selectedPaths.isEmpty()) selectionMode = false
+                runRemoteAction({
+                    val result = viewModel.deleteEntries(sourceId, targets)
+                    selectedPaths.clear()
+                    selectionMode = false
+                    if (result.failures.isNotEmpty()) {
+                        val summary = if (result.completedCount == 0) {
+                            "Aucun élément supprimé."
+                        } else {
+                            "${result.completedCount}/${result.requestedCount} élément(s) supprimé(s)."
+                        }
+                        error("$summary Échecs : ${result.failures.take(3).joinToString(" ; ")}")
+                    }
+                }, "Élément(s) supprimé(s).", reloadOnFailure = true)
             },
         )
     }
@@ -786,15 +885,24 @@ private fun BrowserActionCard(
     showLabel: Boolean = true,
     selected: Boolean = false,
 ) {
-    val shape = NuvioTheme.configuredShape(RoundedCornerShape(12.dp))
+    var focused by remember { mutableStateOf(false) }
+    val shape = NuvioTheme.configuredShape(RoundedCornerShape(10.dp))
     Card(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
         colors = CardDefaults.colors(
-            containerColor = if (selected) NuvioTheme.colors.FocusBackground else NuvioTheme.colors.Secondary.copy(alpha = 0.12f),
-            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+            containerColor = if (selected) NuvioTheme.colors.Secondary else NuvioTheme.colors.Background,
+            focusedContainerColor = if (selected) {
+                NuvioTheme.colors.Secondary
+            } else {
+                NuvioTheme.colors.Secondary.copy(alpha = 0.28f)
+            },
         ),
         border = CardDefaults.border(
+            border = Border(
+                border = BorderStroke(1.dp, NuvioTheme.colors.Secondary.copy(alpha = 0.72f)),
+                shape = shape,
+            ),
             focusedBorder = Border(
                 border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                 shape = shape,
@@ -804,17 +912,87 @@ private fun BrowserActionCard(
         scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = if (showLabel) 14.dp else 0.dp),
+            horizontalArrangement = if (showLabel) Arrangement.spacedBy(8.dp) else Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            androidx.tv.material3.Icon(icon, contentDescription = label, tint = NuvioTheme.colors.Secondary)
+            androidx.tv.material3.Icon(
+                icon,
+                contentDescription = label,
+                modifier = Modifier.size(if (showLabel) 24.dp else 18.dp),
+                tint = when {
+                    selected -> NuvioTheme.colors.OnSecondary
+                    focused -> Color.White
+                    else -> NuvioTheme.colors.Secondary
+                },
+            )
             if (showLabel) {
                 Text(
                     label,
                     style = MaterialTheme.typography.labelMedium,
-                    color = NuvioTheme.colors.TextPrimary,
+                    color = if (selected) NuvioTheme.colors.OnSecondary else Color.White,
                     maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerBrowserSourceChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    var isFocused by remember(label) { mutableStateOf(false) }
+    val shape = NuvioTheme.configuredShape(RoundedCornerShape(12.dp))
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .widthIn(min = 96.dp, max = 160.dp)
+            .height(42.dp)
+            .onFocusChanged { isFocused = it.isFocused },
+        colors = CardDefaults.colors(
+            containerColor = if (selected) NuvioTheme.colors.Secondary else NuvioTheme.colors.Background,
+            focusedContainerColor = if (selected) {
+                NuvioTheme.colors.Secondary
+            } else {
+                NuvioTheme.colors.Secondary.copy(alpha = 0.28f)
+            },
+        ),
+        border = CardDefaults.border(
+            border = Border(
+                border = BorderStroke(1.dp, NuvioTheme.colors.Secondary.copy(alpha = 0.78f)),
+                shape = shape,
+            ),
+            focusedBorder = Border(
+                border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
+                shape = shape,
+            ),
+        ),
+        shape = CardDefaults.shape(shape = shape),
+        scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FocusMarqueeText(
+                text = label,
+                focused = isFocused,
+                modifier = Modifier.weight(1f),
+                color = if (selected) NuvioTheme.colors.OnSecondary else Color.White,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                textAlign = TextAlign.Center,
+            )
+            if (selected) {
+                Text(
+                    text = "✓",
+                    modifier = Modifier.padding(start = 6.dp),
+                    color = Color(0xFF3FAE58),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
                 )
             }
         }
@@ -824,73 +1002,119 @@ private fun BrowserActionCard(
 @Composable
 private fun BrowserEntryCard(
     entry: ServerBrowserEntry,
+    videoDurationMs: Long?,
+    showVideoFolderBadge: Boolean,
     modifier: Modifier,
     isGridView: Boolean,
     isFocused: Boolean,
     isSelected: Boolean,
     sourceId: String,
     viewModel: ServerBrowserViewModel,
+    artworkRevision: Int,
+    showHiddenFiles: Boolean,
+    folderCountRevision: Int,
+    folderCounts: Map<ServerBrowserFolderCountKey, ServerBrowserFolderCounts>,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?,
 ) {
-    val shape = NuvioTheme.configuredShape(RoundedCornerShape(12.dp))
-    val artworkRevision = viewModel.state.value.artworkRevision
+    val shape = NuvioTheme.configuredShape(RoundedCornerShape(6.dp))
+    val folderCountKey = remember(sourceId, entry.path, showHiddenFiles) {
+        ServerBrowserFolderCountKey(sourceId, entry.path, showHiddenFiles)
+    }
+    val folderCount = folderCounts[folderCountKey]
+    LaunchedEffect(sourceId, entry.path, showHiddenFiles, folderCountRevision) {
+        if (entry.isDirectory) viewModel.requestFolderCounts(sourceId, entry.path, showHiddenFiles)
+    }
     val customArtwork = viewModel.customArtworkUri(sourceId, entry)
-    val longPressTracker = rememberLongPressKeyTracker()
+    val homeVideoArtwork by remember(sourceId, entry.path, entry.sizeBytes, entry.lastModifiedMs, entry.fileId) {
+        viewModel.observeHomeVideoArtwork(
+            sourceId = sourceId,
+            entry = entry,
+            includeFolderArtwork = showVideoFolderBadge,
+        )
+    }.collectAsStateWithLifecycle(initialValue = null)
+    val homeVideoArtworkUri = homeVideoArtwork?.takeIf(String::isNotBlank)?.let(Uri::parse)
+    var pressedSelectKey by remember(sourceId, entry.path) { mutableStateOf<Int?>(null) }
+    var pressGeneration by remember(sourceId, entry.path) {
+        androidx.compose.runtime.mutableIntStateOf(0)
+    }
     var longPressTriggered by remember(sourceId, entry.path) { mutableStateOf(false) }
-    var thumbnailUri by remember(sourceId, entry.path, entry.sizeBytes, entry.fileType, artworkRevision) {
+    val currentOnLongClick = androidx.compose.runtime.rememberUpdatedState(onLongClick)
+    LaunchedEffect(pressedSelectKey, pressGeneration) {
+        val keyCode = pressedSelectKey ?: return@LaunchedEffect
+        if (currentOnLongClick.value == null) return@LaunchedEffect
+        kotlinx.coroutines.delay(1_000L)
+        if (pressedSelectKey == keyCode && !longPressTriggered) {
+            longPressTriggered = true
+            currentOnLongClick.value?.invoke()
+        }
+    }
+    var thumbnailUri by remember(sourceId, entry.path, entry.sizeBytes, entry.fileType, artworkRevision, homeVideoArtworkUri) {
         mutableStateOf(
-            customArtwork ?: entry.uri?.takeIf { entry.fileType == ServerBrowserFileType.IMAGE }?.let(Uri::parse),
+            customArtwork ?: homeVideoArtworkUri
+                ?: entry.uri?.takeIf { entry.fileType == ServerBrowserFileType.IMAGE }?.let(Uri::parse),
         )
     }
-    LaunchedEffect(sourceId, entry.path, entry.sizeBytes, entry.fileType, artworkRevision) {
-        thumbnailUri = viewModel.customArtworkUri(sourceId, entry) ?: if (entry.fileType == ServerBrowserFileType.IMAGE) {
-            viewModel.prepareThumbnailUri(sourceId, entry)
-        } else null
+    LaunchedEffect(sourceId, entry.path, entry.sizeBytes, entry.fileType, artworkRevision, homeVideoArtworkUri) {
+        thumbnailUri = viewModel.customArtworkUri(sourceId, entry) ?: homeVideoArtworkUri
+            ?: if (entry.fileType == ServerBrowserFileType.IMAGE) viewModel.prepareThumbnailUri(sourceId, entry) else null
     }
     Card(
-        onClick = {
-            if (longPressTriggered) longPressTriggered = false else onClick()
-        },
-        modifier = modifier.fillMaxWidth().height(
-            when {
-                isGridView && (entry.fileType == ServerBrowserFileType.IMAGE || customArtwork != null) -> 144.dp
-                isGridView -> 120.dp
-                thumbnailUri != null -> 88.dp
-                else -> 72.dp
-            }
-        ).onPreviewKeyEvent { event ->
-            val native = event.nativeKeyEvent
-            if (onLongClick == null) {
-                false
-            } else if (native.keyCode == AndroidKeyEvent.KEYCODE_MENU && native.action == AndroidKeyEvent.ACTION_DOWN) {
-                longPressTriggered = true
-                onLongClick?.invoke()
-                true
+        onClick = onClick,
+        modifier = modifier.then(
+            if (isGridView) {
+                Modifier.widthIn(max = 120.dp).fillMaxWidth().height(130.dp).padding(4.dp)
             } else {
-                longPressTracker.handle(native, ::isBrowserSelectKey) {
-                    longPressTriggered = true
-                    onLongClick?.invoke()
-                }
-            }
-        },
-        colors = CardDefaults.colors(
-            containerColor = if (isGridView) {
-                if (entry.isDirectory) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundElevated
-            } else if (isSelected) {
-                NuvioTheme.colors.FocusBackground
-            } else {
-                NuvioTheme.colors.Secondary.copy(alpha = 0.12f)
+                Modifier.fillMaxWidth().height(64.dp)
             },
-            focusedContainerColor = NuvioTheme.colors.FocusBackground,
+        )
+            .onPreviewKeyEvent { event ->
+                val native = event.nativeKeyEvent
+                if (onLongClick == null) {
+                    false
+                } else if (native.keyCode == AndroidKeyEvent.KEYCODE_MENU ||
+                    isBrowserSelectKey(native.keyCode)
+                ) {
+                    when (native.action) {
+                        AndroidKeyEvent.ACTION_DOWN -> {
+                            if (native.repeatCount == 0 || pressedSelectKey != native.keyCode) {
+                                pressedSelectKey = native.keyCode
+                                longPressTriggered = false
+                                pressGeneration++
+                            }
+                            true
+                        }
+                        AndroidKeyEvent.ACTION_UP -> {
+                            if (pressedSelectKey != native.keyCode) {
+                                native.keyCode == AndroidKeyEvent.KEYCODE_MENU
+                            } else {
+                                val wasLongPress = longPressTriggered
+                                pressedSelectKey = null
+                                longPressTriggered = false
+                                if (native.keyCode != AndroidKeyEvent.KEYCODE_MENU && !wasLongPress) {
+                                    onClick()
+                                }
+                                true
+                            }
+                        }
+                        else -> false
+                    }
+                } else {
+                    false
+                }
+            },
+        colors = CardDefaults.colors(
+            containerColor = if (isSelected) NuvioTheme.colors.Secondary else NuvioTheme.colors.Background,
+            focusedContainerColor = if (isSelected) {
+                NuvioTheme.colors.Secondary
+            } else {
+                NuvioTheme.colors.Secondary.copy(alpha = 0.28f)
+            },
         ),
         border = CardDefaults.border(
             border = when {
-                isSelected -> Border(BorderStroke(1.dp, NuvioTheme.colors.Secondary))
-                isGridView && !entry.isDirectory -> Border(
-                    BorderStroke(1.dp, NuvioTheme.colors.SurfaceVariant.copy(alpha = 0.75f)),
-                )
-                else -> Border.None
+                isSelected -> Border(BorderStroke(2.dp, NuvioTheme.colors.Secondary))
+                else -> Border(BorderStroke(1.dp, NuvioTheme.colors.Secondary.copy(alpha = 0.55f)))
             },
             focusedBorder = Border(
                 border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
@@ -898,10 +1122,10 @@ private fun BrowserEntryCard(
             ),
         ),
         shape = CardDefaults.shape(shape = shape),
-        scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
+        scale = CardDefaults.scale(focusedScale = if (isGridView) 1.025f else 1f, pressedScale = 1f),
     ) {
         val entryIcon = when (entry.fileType) {
-            ServerBrowserFileType.DIRECTORY -> if (isFocused) R.drawable.ic_file_folder_focused else R.drawable.ic_file_folder
+            ServerBrowserFileType.DIRECTORY -> R.drawable.ic_file_folder
             ServerBrowserFileType.VIDEO -> R.drawable.ic_file_video
             ServerBrowserFileType.IMAGE -> R.drawable.ic_file_image
             ServerBrowserFileType.PDF -> R.drawable.ic_file_pdf
@@ -914,95 +1138,159 @@ private fun BrowserEntryCard(
             ServerBrowserFileType.PLAYLIST -> R.drawable.ic_file_playlist
             ServerBrowserFileType.OTHER -> R.drawable.ic_file_generic
         }
-        val iconColorFilter = when {
-            entry.fileType != ServerBrowserFileType.DIRECTORY -> null
-            isGridView -> ColorFilter.tint(if (isFocused || isSelected) NuvioTheme.colors.Secondary else Color.White)
-            else -> ColorFilter.tint(NuvioTheme.colors.Secondary)
+        val entryIconColorFilter = if (entry.fileType == ServerBrowserFileType.DIRECTORY) {
+            androidx.compose.ui.graphics.ColorFilter.tint(
+                if (isSelected) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.Secondary,
+            )
+        } else {
+            null
         }
+        val displayEntryName = if (entry.fileType == ServerBrowserFileType.VIDEO && videoDurationMs != null) {
+            "${formatBrowserDuration(videoDurationMs)} ${entry.name}"
+        } else {
+            entry.name
+        }
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val modifiedText = entry.lastModifiedMs.takeIf { it > 0L }?.let { modifiedAt ->
+            DateFormat.format("dd/MM/yy HH:mm", modifiedAt).toString()
+        }
+        val directoryCountText = when (val count = folderCount) {
+            is ServerBrowserFolderCounts.Ready ->
+                count.folders.toString() + " dossiers · " + count.files + " fichiers"
+            ServerBrowserFolderCounts.Loading, null -> "Calcul du contenu…"
+            ServerBrowserFolderCounts.Unavailable -> "Nombre indisponible"
+        }
+        val fileSummary = listOfNotNull(
+            entry.fileType.label,
+            entry.sizeBytes.takeIf { it > 0L }?.let(::formatBrowserSize),
+        ).joinToString(" · ")
         val entryDetail = when {
-            entry.isDirectory -> ServerBrowserFileType.DIRECTORY.label
-            entry.sizeBytes > 0L -> "${entry.fileType.label} · ${formatBrowserSize(entry.sizeBytes)}"
-            else -> entry.fileType.label
+            entry.isDirectory -> listOfNotNull(modifiedText, directoryCountText).joinToString("\n")
+            else -> listOfNotNull(fileSummary, modifiedText).joinToString("\n")
         }
-        if (isGridView) {
+        Box(Modifier.fillMaxSize()) {
+            if (isGridView) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxSize().padding(start = 5.dp, top = 4.dp, end = 5.dp, bottom = 3.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
-                if (thumbnailUri != null && !entry.isDirectory) {
-                    AsyncImage(
-                        model = thumbnailUri,
-                        contentDescription = entry.name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxWidth().height(58.dp)
-                            .clip(NuvioTheme.configuredShape(RoundedCornerShape(8.dp))),
-                    )
-                } else {
-                    Image(
-                        painter = painterResource(entryIcon),
-                        contentDescription = null,
-                        modifier = Modifier.size(if (entry.isDirectory) 38.dp else 34.dp),
-                        colorFilter = iconColorFilter,
-                    )
+                Box(Modifier.fillMaxWidth().height(58.dp)) {
+                    if (thumbnailUri != null) {
+                        AsyncImage(
+                            model = thumbnailUri,
+                            contentDescription = entry.name,
+                            contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.Medium,
+                            modifier = Modifier.fillMaxSize()
+                                .clip(NuvioTheme.configuredShape(RoundedCornerShape(8.dp))),
+                        )
+                    } else {
+                        Image(
+                            painter = painterResource(entryIcon),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 2.dp),
+                            contentScale = ContentScale.Fit,
+                            colorFilter = entryIconColorFilter,
+                        )
+                    }
+                    if (showVideoFolderBadge) {
+                        com.nuvio.tv.ui.components.FreeboxFolderBadge(
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(2.dp).size(22.dp),
+                        )
+                    }
                 }
-                Text(
-                    text = entry.name,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (isFocused || isSelected) NuvioTheme.colors.TextPrimary else Color.White,
+                FocusMarqueeText(
+                    text = displayEntryName,
+                    focused = isFocused,
+                    modifier = Modifier.fillMaxWidth().height(20.dp).padding(horizontal = 2.dp, vertical = 1.dp),
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                    color = if (isSelected) NuvioTheme.colors.OnSecondary else Color.White,
                     textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = entryDetail,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isFocused || isSelected) {
-                        NuvioTheme.colors.TextSecondary
+                    modifier = Modifier.fillMaxWidth().height(34.dp),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                    color = if (isSelected) {
+                        NuvioTheme.colors.OnSecondary.copy(alpha = 0.86f)
                     } else {
                         Color.White.copy(alpha = 0.82f)
                     },
                     textAlign = TextAlign.Center,
-                    maxLines = 1,
+                    minLines = 2,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         } else {
             Row(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxSize().padding(start = 6.dp, top = 3.dp, end = 14.dp, bottom = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (thumbnailUri != null) {
-                    AsyncImage(
-                        model = thumbnailUri,
-                        contentDescription = entry.name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(width = 76.dp, height = 56.dp)
-                            .clip(NuvioTheme.configuredShape(RoundedCornerShape(8.dp))),
-                    )
-                } else {
-                    Image(
-                        painter = painterResource(entryIcon),
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        colorFilter = iconColorFilter,
-                    )
+                Box(Modifier.size(43.dp)) {
+                    if (thumbnailUri != null) {
+                        AsyncImage(
+                            model = thumbnailUri,
+                            contentDescription = entry.name,
+                            contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.Medium,
+                            modifier = Modifier.fillMaxSize()
+                                .clip(NuvioTheme.configuredShape(RoundedCornerShape(6.dp))),
+                        )
+                    } else {
+                        Image(
+                            painter = painterResource(entryIcon),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize().padding(2.dp),
+                            contentScale = ContentScale.Fit,
+                            colorFilter = entryIconColorFilter,
+                        )
+                    }
+                    if (showVideoFolderBadge) {
+                        com.nuvio.tv.ui.components.FreeboxFolderBadge(
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(1.dp).size(18.dp),
+                        )
+                    }
                 }
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        text = entry.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = NuvioTheme.colors.TextPrimary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(0.dp),
+                ) {
+                    FocusMarqueeText(
+                        text = displayEntryName,
+                        focused = isFocused,
+                        modifier = Modifier.fillMaxWidth().height(24.dp),
+                        style = MaterialTheme.typography.titleSmall.copy(fontSize = 14.sp),
+                        color = if (isSelected) NuvioTheme.colors.OnSecondary else Color.White,
                     )
                     Text(
                         text = entryDetail,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = NuvioTheme.colors.TextSecondary,
-                        maxLines = 1,
+                        modifier = Modifier.fillMaxWidth().height(30.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                        color = if (isSelected) NuvioTheme.colors.OnSecondary.copy(alpha = 0.86f)
+                        else NuvioTheme.colors.TextSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+            if (isSelected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(19.dp)
+                        .background(Color(0xFF25A85A), RoundedCornerShape(50)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "✓",
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
                     )
                 }
             }
@@ -1165,22 +1453,35 @@ private fun BrowserMessage(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall, color = NuvioTheme.colors.TextPrimary)
         Text(
-            description,
-            style = MaterialTheme.typography.bodyMedium,
+            text = title,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 16.sp),
             color = NuvioTheme.colors.TextSecondary,
-            modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
+            textAlign = TextAlign.Center,
         )
+        if (description.isNotBlank() && description != title) {
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 16.sp),
+                color = NuvioTheme.colors.TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
         if (actionLabel != null && onAction != null) {
-            val shape = NuvioTheme.configuredShape(RoundedCornerShape(12.dp))
+            val shape = NuvioTheme.configuredShape(RoundedCornerShape(10.dp))
             Card(
                 onClick = onAction,
+                modifier = Modifier.padding(top = 16.dp).widthIn(min = 280.dp, max = 330.dp).height(56.dp),
                 colors = CardDefaults.colors(
-                    containerColor = NuvioTheme.colors.BackgroundCard,
+                    containerColor = NuvioTheme.colors.Background,
                     focusedContainerColor = NuvioTheme.colors.FocusBackground,
                 ),
                 border = CardDefaults.border(
+                    border = Border(
+                        border = BorderStroke(1.dp, NuvioTheme.colors.Secondary.copy(alpha = 0.72f)),
+                        shape = shape,
+                    ),
                     focusedBorder = Border(
                         border = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs),
                         shape = shape,
@@ -1189,8 +1490,13 @@ private fun BrowserMessage(
                 shape = CardDefaults.shape(shape = shape),
                 scale = CardDefaults.scale(focusedScale = 1f, pressedScale = 1f),
             ) {
-                Box(Modifier.padding(horizontal = 22.dp, vertical = 14.dp)) {
-                    Text(actionLabel, style = MaterialTheme.typography.titleMedium, color = NuvioTheme.colors.TextPrimary)
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        actionLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = NuvioTheme.colors.TextPrimary,
+                        maxLines = 1,
+                    )
                 }
             }
         }
@@ -1202,4 +1508,45 @@ private fun formatBrowserSize(sizeBytes: Long): String = when {
     sizeBytes >= 1024L * 1024L -> String.format("%.1f Mo", sizeBytes / (1024.0 * 1024.0))
     sizeBytes >= 1024L -> String.format("%.0f Ko", sizeBytes / 1024.0)
     else -> "$sizeBytes o"
+}
+
+private fun formatBrowserDuration(durationMs: Long): String {
+    val totalMinutes = ((durationMs.coerceAtLeast(0L) + 30_000L) / 60_000L).coerceAtLeast(1L)
+    val hours = totalMinutes / 60L
+    val minutes = totalMinutes % 60L
+    return if (hours > 0L) {
+        "${hours}h${minutes.toString().padStart(2, '0')}"
+    } else {
+        "${minutes}min"
+    }
+}
+
+private fun sortServerBrowserEntriesByDuration(
+    entries: List<ServerBrowserEntry>,
+    videoDurations: Map<String, Long>,
+): List<ServerBrowserEntry> = entries.sortedWith(
+    compareBy<ServerBrowserEntry> {
+        when {
+            it.isDirectory -> 0
+            it.fileType == ServerBrowserFileType.VIDEO -> 1
+            else -> 2
+        }
+    }.thenBy {
+        if (it.fileType == ServerBrowserFileType.VIDEO) {
+            videoDurations[it.path] ?: Long.MAX_VALUE
+        } else {
+            0L
+        }
+    }.thenBy { it.name.lowercase(java.util.Locale.ROOT) }
+)
+
+private fun isVideosFolderPath(path: String): Boolean {
+    val folderName = android.net.Uri.decode(
+        path.replace('\\', '/').substringBefore('?').trimEnd('/').substringAfterLast('/'),
+    )
+    val normalizedName = java.text.Normalizer.normalize(
+        folderName,
+        java.text.Normalizer.Form.NFD,
+    ).replace(Regex("\\p{M}+"), "").lowercase(java.util.Locale.ROOT)
+    return normalizedName == "video" || normalizedName == "videos"
 }

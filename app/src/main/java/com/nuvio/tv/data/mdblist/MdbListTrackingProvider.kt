@@ -84,7 +84,7 @@ class MdbListTrackingHistoryWriter @Inject constructor(
     override suspend fun addToHistory(profileId: Int, items: Collection<TrackingHistoryItem>): TrackingMutationResult {
         val scope = sync.currentScope()
         if (scope.profileId != profileId) return TrackingMutationResult(0)
-        // MDBList answers a show-level mark by marking every episode watched, same as Simkl.
+        // MDBList answers a show-level mark by marking every episode watched.
         val pushableItems = items.filterNot(TrackingHistoryItem::isWholeSeriesMark)
         if (pushableItems.isEmpty()) return TrackingMutationResult(0)
         return service.add(scope, pushableItems.map { item -> item.copy(media = item.media.inMdbListNumbering()) })

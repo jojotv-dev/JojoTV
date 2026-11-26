@@ -461,6 +461,10 @@ object LiveTvRepository {
     fun vodCategoryHideKey(type: String, sourceId: String, categoryId: String): String =
         "$type\u001f$sourceId\u001f$categoryId"
 
+    /** Stable identity for a TV group belonging to one provider. */
+    fun tvGroupHideKey(sourceId: String, group: String): String =
+        "tv\u001f$sourceId\u001f${group.ifEmpty { "\uE000" }}"
+
     fun setVodCategoryHidden(type: String, sourceId: String, categoryId: String, hidden: Boolean) {
         if (type != "movie" && type != "series") return
         val current = _uiState.value.hiddenVodCategoryKeys
@@ -1264,7 +1268,11 @@ object LiveTvRepository {
         if (hiddenGroups.isEmpty() && hiddenKeys.isEmpty()) {
             channels
         } else {
-            channels.filter { it.group !in hiddenGroups && it.hideKey !in hiddenKeys }
+            channels.filter {
+                it.group !in hiddenGroups &&
+                    tvGroupHideKey(it.sourceId, it.group) !in hiddenGroups &&
+                    it.hideKey !in hiddenKeys
+            }
         }
 
     // endregion

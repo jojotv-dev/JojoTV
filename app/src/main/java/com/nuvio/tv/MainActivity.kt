@@ -1256,12 +1256,11 @@ open class MainActivity : ComponentActivity() {
                             add(Screen.Movies.route)
                             add(Screen.Series.route)
                             add(Screen.Home.route)
+                            add(Screen.Apps.route)
                             add(Screen.Search.route)
                             add(Screen.Library.route)
                             add(Screen.Calendar.route)
-                            add(Screen.ServerHub.route)
                             add(Screen.ServerBrowser.route)
-                            add(Screen.Apps.route)
                             add(Screen.Settings.route)
                             if (discoverLocation == DiscoverLocation.IN_SIDEBAR) {
                                 add(Screen.Discover.route)
@@ -1377,7 +1376,7 @@ open class MainActivity : ComponentActivity() {
                     }
                     val selectedDrawerRoute = drawerItems.firstOrNull { item ->
                         currentRoute == item.route || currentRoute?.startsWith("${item.route}/") == true
-                    }?.route
+                    }?.route ?: Screen.Home.route.takeIf { currentRoute == Screen.Apps.route }
                     val selectedDrawerItem = drawerItems.firstOrNull { it.route == selectedDrawerRoute } ?: drawerItems.first()
 
                     val freeboxUpdateViewModel: FreeboxUpdateViewModel = hiltViewModel(this@MainActivity)
@@ -2071,8 +2070,7 @@ private fun LegacySidebarScaffold(
                 .fillMaxSize()
                 .padding(start = contentStartPadding)
                 .onPreviewKeyEvent { keyEvent ->
-                    // Long-press Back on a root route directly opens the sidebar,
-                    // bypassing the "scroll row to start" BackHandler in home content.
+                    // Long-press Back on a root route directly opens the sidebar.
                     if (keyEvent.key == Key.Back) {
                         if (
                             keyEvent.type == KeyEventType.KeyDown &&
@@ -2470,8 +2468,7 @@ private fun ModernSidebarScaffold(
                     else Modifier
                 )
                 .onPreviewKeyEvent { keyEvent ->
-                    // Long-press Back on a root route directly opens the sidebar,
-                    // bypassing the "scroll row to start" BackHandler in home content.
+                    // Long-press Back on a root route directly opens the sidebar.
                     if (keyEvent.key == Key.Back) {
                         if (
                             keyEvent.type == KeyEventType.KeyDown &&
@@ -2658,7 +2655,6 @@ private fun ModernSidebarScaffold(
                 !sidebarCollapsed &&
                 sidebarShowCollapsedPill &&
                 selectedDrawerRoute != Screen.Search.route &&
-                currentRoute != Screen.Apps.route &&
                 currentRoute != Screen.Settings.route
             ) {
                 CollapsedSidebarPill(

@@ -20,13 +20,16 @@ internal data class ModernHomePresentationInput(
     val catalogRows: List<CatalogRow>,
     val continueWatchingItems: List<ContinueWatchingItem>,
     val upcomingItems: List<ContinueWatchingItem>,
+    val modernContinueWatchingHeroEnabled: Boolean = false,
     val useLandscapePosters: Boolean,
     val showCatalogTypeSuffix: Boolean,
     val showFullReleaseDate: Boolean,
     val showImdbRatings: Boolean,
     val detailImdbRatingsVisibility: com.nuvio.tv.domain.model.DetailImdbRatingsVisibility =
         com.nuvio.tv.domain.model.DetailImdbRatingsVisibility.SHOW_ALL,
-    val localeTag: String
+    val localeTag: String,
+    /** Progress retained for catalog badges even when the Continue Watching row is hidden. */
+    val catalogBadgeProgressItems: List<ContinueWatchingItem> = continueWatchingItems + upcomingItems
 )
 
 internal fun buildModernHomePresentation(
@@ -43,8 +46,8 @@ internal fun buildModernHomePresentation(
     val strTypeMovie = localizedContext.getString(R.string.type_movie)
     val strTypeSeries = localizedContext.getString(R.string.type_series)
     val inProgressMatchKeys = continueWatchingMatchKeys(
-        items = input.continueWatchingItems,
-        catalogItems = input.catalogRows.flatMap { it.items }
+        items = input.catalogBadgeProgressItems,
+        catalogItems = input.catalogRows.flatMap { it.items },
     )
 
     var continueWatchingCarouselRow: HeroCarouselRow? = null
@@ -55,7 +58,7 @@ internal fun buildModernHomePresentation(
         val catalogRowLimit = maxCatalogRows?.coerceAtLeast(0)
         var renderedCatalogRows = 0
 
-        if (input.continueWatchingItems.isNotEmpty()) {
+        if (input.continueWatchingItems.isNotEmpty() || input.modernContinueWatchingHeroEnabled) {
             val reuseContinueWatchingRow =
                 cache.continueWatchingRow != null &&
                     cache.continueWatchingItems == input.continueWatchingItems &&
@@ -377,12 +380,14 @@ internal fun buildModernHomePresentation(
 }
 
 private fun resolveVisibleHomeRows(input: ModernHomePresentationInput): List<HomeRow> {
-    if (input.homeRows.isNotEmpty()) {
+    val visibleRows = if (input.homeRows.isNotEmpty()) {
         val latestCatalogByKey = input.catalogRows.associateBy(::catalogRowKey)
-        return input.homeRows.mapNotNull { homeRow ->
+        input.homeRows.mapNotNull { homeRow ->
             when (homeRow) {
                 is HomeRow.ContinueWatching -> homeRow.takeIf {
-                    input.continueWatchingItems.isNotEmpty() || input.upcomingItems.isNotEmpty()
+                    input.modernContinueWatchingHeroEnabled ||
+                        input.continueWatchingItems.isNotEmpty() ||
+                        input.upcomingItems.isNotEmpty()
                 }
                 is HomeRow.Catalog -> {
                     val latest = latestCatalogByKey[catalogRowKey(homeRow.row)] ?: homeRow.row
@@ -398,11 +403,20 @@ private fun resolveVisibleHomeRows(input: ModernHomePresentationInput): List<Hom
                 }
             }
         }
+    } else {
+        input.catalogRows
+            .filter { it.items.isNotEmpty() }
+            .map(HomeRow::Catalog)
     }
 
-    return input.catalogRows
-        .filter { it.items.isNotEmpty() }
-        .map(HomeRow::Catalog)
+    return if (
+        input.modernContinueWatchingHeroEnabled &&
+        visibleRows.none { it is HomeRow.ContinueWatching }
+    ) {
+        listOf(HomeRow.ContinueWatching) + visibleRows
+    } else {
+        visibleRows
+    }
 }
 
 private fun collectionRowKey(collection: Collection): String {

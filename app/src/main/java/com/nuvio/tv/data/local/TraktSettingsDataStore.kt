@@ -6,7 +6,6 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.nuvio.tv.core.profile.ProfileManager
-import com.nuvio.tv.data.simkl.SimklAnimeIdPreference
 import com.nuvio.tv.domain.model.LibrarySourceMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,15 +29,17 @@ enum class WatchProgressSource {
 
     companion object {
         fun fromStorage(value: String?): WatchProgressSource {
-            return entries.firstOrNull { it.name == value } ?: TRAKT
+            return when (value) {
+                "SIMKL" -> NUVIO_SYNC
+                else -> entries.firstOrNull { it.name == value && it != SIMKL } ?: TRAKT
+            }
         }
     }
 }
 
 enum class MoreLikeThisSourcePreference {
     TRAKT,
-    TMDB,
-    SIMKL
+    TMDB
 }
 
 @Singleton
@@ -75,7 +76,6 @@ class TraktSettingsDataStore @Inject constructor(
     private val rememberedWatchProgressSourceKey = stringPreferencesKey("remembered_watch_progress_source")
     private val rememberedLibrarySourceModeKey = stringPreferencesKey("remembered_library_source_mode")
     private val moreLikeThisSourceKey = stringPreferencesKey("more_like_this_source")
-    private val simklAnimeIdPreferenceKey = stringPreferencesKey("simkl_anime_id_preference")
 
     val continueWatchingDaysCap: Flow<Int> = profileManager.activeProfileId.flatMapLatest { pid ->
         factory.get(pid, FEATURE).data.map { prefs ->
@@ -123,7 +123,7 @@ class TraktSettingsDataStore @Inject constructor(
 
     suspend fun getLibrarySourceMode(profileId: Int): LibrarySourceMode {
         val stored = store(profileId).data.first()[librarySourceModeKey]
-        return LibrarySourceMode.entries.firstOrNull { it.name == stored } ?: DEFAULT_LIBRARY_SOURCE_MODE
+        return LibrarySourceMode.fromStorage(stored) ?: DEFAULT_LIBRARY_SOURCE_MODE
     }
 
     suspend fun setContinueWatchingDaysCap(days: Int) {
@@ -198,7 +198,7 @@ class TraktSettingsDataStore @Inject constructor(
     val librarySourceMode: Flow<LibrarySourceMode> = profileManager.activeProfileId.flatMapLatest { pid ->
         factory.get(pid, FEATURE).data.map { prefs ->
             val stored = prefs[librarySourceModeKey]
-            LibrarySourceMode.entries.firstOrNull { it.name == stored } ?: DEFAULT_LIBRARY_SOURCE_MODE
+            LibrarySourceMode.fromStorage(stored) ?: DEFAULT_LIBRARY_SOURCE_MODE
         }
     }
 
@@ -225,7 +225,7 @@ class TraktSettingsDataStore @Inject constructor(
 
     suspend fun getRememberedLibrarySourceMode(profileId: Int): LibrarySourceMode? {
         val stored = store(profileId).data.first()[rememberedLibrarySourceModeKey]
-        return LibrarySourceMode.entries.firstOrNull { it.name == stored }
+        return LibrarySourceMode.fromStorage(stored)
     }
 
     suspend fun setRememberedLibrarySourceMode(mode: LibrarySourceMode?, profileId: Int) {
@@ -249,15 +249,4 @@ class TraktSettingsDataStore @Inject constructor(
         }
     }
 
-    val simklAnimeIdPreference: Flow<SimklAnimeIdPreference> = profileManager.activeProfileId.flatMapLatest { pid ->
-        factory.get(pid, FEATURE).data.map { prefs ->
-            SimklAnimeIdPreference.fromStorage(prefs[simklAnimeIdPreferenceKey])
-        }
-    }
-
-    suspend fun setSimklAnimeIdPreference(preference: SimklAnimeIdPreference) {
-        store().edit { prefs ->
-            prefs[simklAnimeIdPreferenceKey] = preference.name
-        }
-    }
 }

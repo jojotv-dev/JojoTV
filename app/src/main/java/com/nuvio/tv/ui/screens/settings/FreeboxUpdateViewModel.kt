@@ -237,7 +237,7 @@ class FreeboxUpdateViewModel @Inject constructor(
         const val DOWNLOADED_APK_NAME = "nuvio-freebox-update.apk"
 
         val VERSIONED_APK_REGEX = Regex(
-            "^NuvioTVLauncher[_ -]+v?([0-9]+(?:\\.[0-9]+){1,3})\\.apk$",
+            "^JojoTV[_ -]+v?([0-9]+(?:\\.[0-9]+){1,3})\\.apk$",
             RegexOption.IGNORE_CASE,
         )
     }

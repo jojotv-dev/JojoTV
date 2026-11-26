@@ -279,7 +279,17 @@ data class LiveTvUiState(
 
     /** Categories the list shows. */
     val visibleGroups: List<String>
-        get() = if (hiddenGroups.isEmpty()) groups else groups.filterNot(hiddenGroups::contains)
+        get() {
+            if (hiddenGroups.isEmpty()) return groups
+            if (hiddenGroups.none { it.startsWith("tv\u001f") }) return groups.filterNot(hiddenGroups::contains)
+            val groupsWithVisibleProviders = channels.asSequence()
+                .filter { channel ->
+                    channel.group !in hiddenGroups &&
+                        LiveTvRepository.tvGroupHideKey(channel.sourceId, channel.group) !in hiddenGroups
+                }
+                .mapTo(HashSet()) { it.group }
+            return groups.filter { it !in hiddenGroups && it in groupsWithVisibleProviders }
+        }
 }
 
 /** How a source's guide did: none offered, loading, read for [channels] channels, or failed. */

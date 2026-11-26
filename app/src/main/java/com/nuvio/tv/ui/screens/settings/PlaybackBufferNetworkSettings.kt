@@ -163,7 +163,7 @@ private fun CustomBufferControls(
         subtitle = stringResource(R.string.playback_buffer_after_rebuffer_sub),
         value = buffer.bufferForPlaybackAfterRebufferMs / 1000,
         valueText = "${buffer.bufferForPlaybackAfterRebufferMs / 1000}s",
-        minValue = 1,
+        minValue = 0,
         maxValue = 120,
         step = 1,
         onValueChange = { seconds -> onUpdate { setBufferForPlaybackAfterRebufferMs(seconds * 1000) } }

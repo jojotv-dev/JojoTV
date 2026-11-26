@@ -402,6 +402,7 @@ internal fun IptvSeriesDetailsLayout(
             item(key = "iptv_series_episodes_${selectedSeason ?: 0}") {
                 EpisodesRow(
                     episodes = episodeVideos,
+                    episodeArtworkFallbackUrl = info.backdropUrl,
                     episodeProgressMap = episodeProgressMap,
                     watchedEpisodes = watchedEpisodes,
                     episodeWatchedPendingKeys = episodeWatchedPendingKeys,

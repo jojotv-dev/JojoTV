@@ -2,6 +2,9 @@ package com.nuvio.tv.ui.screens.home
 
 import android.content.Context
 import android.net.Uri
+import com.nuvio.tv.youtube.AccountScope
+import com.nuvio.tv.youtube.YouTubeAccountScopes
+import com.nuvio.tv.youtube.YouTubeProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -74,6 +77,15 @@ internal suspend fun HomeViewModel.findContinueWatchingHeroArtworkCandidates(
             year = item.info.releaseInfo?.take(4)?.toIntOrNull()
         }
     }
+
+    val youtubeCandidates = if (YouTubeProgress.isYouTubeId(contentId)) {
+        searchYouTubeHeroArtworkCandidates(
+            title = title,
+            videoId = contentId.removePrefix(YouTubeProgress.ID_PREFIX),
+        )
+    } else {
+        emptyList()
+    }
     val language = tmdbSettingsDataStore.settings.first().language
     val idCandidates = tmdbService.artworkCandidatesForContentId(
         contentId = contentId,
@@ -81,24 +93,54 @@ internal suspend fun HomeViewModel.findContinueWatchingHeroArtworkCandidates(
         portrait = false,
         language = language,
     )
-    if (idCandidates.isNotEmpty()) return idCandidates
+    val tmdbCandidates = when {
+        idCandidates.isNotEmpty() -> idCandidates
+        else -> {
+            val exactTitleCandidates = tmdbService.artworkCandidatesForExactTitle(
+                title = title,
+                mediaType = mediaType,
+                portrait = false,
+                language = language,
+                year = year,
+            )
+            if (exactTitleCandidates.isNotEmpty()) {
+                exactTitleCandidates
+            } else {
+                tmdbService.artworkCandidatesForSearchTitle(
+                    title = title,
+                    mediaType = mediaType,
+                    portrait = false,
+                    language = language,
+                    year = year,
+                )
+            }
+        }
+    }
 
-    val exactTitleCandidates = tmdbService.artworkCandidatesForExactTitle(
-        title = title,
-        mediaType = mediaType,
-        portrait = false,
-        language = language,
-        year = year,
-    )
-    if (exactTitleCandidates.isNotEmpty()) return exactTitleCandidates
+    return (youtubeCandidates + tmdbCandidates).distinct()
+}
 
-    return tmdbService.artworkCandidatesForSearchTitle(
-        title = title,
-        mediaType = mediaType,
-        portrait = false,
-        language = language,
-        year = year,
-    )
+private suspend fun HomeViewModel.searchYouTubeHeroArtworkCandidates(
+    title: String,
+    videoId: String,
+): List<String> {
+    if (title.isBlank()) return emptyList()
+    return withContext(Dispatchers.IO) {
+        runCatching {
+            YouTubeAccountScopes.engine(appContext, AccountScope.ONETUBE)
+                .contentService
+                .getSearchObserve(title)
+                .blockingFirst()
+                .asSequence()
+                .flatMap { it.mediaItems.orEmpty().asSequence() }
+                .filter { !it.videoId.isNullOrBlank() }
+                .sortedBy { if (it.videoId == videoId) 0 else 1 }
+                .mapNotNull { it.cardImageUrl?.trim()?.takeIf(String::isNotBlank) }
+                .distinct()
+                .take(16)
+                .toList()
+        }.getOrDefault(emptyList())
+    }
 }
 
 internal suspend fun HomeViewModel.setContinueWatchingHeroArtwork(

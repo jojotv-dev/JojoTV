@@ -10,10 +10,15 @@ fun formatHeroRuntime(runtime: String?): String? {
     // genre. No runtime is the honest reading of zero, and callers already drop a null.
     if (totalMinutes <= 0) return null
 
+    return formatCompactRuntimeMinutes(totalMinutes)
+}
+
+internal fun formatCompactRuntimeMinutes(totalMinutes: Int): String? {
+    if (totalMinutes <= 0) return null
     val wholeHours = totalMinutes / 60
     val remainingMinutes = totalMinutes % 60
     return when {
-        wholeHours > 0 && remainingMinutes > 0 -> "${wholeHours}h ${remainingMinutes}m"
+        wholeHours > 0 && remainingMinutes > 0 -> "${wholeHours}h${remainingMinutes.toString().padStart(2, '0')}m"
         wholeHours > 0 -> "${wholeHours}h"
         else -> "${remainingMinutes}m"
     }

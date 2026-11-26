@@ -130,7 +130,7 @@ internal fun HomeRowDetailsPanel(
                 contentDescription = title,
                 contentScale = ContentScale.Fit,
                 alignment = Alignment.CenterStart,
-                modifier = Modifier.height(48.dp).fillMaxWidth(0.55f),
+                modifier = Modifier.height(48.dp).fillMaxWidth(),
                 onError = { logoFailed = true }
             )
         } else {

@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -107,14 +108,32 @@ internal object LiveTvXtream {
         val settings = source.xtream.normalized()
         val action = if (type == "movie") "get_vod_streams" else "get_series"
         val url = apiUrl(settings, action) + if (categoryId.isBlank()) "" else "&category_id=${categoryId.urlEncoded()}"
-        return LiveTvHttp.stream(url, LIVE_TV_PLAYLIST_HEADERS, callTimeoutSeconds = 90L) { input ->
+        var receivedEntries = 0
+        var skippedEntries = 0
+        val items = LiveTvHttp.stream(
+            url,
+            LIVE_TV_PLAYLIST_HEADERS,
+            readTimeoutSeconds = 120L,
+            callTimeoutSeconds = 240L,
+        ) { input ->
             readObjects(input, onBatch) { fields ->
-                val id = fields[if (type == "movie") "stream_id" else "series_id"]
-                    ?: fields[if (type == "movie") "movie_id" else "series_id"]
+                receivedEntries++
+                val id = fields["stream_id"] ?: fields["streamid"]
+                    ?: fields["movie_id"] ?: fields["movieid"]
+                    ?: fields["series_id"] ?: fields["seriesid"]
                     ?: fields["vod_id"]
-                    ?: fields["id"] ?: return@readObjects null
-                val title = fields["name"] ?: fields["title"] ?: fields["stream_name"] ?: fields["series_name"]
-                    ?: return@readObjects null
+                    ?: fields["vodid"]
+                    ?: fields["id"]
+                if (id.isNullOrBlank()) {
+                    skippedEntries++
+                    return@readObjects null
+                }
+                val title = fields["name"] ?: fields["title"] ?: fields["stream_name"] ?: fields["streamname"]
+                    ?: fields["series_name"] ?: fields["seriesname"] ?: fields["movie_name"] ?: fields["vod_name"]
+                if (title.isNullOrBlank()) {
+                    skippedEntries++
+                    return@readObjects null
+                }
                 LiveTvVodItem(
                     id = "${source.id}:$type:$id",
                     sourceId = source.id,
@@ -132,11 +151,18 @@ internal object LiveTvXtream {
                         "stream_icon", "cover", "cover_big", "movie_image", "movie_img", "poster", "poster_url", "image", "image_url"
                     )),
                     extension = (fields["container_extension"] ?: fields["extension"])?.takeIf(String::isNotBlank) ?: "mp4",
-                    year = fields["year"]?.takeIf(String::isNotBlank) ?: fields["releaseDate"]?.take(4).orEmpty(),
+                    year = fields["year"]?.takeIf(String::isNotBlank) ?: fields["releasedate"]?.take(4).orEmpty(),
                     plot = fields["plot"].orEmpty(),
                 )
             }
         }
+        val uniqueIds = items.asSequence().map(LiveTvVodItem::id).distinct().count()
+        Log.i(
+            "LiveTvXtream",
+            "VOD $type parsed=${items.size} unique=$uniqueIds received=$receivedEntries skipped=$skippedEntries " +
+                "categoryScoped=${categoryId.isNotBlank()}"
+        )
+        return items
     }
 
     suspend fun seriesEpisodes(source: LiveTvSource, series: LiveTvVodItem): List<LiveTvVodItem> {
@@ -398,7 +424,7 @@ internal fun LiveTvStalkerSettings.normalized(): LiveTvStalkerSettings = copy(
 
 internal data class StalkerChannels(val channels: List<LiveTvChannel>, val incomplete: Boolean, val groupOrder: List<String> = emptyList())
 
-private class StalkerSession(val settings: LiveTvStalkerSettings, val token: String) {
+private class StalkerSession(val settings: LiveTvStalkerSettings, val token: String?) {
     /** Built once per session and shared by every channel, not copied into each. */
     var playbackHeaders: Map<String, String>? = null
 }
@@ -437,7 +463,12 @@ internal object LiveTvStalker {
         require(type == "movie" || type == "series")
         return withSession(source.stalker.normalized()) { session ->
             withStalkerRetry("VOD $type categories") {
-                dataObjects(session, if (type == "movie") "vod" else "series", "get_categories") { fields ->
+                dataObjects(
+                    session,
+                    if (type == "movie") "vod" else "series",
+                    "get_categories",
+                    failOnUnmappedEntries = true,
+                ) { fields ->
                     val id = fields.firstValue("id", "category_id", "alias") ?: return@dataObjects null
                     val name = fields.firstCategoryName(
                         "title", "name", "category_name", "group_name", "genre_name", "tv_genre_name",
@@ -461,24 +492,42 @@ internal object LiveTvStalker {
             val result = ArrayList<LiveTvVodItem>()
             val seenIds = HashSet<String>()
             var reportedTotal: Int? = null
+            var receivedEntries = 0
+            var skippedEntries = 0
             var pagesRead = 0
             var reportedTotalExceeded = false
             var noProgressPages = 0
-            suspend fun readPage(pageNumber: Int): StalkerPage<LiveTvVodItem> = withStalkerRetry("VOD $type page $pageNumber") {
+            suspend fun readPage(
+                pageNumber: Int,
+                initialProbe: Boolean = false,
+            ): StalkerPage<LiveTvVodItem> = withStalkerRetry("VOD $type page $pageNumber") {
                     LiveTvHttp.stream(
                         url(session.settings, session.token, if (type == "movie") "vod" else "series", "get_ordered_list",
-                            mapOf("category" to categoryId.ifBlank { "*" }, "p" to pageNumber.toString(), "movie_id" to "0", "season_id" to "0", "episode_id" to "0")),
+                            buildMap {
+                                put("category", categoryId.ifBlank { "*" })
+                                put("sortby", "added")
+                                put("p", pageNumber.toString())
+                                if (type == "movie") put("genre", "0")
+                            }),
                         baseHeaders(session.settings) + tokenHeader(session.token),
+                        // The first pages decide how the portal numbers its pages. Keep these
+                        // probes bounded so an unsupported p=0 cannot hold the import for minutes.
+                        readTimeoutSeconds = if (initialProbe) 30L else 120L,
+                        callTimeoutSeconds = if (initialProbe) 45L else 240L,
                         httpMethod = session.settings.requestMethod,
                         proxyUrl = session.settings.httpProxy,
                     ) { input ->
                         readStalkerPage(input) { fields ->
-                            val id = fields["id"] ?: return@readStalkerPage null
-                            val title = fields["name"] ?: fields["title"] ?: return@readStalkerPage null
+                            val id = fields.firstValue(
+                                "id", "movie_id", "vod_id", "series_id", "stream_id", "video_id",
+                            ) ?: return@readStalkerPage null
+                            val title = fields.firstValue(
+                                "name", "title", "movie_name", "series_name", "stream_name", "o_name",
+                            ) ?: return@readStalkerPage null
                             LiveTvVodItem(
                                 id = "${source.id}:$type:$id", sourceId = source.id, providerId = id,
                                 title = title, type = type,
-                                categoryId = (fields["category"] ?: fields["category_id"])
+                                categoryId = fields.firstValue("category", "category_id", "genre_id")
                                     ?.takeIf(String::isNotBlank)
                                     ?: categoryId,
                                 categoryName = fields.firstCategoryName(
@@ -488,34 +537,84 @@ internal object LiveTvStalker {
                                 posterUrl = resolveVodPoster(source, fields.firstValue(
                                     "screenshot_uri", "cover", "cover_big", "movie_image", "poster", "poster_url", "image", "logo"
                                 )),
-                                year = fields["year"].orEmpty(), plot = fields["description"].orEmpty(),
-                                command = fields["cmd"] ?: fields["command"].orEmpty(),
+                                year = fields.firstValue("year", "release_year").orEmpty(),
+                                plot = fields.firstValue("description", "plot", "plot_outline").orEmpty(),
+                                command = fields.firstValue("cmd", "command", "url").orEmpty(),
                             )
                         }
                     }
                 }
 
-            // Stalker portals disagree on whether `p` starts at zero or one. Probe both first
-            // pages and detect the convention from their contents so page zero is not skipped.
-            val zeroPage = try {
-                readPage(0)
+            // Probe p=0, p=1 and p=2 concurrently: portals disagree about the first page, and an
+            // unsupported index can take minutes to time out. Publish each page as it arrives so
+            // a slow p=0 probe cannot hold back the usual p=1 and p=2 catalogue pages.
+            suspend fun readPageResult(pageNumber: Int): Result<StalkerPage<LiveTvVodItem>> = try {
+                Result.success(readPage(pageNumber, initialProbe = true))
+            } catch (failure: CancellationException) {
+                throw failure
             } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                StalkerPage(emptyList(), null, null)
+                Result.failure(failure)
             }
-            val onePage = readPage(1)
-            val zeroBased = zeroPage.entries.isNotEmpty() &&
-                (onePage.entries.isEmpty() || zeroPage.entries.map(LiveTvVodItem::id) != onePage.entries.map(LiveTvVodItem::id))
+
+            val emittedProbeIds = HashSet<String>()
+            val pageResults = coroutineScope {
+                val pending = linkedMapOf(
+                    0 to async { readPageResult(0) },
+                    1 to async { readPageResult(1) },
+                    2 to async { readPageResult(2) },
+                )
+                val completed = LinkedHashMap<Int, Result<StalkerPage<LiveTvVodItem>>>()
+                while (pending.isNotEmpty()) {
+                    val response = select<Pair<Int, Result<StalkerPage<LiveTvVodItem>>>> {
+                        pending.forEach { (number, deferred) ->
+                            deferred.onAwait { number to it }
+                        }
+                    }
+                    pending.remove(response.first)
+                    completed[response.first] = response.second
+                    response.second.getOrNull()?.entries
+                        ?.filter { emittedProbeIds.add(it.id) }
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let(onBatch)
+                }
+                completed
+            }
+            val zeroResult = pageResults.getValue(0)
+            val oneResult = pageResults.getValue(1)
+            val zeroPage = zeroResult.getOrNull()
+            val onePage = oneResult.getOrNull()
+            if (zeroPage == null && onePage == null) {
+                throw oneResult.exceptionOrNull() ?: zeroResult.exceptionOrNull()
+                    ?: java.io.IOException("Stalker $type first pages could not be loaded")
+            }
+            if (onePage == null && zeroPage?.entries.isNullOrEmpty()) {
+                throw oneResult.exceptionOrNull() ?: java.io.IOException("Stalker $type page 1 could not be loaded")
+            }
+            val zeroBased = zeroPage?.entries?.isNotEmpty() == true &&
+                (onePage == null || onePage.entries.isEmpty() ||
+                    zeroPage.entries.map(LiveTvVodItem::id) != onePage.entries.map(LiveTvVodItem::id))
+            val initialPageNumbers = if (zeroBased) listOf(0, 1, 2) else listOf(1, 2)
+            val initialPages = initialPageNumbers.mapNotNull { number ->
+                pageResults[number]?.getOrNull()?.let { number to it }
+            }.toMap()
             var pageNumber = if (zeroBased) 0 else 1
-            var page = if (zeroBased) zeroPage else onePage
+            var page = initialPages[pageNumber]
+                ?: throw pageResults[pageNumber]?.exceptionOrNull()
+                ?: java.io.IOException("Stalker $type page $pageNumber could not be loaded")
             suspend fun advancePage() {
                 pageNumber++
-                if (pageNumber <= MAX_PAGES) page = if (pageNumber == 1) onePage else readPage(pageNumber)
+                if (pageNumber <= MAX_PAGES) {
+                    page = initialPages[pageNumber]
+                        ?: pageResults[pageNumber]?.getOrThrow()
+                        ?: readPage(pageNumber)
+                }
             }
             Log.i("LiveTvStalker", "VOD $type pagination starts at p=$pageNumber")
 
             while (pageNumber <= MAX_PAGES) {
                 pagesRead++
+                receivedEntries += page.receivedEntries
+                skippedEntries += page.skippedEntries
                 page.totalItems?.takeIf { it >= 0 }?.let { reportedTotal = it }
                 if (page.entries.isEmpty()) {
                     val expected = reportedTotal
@@ -541,7 +640,8 @@ internal object LiveTvStalker {
                 }
                 noProgressPages = 0
                 result += fresh
-                onBatch(fresh)
+                val notYetEmitted = fresh.filter { emittedProbeIds.add(it.id) }
+                if (notYetEmitted.isNotEmpty()) onBatch(notYetEmitted)
                 val expected = reportedTotal
                 if (!reportedTotalExceeded && expected != null && result.size > expected) {
                     reportedTotalExceeded = true
@@ -552,7 +652,11 @@ internal object LiveTvStalker {
                 }
                 advancePage()
             }
-            Log.i("LiveTvStalker", "VOD $type loaded ${result.size} items across $pagesRead pages")
+            Log.i(
+                "LiveTvStalker",
+                "VOD $type parsed=${result.size} received=$receivedEntries skipped=$skippedEntries " +
+                    "pages=$pagesRead reportedTotal=${reportedTotal ?: -1} categoryScoped=${categoryId.isNotBlank()}"
+            )
             result
         }
     }
@@ -822,7 +926,8 @@ internal object LiveTvStalker {
      * Runs [block] with a portal session. Portals expire sessions without notice, so a failure
      * with a cached session is retried once after a fresh handshake.
      */
-    private suspend fun <T> withSession(settings: LiveTvStalkerSettings, block: suspend (StalkerSession) -> T): T {
+    private suspend fun <T> withSession(settingsInput: LiveTvStalkerSettings, block: suspend (StalkerSession) -> T): T {
+        val settings = settingsInput.normalized()
         val cached = sessions[settings]
         if (cached != null) {
             try {
@@ -833,17 +938,120 @@ internal object LiveTvStalker {
                 sessions.remove(settings, cached)
             }
         }
-        return block(handshake(settings))
+        val session = handshake(settings)
+        sessions[settings] = session
+        return block(session)
     }
 
     private suspend fun handshake(settings: LiveTvStalkerSettings): StalkerSession {
-        val device = profileParameters(settings)
-        val js = JSONObject(request(settings, null, "stb", "handshake", device)).let { it.optJSONObject("js") ?: it }
-        val token = js.optNonBlank("token") ?: throw LiveTvException(LiveTvError.StalkerToken)
-        // Many portals only list channels after the device profile was requested with the token.
-        runCatching { request(settings, token, "stb", "get_profile", device) }
-            .onFailure { if (it is CancellationException) throw it }
-        return StalkerSession(settings, token).also { sessions[settings] = it }
+        var lastFailure: Exception? = null
+        val endpoints = stalkerEndpointCandidates(settings)
+        for ((index, endpoint) in endpoints.withIndex()) {
+            val endpointSettings = settings.copy(portalUrl = endpoint)
+
+            // IPTVnator first probes the lightweight genre action. Some Stalker-compatible
+            // panels expose content without a MAG session; do not force a token on those.
+            try {
+                val probe = request(endpointSettings, null, "itv", "get_genres")
+                if (isStalkerListResponse(probe)) {
+                    Log.i("LiveTvStalker", "Using token-free Stalker endpoint candidate ${index + 1}")
+                    return StalkerSession(endpointSettings, null)
+                }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                lastFailure = failure
+            }
+
+            try {
+                val device = profileParameters(endpointSettings)
+                val handshakeResponse = JSONObject(request(endpointSettings, null, "stb", "handshake", device))
+                val handshakeJs = handshakeResponse.optJSONObject("js") ?: handshakeResponse
+                val token = handshakeJs.optNonBlank("token")
+                    ?: throw LiveTvException(LiveTvError.StalkerToken)
+
+                // A full portal may require an account login after issuing its MAG token.
+                val profileResponse = try {
+                    request(endpointSettings, token, "stb", "get_profile", device)
+                } catch (failure: Exception) {
+                    if (failure is CancellationException) throw failure
+                    null
+                }
+                val profile = profileResponse?.let(::stalkerResponseJs)
+                val status = profile?.optString("status").orEmpty()
+                if (status == "2") {
+                    if (endpointSettings.username.isBlank() || endpointSettings.password.isBlank()) {
+                        throw java.io.IOException(
+                            profile?.optNonBlank("msg")
+                                ?: profile?.optNonBlank("block_msg")
+                                ?: "Stalker portal requires a login and password",
+                        )
+                    }
+                    val authResponse = JSONObject(
+                        request(
+                            endpointSettings,
+                            token,
+                            "stb",
+                            "do_auth",
+                            device + mapOf(
+                                "login" to endpointSettings.username,
+                                "password" to endpointSettings.password,
+                            ),
+                        ),
+                    )
+                    val authResult = authResponse.opt("js")
+                    if (authResult != true && authResult?.toString() != "true") {
+                        throw java.io.IOException("Stalker portal rejected the account login")
+                    }
+                    val secondProfile = JSONObject(
+                        request(
+                            endpointSettings,
+                            token,
+                            "stb",
+                            "get_profile",
+                            device + mapOf("auth_second_step" to "1"),
+                        ),
+                    )
+                    val secondProfileJs = secondProfile.optJSONObject("js") ?: secondProfile
+                    if (secondProfileJs.optString("status") == "1" || secondProfileJs.optString("status") == "2") {
+                        throw java.io.IOException(
+                            secondProfileJs.optNonBlank("msg")
+                                ?: secondProfileJs.optNonBlank("block_msg")
+                                ?: "Stalker portal did not confirm the account session",
+                        )
+                    }
+                } else if (status == "1") {
+                    throw java.io.IOException(
+                        profile?.optNonBlank("msg")
+                            ?: profile?.optNonBlank("block_msg")
+                            ?: "Stalker portal refused the device session",
+                    )
+                }
+
+                val probe = request(endpointSettings, token, "itv", "get_genres")
+                if (!isStalkerListResponse(probe)) {
+                    throw java.io.IOException("Stalker endpoint did not return a genre list")
+                }
+                Log.i("LiveTvStalker", "Using authenticated Stalker endpoint candidate ${index + 1}")
+                return StalkerSession(endpointSettings, token)
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                lastFailure = failure
+                Log.w("LiveTvStalker", "Stalker endpoint candidate ${index + 1} was not usable", failure)
+            }
+        }
+        throw lastFailure ?: LiveTvException(LiveTvError.StalkerToken)
+    }
+
+    private fun stalkerResponseJs(response: String): JSONObject? =
+        runCatching { JSONObject(response).optJSONObject("js") ?: JSONObject(response) }.getOrNull()
+
+    private fun isStalkerListResponse(response: String): Boolean {
+        val root = runCatching { JSONObject(response) }.getOrNull()
+            ?: return runCatching { JSONArray(response) }.isSuccess
+        val js = root.opt("js")
+        if (js is JSONArray) return true
+        if (js is JSONObject) return !js.has("error") && js.opt("data") is JSONArray
+        return !root.has("error") && root.opt("data") is JSONArray
     }
 
     private suspend fun genres(session: StalkerSession): Map<String, String> =
@@ -1000,6 +1208,7 @@ internal object LiveTvStalker {
         session: StalkerSession,
         type: String,
         action: String,
+        failOnUnmappedEntries: Boolean = false,
         map: (Map<String, String>) -> T?,
     ): List<T> =
         LiveTvHttp.stream(
@@ -1007,7 +1216,24 @@ internal object LiveTvStalker {
             baseHeaders(session.settings) + tokenHeader(session.token),
             httpMethod = session.settings.requestMethod,
             proxyUrl = session.settings.httpProxy,
-        ) { input -> readStalkerPage(input, map).entries }
+        ) { input ->
+            val page = readStalkerPage(input, map)
+            if (failOnUnmappedEntries && (
+                    page.skippedEntries > 0 ||
+                        (page.entries.isEmpty() && (page.totalItems ?: 0) > 0)
+                )
+            ) {
+                Log.w(
+                    "LiveTvStalker",
+                    "Rejected category response type=$type action=$action parsed=${page.entries.size} " +
+                        "received=${page.receivedEntries} skipped=${page.skippedEntries} total=${page.totalItems}",
+                )
+                throw java.io.IOException(
+                    "Stalker $type/$action returned ${page.totalItems ?: page.receivedEntries} category entries but parsed ${page.entries.size}",
+                )
+            }
+            page.entries
+        }
 
     private suspend fun request(
         settings: LiveTvStalkerSettings,
@@ -1034,8 +1260,6 @@ internal object LiveTvStalker {
             put("action", action)
             put("JsHttpRequest", "1-xml")
             if (!token.isNullOrBlank()) put("token", token)
-            if (settings.username.isNotBlank()) put("login", settings.username)
-            if (settings.password.isNotBlank()) put("password", settings.password)
             putAll(extra)
         }
         val endpoint = settings.portalEndpoint()
@@ -1055,7 +1279,7 @@ internal object LiveTvStalker {
         val headers = linkedMapOf(
             "User-Agent" to settings.stbUserAgent.ifBlank { DEFAULT_STALKER_STB_USER_AGENT },
             "X-User-Agent" to "Model: $model; Link: Ethernet",
-            "Referer" to settings.portalUrl.trim().substringBefore("/portal.php").trimEnd('/') + "/c/",
+            "Referer" to settings.stalkerPortalReferer(),
             "Cookie" to "mac=${settings.macAddress}; stb_lang=en; timezone=${timezone.urlEncoded()}",
         )
         val custom = parseStalkerHeaders(settings.httpHeaders)
@@ -1095,14 +1319,60 @@ internal object LiveTvStalker {
         if (token.isNullOrBlank()) emptyMap() else mapOf("Authorization" to "Bearer $token")
 
     private fun LiveTvStalkerSettings.portalEndpoint(): String {
-        val normalized = portalUrl.trim().trimEnd('/')
+        val normalized = portalUrl.trim().substringBefore('?').substringBefore('#').trimEnd('/')
         return when {
             normalized.endsWith("portal.php", ignoreCase = true) -> normalized
-            normalized.contains("portal.php?", ignoreCase = true) -> normalized
+            normalized.endsWith("/server/load.php", ignoreCase = true) -> normalized
+            normalized.endsWith("/c", ignoreCase = true) && normalized.contains("/stalker_portal", ignoreCase = true) ->
+                normalized.dropLast(2) + "/server/load.php"
             normalized.endsWith("/c", ignoreCase = true) -> normalized.dropLast(2) + "/portal.php"
             else -> "$normalized/portal.php"
         }
     }
+
+    private fun LiveTvStalkerSettings.stalkerPortalReferer(): String {
+        val normalized = portalUrl.trim().substringBefore('?').substringBefore('#').trimEnd('/')
+        val base = when {
+            normalized.endsWith("/server/load.php", ignoreCase = true) -> normalized.removeSuffixIgnoreCase("/server/load.php")
+            normalized.endsWith("/portal.php", ignoreCase = true) -> normalized.removeSuffixIgnoreCase("/portal.php")
+            normalized.endsWith("/c", ignoreCase = true) -> normalized.dropLast(2)
+            else -> normalized
+        }
+        return "$base/c/"
+    }
+
+    /** Probe the endpoint forms used by MAG/Stalker portals instead of assuming portal.php. */
+    private fun stalkerEndpointCandidates(settings: LiveTvStalkerSettings): List<String> {
+        val uri = runCatching { java.net.URI(settings.portalUrl.trim()) }.getOrNull()
+            ?: return listOf(settings.portalEndpoint())
+        val scheme = uri.scheme?.takeIf(String::isNotBlank) ?: return listOf(settings.portalEndpoint())
+        val authority = uri.rawAuthority?.takeIf(String::isNotBlank) ?: return listOf(settings.portalEndpoint())
+        val path = uri.rawPath.orEmpty().trimEnd('/')
+        val origin = "$scheme://$authority"
+        val candidates = mutableListOf<String>()
+        val pathIsPhp = path.substringAfterLast('/').endsWith(".php", ignoreCase = true)
+        if (pathIsPhp) candidates += "$origin$path"
+        val base = when {
+            path.endsWith("/server/load.php", ignoreCase = true) -> path.removeSuffixIgnoreCase("/server/load.php")
+            path.endsWith("/portal.php", ignoreCase = true) -> path.removeSuffixIgnoreCase("/portal.php")
+            pathIsPhp -> path.substringBeforeLast('/')
+            path.endsWith("/c", ignoreCase = true) -> path.dropLast(2)
+            else -> path
+        }.trimEnd('/')
+        fun add(suffix: String) {
+            val candidatePath = if (base.isBlank()) "/$suffix" else "$base/$suffix"
+            candidates += "$origin$candidatePath"
+        }
+        add("portal.php")
+        add("server/load.php")
+        if (!base.endsWith("/stalker_portal", ignoreCase = true)) {
+            add("stalker_portal/server/load.php")
+        }
+        return candidates.distinct().ifEmpty { listOf(settings.portalEndpoint()) }
+    }
+
+    private fun String.removeSuffixIgnoreCase(suffix: String): String =
+        if (endsWith(suffix, ignoreCase = true)) dropLast(suffix.length) else this
 
     /**
      * A channel logo as a link. Many portals give only the file name ("1234.png"), served from
@@ -1270,29 +1540,47 @@ private fun xmlEscaped(text: String): String {
     }
 }
 
-private class StalkerPage<T>(val entries: List<T>, val totalItems: Int?, val maxPageItems: Int?)
+private class StalkerPage<T>(
+    val entries: List<T>,
+    val totalItems: Int?,
+    val maxPageItems: Int?,
+    val receivedEntries: Int = entries.size,
+    val skippedEntries: Int = 0,
+)
 
 /** Streams Stalker answers with either a `js` array or a `js` object containing `data`. */
 private fun <T : Any> readStalkerPage(input: InputStream, map: (Map<String, String>) -> T?): StalkerPage<T> {
     var entries: List<T> = emptyList()
     var total: Int? = null
     var perPage: Int? = null
+    var receivedEntries = 0
+    var skippedEntries = 0
+    var hasEntryArray = false
+    var errorMessage: String? = null
     JsonReader(InputStreamReader(input, Charsets.UTF_8)).use { reader ->
         reader.isLenient = true
+        fun readEntries(): List<T> {
+            hasEntryArray = true
+            return reader.readObjectArray(map = { fields ->
+                receivedEntries++
+                map(fields).also { if (it == null) skippedEntries++ }
+            })
+        }
         fun readBody() {
             reader.beginObject()
             while (reader.hasNext()) {
                 when (reader.nextName().lowercase()) {
                     "js" -> when (reader.peek()) {
                         JsonToken.BEGIN_OBJECT -> readBody()
-                        JsonToken.BEGIN_ARRAY -> entries = reader.readObjectArray(map)
+                        JsonToken.BEGIN_ARRAY -> entries = readEntries()
                         else -> reader.skipValue()
                     }
-                    "data", "categories", "items", "results" -> entries = if (reader.peek() == JsonToken.BEGIN_ARRAY) reader.readObjectArray(map) else {
+                    "data", "categories", "items", "results" -> entries = if (reader.peek() == JsonToken.BEGIN_ARRAY) readEntries() else {
                         reader.skipValue(); emptyList()
                     }
                     "total_items" -> total = reader.nextScalar()?.toIntOrNull()
                     "max_page_items" -> perPage = reader.nextScalar()?.toIntOrNull()
+                    "error", "message", "msg" -> errorMessage = reader.nextScalar()?.takeIf(String::isNotBlank) ?: errorMessage
                     else -> reader.skipValue()
                 }
             }
@@ -1300,11 +1588,15 @@ private fun <T : Any> readStalkerPage(input: InputStream, map: (Map<String, Stri
         }
         when (reader.peek()) {
             JsonToken.BEGIN_OBJECT -> readBody()
-            JsonToken.BEGIN_ARRAY -> entries = reader.readObjectArray(map)
+            JsonToken.BEGIN_ARRAY -> entries = readEntries()
             else -> Unit
         }
     }
-    return StalkerPage(entries, total, perPage)
+    if (entries.isEmpty() && !errorMessage.isNullOrBlank()) {
+        throw java.io.IOException(errorMessage ?: "Stalker portal returned an error")
+    }
+    if (!hasEntryArray && total != 0) throw java.io.IOException("Stalker response did not contain a content list")
+    return StalkerPage(entries, total, perPage, receivedEntries, skippedEntries)
 }
 
 // endregion
@@ -1380,7 +1672,7 @@ private fun <T : Any> JsonReader.readObjectArray(
         fields.clear()
         beginObject()
         while (hasNext()) {
-            val name = nextName()
+            val name = nextName().lowercase()
             nextScalar()?.let { fields[name] = it }
         }
         endObject()

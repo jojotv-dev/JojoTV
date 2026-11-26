@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nuvio.tv.core.util.parseEpisodeReleaseLocalDate
+import com.nuvio.tv.ui.util.formatCompactRuntimeMinutes
 import androidx.tv.material3.Border
 import androidx.tv.material3.Button as TvMaterialButton
 import com.nuvio.tv.ui.components.NuvioButton as Button
@@ -98,6 +99,7 @@ import com.nuvio.tv.domain.model.Video
 import com.nuvio.tv.domain.model.EpisodeOptionsOverlayStyle
 import com.nuvio.tv.ui.components.FocusMarqueeText
 import com.nuvio.tv.ui.components.ImdbRatingSourceLabel
+import com.nuvio.tv.ui.components.InProgressBadge
 import com.nuvio.tv.ui.components.LightweightCard
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.components.WatchedMarker
@@ -453,6 +455,7 @@ fun EpisodesRow(
     windowResetKey: String? = null,
     onEpisodeLongPress: ((Video) -> Unit)? = null,
     showEpisodeCodeBadge: Boolean = true,
+    episodeArtworkFallbackUrl: String? = null,
 ) {
     val dedupedEpisodes = remember(episodes) { episodes.distinctBy { it.id } }
     var optionsEpisode by remember { mutableStateOf<Video?>(null) }
@@ -625,6 +628,7 @@ fun EpisodesRow(
             }
             EpisodeCard(
                 episode = episode,
+                episodeArtworkFallbackUrl = episodeArtworkFallbackUrl,
                 watchProgress = progress,
                 imdbRating = imdbRating,
                 isMarkedWatched = isMarkedWatched,
@@ -722,6 +726,7 @@ fun EpisodesRow(
 @Composable
 private fun EpisodeCard(
     episode: Video,
+    episodeArtworkFallbackUrl: String? = null,
     watchProgress: com.nuvio.tv.domain.model.WatchProgress? = null,
     imdbRating: Double? = null,
     isMarkedWatched: Boolean = false,
@@ -831,9 +836,13 @@ private fun EpisodeCard(
     val badgeShape = remember(cardMetrics.episodeBadgeCornerRadius) { NuvioTheme.configuredShape(RoundedCornerShape(cardMetrics.episodeBadgeCornerRadius)) }
     val progressBgColor = remember { Color.Black.copy(alpha = 0.45f) }
     val notStartedBadgeColor = remember(textSecondary) { textSecondary.copy(alpha = 0.9f) }
-    val thumbnailRequest = remember(context, episode.thumbnail, thumbnailWidthPx, thumbnailHeightPx, shouldBlur) {
+    val episodeArtworkUrl = remember(episode.thumbnail, episodeArtworkFallbackUrl) {
+        episode.thumbnail?.takeIf(String::isNotBlank)
+            ?: episodeArtworkFallbackUrl?.takeIf(String::isNotBlank)
+    }
+    val thumbnailRequest = remember(context, episodeArtworkUrl, thumbnailWidthPx, thumbnailHeightPx, shouldBlur) {
         ImageRequest.Builder(context)
-            .data(episode.thumbnail)
+            .data(episodeArtworkUrl)
             .crossfade(true)
             .size(width = thumbnailWidthPx, height = thumbnailHeightPx)
             .apply {
@@ -843,8 +852,8 @@ private fun EpisodeCard(
             }
             .build()
     }
-    val overlayBackdropUrl = remember(episode.thumbnail) {
-        episodeOverlayBackdropUrl(episode.thumbnail)
+    val overlayBackdropUrl = remember(episodeArtworkUrl) {
+        episodeOverlayBackdropUrl(episodeArtworkUrl)
     }
     val overlayBackdropWidthPx = remember(configuration, density) {
         with(density) { configuration.screenWidthDp.dp.roundToPx() }
@@ -853,9 +862,9 @@ private fun EpisodeCard(
         with(density) { configuration.screenHeightDp.dp.roundToPx() }
     }
     val imageLoader = context.imageLoader
-    val overlayPrefetchUrl = remember(episode.thumbnail, shouldBlur) {
+    val overlayPrefetchUrl = remember(episodeArtworkUrl, shouldBlur) {
         if (shouldBlur) {
-            episode.thumbnail?.takeIf { it.isNotBlank() }
+            episodeArtworkUrl
         } else {
             overlayBackdropUrl
         }
@@ -1185,6 +1194,17 @@ private fun EpisodeCard(
                 )
             }
 
+            if (showProgress) {
+                InProgressBadge(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(
+                            start = cardMetrics.statusBadgeInset,
+                            top = cardMetrics.statusBadgeInset
+                        )
+                )
+            }
+
             if (isUnavailable) {
                 Box(
                     modifier = Modifier
@@ -1419,13 +1439,7 @@ private fun rememberEpisodeCardMetrics(posterCardCornerRadiusDp: Int = 12): Epis
 
 private fun formatEpisodeRuntime(runtimeMinutes: Int): String {
     if (runtimeMinutes <= 0) return ""
-    val hours = runtimeMinutes / 60
-    val minutes = runtimeMinutes % 60
-    return when {
-        hours > 0 && minutes > 0 -> "${hours}h ${minutes}m"
-        hours > 0 -> "${hours}h"
-        else -> "${minutes}m"
-    }
+    return formatCompactRuntimeMinutes(runtimeMinutes).orEmpty()
 }
 
 private fun formatEpisodeCardDate(isoDate: String): String {

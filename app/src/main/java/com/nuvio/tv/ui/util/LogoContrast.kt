@@ -5,20 +5,25 @@ import androidx.compose.ui.graphics.Color
 import kotlin.math.abs
 
 private data class LogoColorProfile(
-    val luminance: Double,
-    val saturation: Double
+    val darkPixelRatio: Double,
+    val lightPixelRatio: Double,
+    val coloredPixelRatio: Double,
 )
 
 private const val HERO_TEXT_BACKGROUND_ALPHA = 0.8
+private const val LOGO_DARK_PIXEL_LUMINANCE = 0.42
+private const val LOGO_LIGHT_PIXEL_LUMINANCE = 0.58
+private const val LOGO_TONE_PIXEL_RATIO = 0.4
+private const val LOGO_COLORED_PIXEL_RATIO = 0.08
 
 private fun logoColorProfile(bitmap: Bitmap): LogoColorProfile? {
     val width = bitmap.width
     val height = bitmap.height
-    val step = maxOf(1, minOf(width, height) / 20)
-    var totalLuminance = 0.0
-    var totalSaturation = 0.0
-    var count = 0
-    val hsv = FloatArray(3)
+    val step = maxOf(1, minOf(width, height) / 32)
+    var totalWeight = 0.0
+    var darkWeight = 0.0
+    var lightWeight = 0.0
+    var coloredWeight = 0.0
     var x = 0
     while (x < width) {
         var y = 0
@@ -26,19 +31,32 @@ private fun logoColorProfile(bitmap: Bitmap): LogoColorProfile? {
             val pixel = bitmap.getPixel(x, y)
             val alpha = (pixel ushr 24) and 0xFF
             if (alpha > 50) {
-                totalLuminance += pixelLuminance(pixel)
-                android.graphics.Color.colorToHSV(pixel, hsv)
-                totalSaturation += hsv[1]
-                count++
+                val weight = alpha / 255.0
+                val luminance = pixelLuminance(pixel)
+                totalWeight += weight
+                if (luminance < LOGO_DARK_PIXEL_LUMINANCE) darkWeight += weight
+                if (luminance > LOGO_LIGHT_PIXEL_LUMINANCE) lightWeight += weight
+
+                val red = ((pixel ushr 16) and 0xFF) / 255.0
+                val green = ((pixel ushr 8) and 0xFF) / 255.0
+                val blue = (pixel and 0xFF) / 255.0
+                val brightestChannel = maxOf(red, green, blue)
+                val channelSpread = brightestChannel - minOf(red, green, blue)
+                // Ignore tiny RGB differences in near-black antialiasing; HSV saturation
+                // makes those artifacts look colorful even when the logo appears black.
+                if (brightestChannel >= 0.22 && channelSpread >= 0.10) {
+                    coloredWeight += weight
+                }
             }
             y += step
         }
         x += step
     }
-    if (count == 0) return null
+    if (totalWeight == 0.0) return null
     return LogoColorProfile(
-        luminance = totalLuminance / count,
-        saturation = totalSaturation / count
+        darkPixelRatio = darkWeight / totalWeight,
+        lightPixelRatio = lightWeight / totalWeight,
+        coloredPixelRatio = coloredWeight / totalWeight,
     )
 }
 
@@ -53,14 +71,19 @@ internal fun logoContrastTint(
     fallbackBackground: Color
 ): Color? {
     val profile = logoColorProfile(logo) ?: return null
-    if (profile.saturation >= 0.2 || profile.luminance in 0.3..0.7) return null
+    if (profile.coloredPixelRatio > LOGO_COLORED_PIXEL_RATIO) return null
+    val logoLuminance = when {
+        profile.darkPixelRatio >= LOGO_TONE_PIXEL_RATIO -> 0.0
+        profile.lightPixelRatio >= LOGO_TONE_PIXEL_RATIO -> 1.0
+        else -> return null
+    }
 
     val fallbackLuminance = colorLuminance(fallbackBackground)
     val backgroundLuminance = backdrop?.let(::heroTextAreaLuminance)?.let { backdropLuminance ->
         backdropLuminance * (1.0 - HERO_TEXT_BACKGROUND_ALPHA) +
             fallbackLuminance * HERO_TEXT_BACKGROUND_ALPHA
     } ?: fallbackLuminance
-    if (abs(profile.luminance - backgroundLuminance) >= 0.35) return null
+    if (abs(logoLuminance - backgroundLuminance) >= 0.35) return null
 
     return if (backgroundLuminance < 0.5) Color.White else Color.Black
 }
@@ -105,5 +128,6 @@ private fun colorLuminance(color: Color): Double =
  */
 internal fun isLogoDarkAndMonochrome(bitmap: Bitmap): Boolean {
     val profile = logoColorProfile(bitmap) ?: return false
-    return profile.luminance < 0.3 && profile.saturation < 0.2
+    return profile.darkPixelRatio >= LOGO_TONE_PIXEL_RATIO &&
+        profile.coloredPixelRatio <= LOGO_COLORED_PIXEL_RATIO
 }

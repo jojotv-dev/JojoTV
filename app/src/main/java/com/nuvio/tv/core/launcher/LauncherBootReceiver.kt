@@ -10,17 +10,28 @@ import android.os.SystemClock
 import android.util.Log
 import com.nuvio.tv.MainActivity
 
-/** Re-enables the Home accessibility service and brings Nuvio up after Fire TV finishes booting. */
+/** Re-enables opted-in Home fallbacks and brings Nuvio up after Fire TV finishes booting. */
 class LauncherBootReceiver : BroadcastReceiver() {
+    companion object {
+        private const val TAG = "LauncherBootReceiver"
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
+            Intent.ACTION_LOCKED_BOOT_COMPLETED -> {
+                Log.i(TAG, "Locked boot complete; starting configured Fire OS Home watcher")
+                FireOsHomeButtonService.startIfConfigured(context, includeRecentBootHomeEvent = true)
+            }
+
             Intent.ACTION_BOOT_COMPLETED -> {
                 AccessibilityWatchdog.ensureEnabled(context)
+                FireOsHomeButtonService.startIfConfigured(context, includeRecentBootHomeEvent = true)
                 LauncherBootLaunch.onBootCompleted(context)
             }
 
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
                 AccessibilityWatchdog.ensureEnabled(context)
+                FireOsHomeButtonService.startIfConfigured(context)
                 LauncherBootLaunch.openIfAllowed(context)
             }
         }
@@ -35,13 +46,26 @@ class LauncherDelayedBootReceiver : BroadcastReceiver() {
     }
 }
 
-private object LauncherBootLaunch {
+internal object LauncherBootLaunch {
     private const val TAG = "LauncherBootLaunch"
     private const val REQUEST_CODE = 2417
-    private const val STARTUP_DELAY_MS = 30_000L
+    private const val DEFAULT_STARTUP_DELAY_MS = 30_000L
+    private const val FIRE_OS_STARTUP_DELAY_MS = 3_000L
     private const val ACTION_SUFFIX = ".action.LAUNCH_AFTER_BOOT"
 
     fun action(context: Context): String = context.packageName + ACTION_SUFFIX
+
+    fun cancelPending(context: Context) {
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            REQUEST_CODE,
+            Intent(context, LauncherDelayedBootReceiver::class.java).setAction(action(context)),
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        ) ?: return
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+        alarmManager?.cancel(pendingIntent)
+        pendingIntent.cancel()
+    }
 
     fun onBootCompleted(context: Context) {
         if (LauncherSetup.isDefaultHome(context)) {
@@ -49,6 +73,10 @@ private object LauncherBootLaunch {
             return
         }
         if (!LauncherSetup.accessibilityFallbackAllowed(context)) return
+        if (FireOsHomeButtonService.isSupported(context) && FireOsHomeButtonService.isEnabled(context)) {
+            Log.i(TAG, "Fire OS Home watcher is configured; skipping delayed boot launch")
+            return
+        }
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val pendingIntent = PendingIntent.getBroadcast(
@@ -57,7 +85,13 @@ private object LauncherBootLaunch {
             Intent(context, LauncherDelayedBootReceiver::class.java).setAction(action(context)),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val launchAt = SystemClock.elapsedRealtime() + STARTUP_DELAY_MS
+        val startupDelayMs = if (FireOsHomeButtonService.isSupported(context)) {
+            FIRE_OS_STARTUP_DELAY_MS
+        } else {
+            DEFAULT_STARTUP_DELAY_MS
+        }
+        val launchAt = SystemClock.elapsedRealtime() + startupDelayMs
+        Log.i(TAG, "Scheduling boot fallback in ${startupDelayMs}ms")
 
         runCatching {
             val exactAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()

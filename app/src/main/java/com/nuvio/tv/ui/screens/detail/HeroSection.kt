@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,7 +49,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDirection
@@ -91,7 +89,9 @@ import com.nuvio.tv.domain.model.NextToWatch
 import com.nuvio.tv.ui.components.ImdbRatingSourceLabel
 import com.nuvio.tv.ui.components.MDBListRatingsRow
 import com.nuvio.tv.ui.components.SynopsisDescription
+import com.nuvio.tv.ui.components.squishOnPress
 import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.util.formatCompactRuntimeMinutes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsNone
@@ -517,11 +517,6 @@ internal fun PlayButton(
     var dpadReleaseJob by remember { mutableStateOf<Job?>(null) }
     val dpadPressScope = rememberCoroutineScope()
     val tactilePressed = tactilePressFeedback && (isPressed || isDpadSelectPressed)
-    val pressDepth by animateDpAsState(
-        targetValue = if (tactilePressed) 5.dp else 0.dp,
-        animationSpec = tween(durationMillis = 60),
-        label = "heroPlayButtonPressDepth"
-    )
 
     LaunchedEffect(restoreFocusToken) {
         if (restoreFocusToken > 0 && focusRequester != null) {
@@ -529,9 +524,6 @@ internal fun PlayButton(
         }
     }
     val playPainter = rememberRawSvgPainter(rawIconRes = com.nuvio.tv.R.raw.ic_player_play)
-    val pushEdgeHeight = 6.dp
-    val pushEdgeColor = Color(0xFF8D8D8D)
-    val pushButtonShape = NuvioTheme.appCornerShape
 
     Box(
         modifier = Modifier.onPreviewKeyEvent { event ->
@@ -566,15 +558,6 @@ internal fun PlayButton(
             false
         }
     ) {
-        if (tactilePressFeedback) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .offset(y = pushEdgeHeight)
-                    .background(pushEdgeColor, pushButtonShape)
-            )
-        }
-
     Button(
         enabled = enabled,
         onClick = {
@@ -587,9 +570,7 @@ internal fun PlayButton(
         modifier = modifier
             .then(
                 if (tactilePressFeedback) {
-                    Modifier.graphicsLayer {
-                        translationY = pressDepth.toPx()
-                    }
+                    Modifier.squishOnPress(tactilePressed, "heroPlayButtonSquish")
                 } else {
                     Modifier
                 }
@@ -664,10 +645,10 @@ internal fun PlayButton(
             ),
         interactionSource = interactionSource,
         colors = ButtonDefaults.colors(
-            containerColor = androidx.compose.ui.graphics.Color.White,
-            focusedContainerColor = androidx.compose.ui.graphics.Color.White,
-            contentColor = androidx.compose.ui.graphics.Color.Black,
-            focusedContentColor = androidx.compose.ui.graphics.Color.Black
+            containerColor = NuvioTheme.colors.Secondary,
+            focusedContainerColor = NuvioTheme.colors.Secondary,
+            contentColor = NuvioTheme.colors.OnSecondary,
+            focusedContentColor = NuvioTheme.colors.OnSecondary
         ),
         shape = ButtonDefaults.shape(
             shape = NuvioTheme.configuredShape(RoundedCornerShape(NuvioTheme.spacing.xxl))
@@ -1216,10 +1197,7 @@ private fun formatRuntime(runtime: String): String? {
         val hours = Regex("(\\d+)\\s*h").find(trimmed)?.groupValues?.get(1)?.toIntOrNull() ?: 0
         val mins = Regex("(\\d+)\\s*m").find(trimmed)?.groupValues?.get(1)?.toIntOrNull() ?: 0
         val total = hours * 60 + mins
-        if (total > 0) return if (total >= 60) {
-            val h = total / 60; val m = total % 60
-            if (m > 0) "${h}h ${m}m" else "${h}h"
-        } else "${total}m"
+        if (total > 0) return formatCompactRuntimeMinutes(total)
     }
     // "H:MM" or "HH:MM" format
     if (trimmed.contains(':')) {
@@ -1227,21 +1205,12 @@ private fun formatRuntime(runtime: String): String? {
         val hours = parts.getOrNull(0)?.toIntOrNull() ?: 0
         val mins = parts.getOrNull(1)?.toIntOrNull() ?: 0
         val total = hours * 60 + mins
-        if (total > 0) return if (total >= 60) {
-            val m = total % 60
-            if (m > 0) "${hours}h ${m}m" else "${hours}h"
-        } else "${total}m"
+        if (total > 0) return formatCompactRuntimeMinutes(total)
     }
     // Plain number (minutes)
     val minutes = trimmed.filter { it.isDigit() }.toIntOrNull() ?: return runtime
     if (minutes <= 0) return null
-    return if (minutes >= 60) {
-        val hours = minutes / 60
-        val mins = minutes % 60
-        if (mins > 0) "${hours}h ${mins}m" else "${hours}h"
-    } else {
-        "${minutes}m"
-    }
+    return formatCompactRuntimeMinutes(minutes)
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

@@ -20,6 +20,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,20 +107,30 @@ internal fun PlayerMetadataSummary(
         } else {
             Text(
                 text = normalizedTitle.ifBlank { title },
-                style = MaterialTheme.typography.headlineLarge,
+                style = MaterialTheme.typography.headlineLarge.copy(fontFamily = FontFamily.SansSerif),
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = Color.White.copy(alpha = 0.96f),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }
 
-        episodeTitle?.trim()?.takeIf { it.isNotBlank() && !it.equals(title, ignoreCase = true) }?.let {
+        episodeTitle?.trim()?.takeIf {
+            it.isNotBlank() &&
+                !it.equals(title, ignoreCase = true) &&
+                !isDuplicateSeriesEpisodeLabel(
+                    episodeTitle = it,
+                    title = title,
+                    releaseYear = releaseYear,
+                    season = currentSeason,
+                    episode = currentEpisode
+                )
+        }?.let {
             Text(
                 text = it.localizeEpisodeTitle(context),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.SansSerif),
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White.copy(alpha = 0.92f),
+                color = Color.White.copy(alpha = 0.96f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -128,9 +139,9 @@ internal fun PlayerMetadataSummary(
         if (metadataLine.isNotBlank()) {
             Text(
                 text = metadataLine,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.SansSerif),
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White,
+                color = Color.White.copy(alpha = 0.96f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -140,8 +151,9 @@ internal fun PlayerMetadataSummary(
             .takeIf { it.isNotEmpty() }?.joinToString(", ")?.let { names ->
                 Text(
                     text = stringResource(R.string.hero_director, names),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.82f),
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.SansSerif),
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White.copy(alpha = 0.96f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -150,9 +162,12 @@ internal fun PlayerMetadataSummary(
         description?.takeIf { it.isNotBlank() }?.let {
             Text(
                 text = it,
-                style = MaterialTheme.typography.bodyMedium.copy(textDirection = it.contentTextDirection()),
-                fontWeight = FontWeight.Medium,
-                color = Color.White.copy(alpha = 0.92f),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    textDirection = it.contentTextDirection(),
+                    fontFamily = FontFamily.SansSerif
+                ),
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White.copy(alpha = 0.96f),
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis
             )
@@ -162,9 +177,9 @@ internal fun PlayerMetadataSummary(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = stringResource(R.string.pause_cast_label),
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.SansSerif),
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = Color.White.copy(alpha = 0.96f)
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 visibleCast.forEach { member ->
@@ -176,6 +191,39 @@ internal fun PlayerMetadataSummary(
             }
         }
     }
+}
+
+private fun isDuplicateSeriesEpisodeLabel(
+    episodeTitle: String,
+    title: String,
+    releaseYear: String?,
+    season: Int?,
+    episode: Int?
+): Boolean {
+    val seasonNumber = season ?: return false
+    val episodeNumber = episode ?: return false
+    val episodeCode = Regex("\\bS0*${seasonNumber}\\s*E0*${episodeNumber}\\b", RegexOption.IGNORE_CASE)
+    if (!episodeCode.containsMatchIn(episodeTitle)) return false
+
+    val year = releaseYear?.trim()?.take(4)?.takeIf { it.length == 4 }
+    val titleWithoutYear = year?.let {
+        title.replace(
+            Regex("\\s*\\(?${Regex.escape(it)}\\)?\\s*-?\\s*$"),
+            ""
+        )
+    } ?: title
+    val episodeLabelWithoutMetadata = episodeTitle
+        .replace(episodeCode, " ")
+        .let { label ->
+            if (year.isNullOrBlank()) label
+            else label.replace(Regex("\\b${Regex.escape(year)}\\b"), " ")
+        }
+    fun normalize(value: String): String = Regex("[^\\p{L}\\p{N}]+")
+        .replace(value.lowercase(Locale.ROOT), " ")
+        .trim()
+
+    val normalizedTitle = normalize(titleWithoutYear)
+    return normalizedTitle.isNotBlank() && normalize(episodeLabelWithoutMetadata) == normalizedTitle
 }
 
 @Composable
@@ -213,8 +261,9 @@ private fun PlayerMetadataCastMember(
             ) {
                 Text(
                     text = member.name.firstOrNull()?.uppercase() ?: "?",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White
+                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.SansSerif),
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White.copy(alpha = 0.96f)
                 )
             }
         }
@@ -222,9 +271,9 @@ private fun PlayerMetadataCastMember(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = member.name,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.SansSerif),
             fontWeight = FontWeight.SemiBold,
-            color = Color.White,
+            color = Color.White.copy(alpha = 0.96f),
             textAlign = TextAlign.Center,
             modifier = Modifier.height(34.dp),
             maxLines = 2,
@@ -233,8 +282,9 @@ private fun PlayerMetadataCastMember(
         member.character?.takeIf { it.isNotBlank() }?.let { character ->
             Text(
                 text = character,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.72f),
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.SansSerif),
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White.copy(alpha = 0.96f),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

@@ -57,12 +57,12 @@ fun Modifier.shineSweepOnFocus(
             close()
         }
         val brush = Brush.horizontalGradient(
-            colors = listOf(
-                Color.Transparent,
-                Color.White.copy(alpha = 0.42f),
-                Color(0xFFEDE9E0).copy(alpha = 0.62f),
-                Color.White.copy(alpha = 0.42f),
-                Color.Transparent
+            colorStops = arrayOf(
+                0f to Color.Transparent,
+                0.34f to Color.Transparent,
+                0.5f to Color.White.copy(alpha = 0.72f),
+                0.66f to Color.Transparent,
+                1f to Color.Transparent
             ),
             startX = left,
             endX = left + bandWidth

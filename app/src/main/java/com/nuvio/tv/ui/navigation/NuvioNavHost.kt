@@ -17,7 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
@@ -109,7 +112,6 @@ import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
 import com.nuvio.tv.ui.screens.account.AuthQrSignInScreen
 import com.nuvio.tv.ui.screens.cast.CastDetailScreen
 import com.nuvio.tv.ui.screens.freebox.FreeboxFolderScreen
-import com.nuvio.tv.ui.screens.ServerHubScreen
 import com.nuvio.tv.ui.screens.ServerBrowserScreen
 import com.nuvio.tv.ui.screens.ServerBrowserViewModel
 import com.nuvio.tv.ui.screens.ServerBrowserFileType
@@ -127,8 +129,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
-private fun createFreeboxVideoRoute(item: MetaPreview, startFromBeginning: Boolean = false): String {
+private fun createFreeboxVideoRoute(
+    item: MetaPreview,
+    freeboxEpisodes: List<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode> = emptyList(),
+    startFromBeginning: Boolean = false,
+): String {
     val path = item.id.removePrefix("freebox:")
+    val currentEpisode = freeboxEpisodes.firstOrNull { it.path.equals(path, ignoreCase = true) }
+    val contentId = currentEpisode?.contentId ?: freeboxContentIdFor(
+        path = path,
+        sizeBytes = item.sourceFileSizeBytes,
+        lastModifiedMs = item.sourceFileLastModifiedMs,
+        fileId = item.sourceFileId,
+    )
     val year = Regex("\\b(?:19|20)\\d{2}\\b")
         .find("${item.releaseInfo.orEmpty()} ${item.released.orEmpty()}")
         ?.value
@@ -137,12 +150,7 @@ private fun createFreeboxVideoRoute(item: MetaPreview, startFromBeginning: Boole
         title = item.name,
         streamName = "Freebox",
         year = year,
-        contentId = freeboxContentIdFor(
-            path = path,
-            sizeBytes = item.sourceFileSizeBytes,
-            lastModifiedMs = item.sourceFileLastModifiedMs,
-            fileId = item.sourceFileId,
-        ),
+        contentId = contentId,
         contentType = item.apiType,
         contentName = item.name,
         poster = item.poster,
@@ -151,16 +159,26 @@ private fun createFreeboxVideoRoute(item: MetaPreview, startFromBeginning: Boole
         returnToHomeOnBack = true,
         filename = path.substringAfterLast('/'),
         startFromBeginning = startFromBeginning,
-        presentation = freeboxPlayerPresentation(item),
+        videoId = currentEpisode?.contentId,
+        season = currentEpisode?.season,
+        episode = currentEpisode?.episode,
+        episodeTitle = currentEpisode?.title,
+        presentation = playerPresentation(item, freeboxEpisodes),
     )
 }
 
-private fun freeboxPlayerPresentation(item: MetaPreview): String =
+private fun playerPresentation(
+    item: MetaPreview,
+    freeboxEpisodes: List<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode> = emptyList(),
+): String =
     org.json.JSONObject().apply {
         item.description?.takeIf(String::isNotBlank)
             ?.takeUnless { it.startsWith("Freebox ·", ignoreCase = true) }
             ?.let { put("description", it) }
         item.releaseInfo?.takeIf(String::isNotBlank)?.let { put("releaseInfo", it) }
+        val year = Regex("\\b(?:19|20)\\d{2}\\b").find(item.releaseInfo.orEmpty())?.value
+            ?: Regex("\\b(?:19|20)\\d{2}\\b").find(item.released.orEmpty())?.value
+        year?.let { put("year", it) }
         item.genres.filter(String::isNotBlank).takeIf { it.isNotEmpty() }
             ?.let { put("genres", org.json.JSONArray(it)) }
         item.runtime?.takeIf(String::isNotBlank)?.let { put("runtime", it) }
@@ -169,7 +187,7 @@ private fun freeboxPlayerPresentation(item: MetaPreview): String =
         item.poster?.takeIf(String::isNotBlank)?.let { put("poster", it) }
         item.backdropUrl?.takeIf(String::isNotBlank)?.let { put("backdrop", it) }
         item.logo?.takeIf(String::isNotBlank)?.let { put("logo", it) }
-        item.castMembers.filter { it.name.isNotBlank() }.takeIf { it.isNotEmpty() }
+        item.castMembers.filter { it.name.isNotBlank() }.take(6).takeIf { it.isNotEmpty() }
             ?.let { members ->
                 put("castDetails", org.json.JSONArray().apply {
                     members.forEach { member ->
@@ -182,14 +200,69 @@ private fun freeboxPlayerPresentation(item: MetaPreview): String =
                     }
                 })
             }
+        freeboxEpisodes.takeIf { it.isNotEmpty() }?.let { episodes ->
+            put("freeboxEpisodes", org.json.JSONArray().apply {
+                episodes.forEach { episode ->
+                    put(org.json.JSONObject().apply {
+                        put("contentId", episode.contentId)
+                        put("path", episode.path)
+                        put("title", episode.title)
+                        put("season", episode.season)
+                        put("episode", episode.episode)
+                        episode.released?.let { put("released", it) }
+                        episode.thumbnail?.let { put("thumbnail", it) }
+                        episode.overview?.let { put("overview", it) }
+                        episode.runtimeMinutes?.let { put("runtimeMinutes", it) }
+                    })
+                }
+            })
+        }
     }.toString()
 
+private fun continueWatchingPlayerPresentation(
+    item: ContinueWatchingItem.InProgress,
+    preferSourcePreviewDescription: Boolean = false,
+): String? {
+    val presentation = item.homeSourcePreview
+        ?.let(::playerPresentation)
+        ?.let { org.json.JSONObject(it) }
+        ?: org.json.JSONObject()
+    // The resume record carries the user's effective artwork; keep it ahead of
+    // the catalog snapshot used here only to restore descriptive metadata.
+    presentation.remove("poster")
+    presentation.remove("backdrop")
+    presentation.remove("logo")
+
+    val sourcePreviewDescription = presentation.optString("description")
+        .takeIf(String::isNotBlank)
+    val episodeDescription = item.episodeDescription?.takeIf(String::isNotBlank)
+        ?.takeUnless { it.startsWith("Freebox ·", ignoreCase = true) }
+    val seriesDescription = item.seriesDescription?.takeIf(String::isNotBlank)
+        ?.takeUnless { it.startsWith("Freebox ·", ignoreCase = true) }
+    val description = if (preferSourcePreviewDescription) {
+        sourcePreviewDescription ?: episodeDescription ?: seriesDescription
+    } else {
+        episodeDescription ?: sourcePreviewDescription ?: seriesDescription
+    }
+    description?.let { presentation.put("description", it) }
+
+    item.releaseInfo?.takeIf(String::isNotBlank)?.let { releaseInfo ->
+        presentation.put("releaseInfo", releaseInfo)
+        Regex("\\b(?:19|20)\\d{2}\\b").find(releaseInfo)?.value
+            ?.let { presentation.put("year", it) }
+    }
+    item.genres.filter(String::isNotBlank).takeIf { it.isNotEmpty() }
+        ?.let { presentation.put("genres", org.json.JSONArray(it)) }
+
+    return presentation.toString().takeIf { presentation.length() > 2 }
+}
+
 private fun createFreeboxContinueWatchingRoute(
-    progress: WatchProgress,
+    item: ContinueWatchingItem.InProgress,
     path: String,
-    preview: MetaPreview? = null,
     startFromBeginning: Boolean = false
 ): String {
+    val progress = item.progress
     val filename = path.substringAfterLast('/')
     val title = progress.name.takeIf(String::isNotBlank)
         ?: filename.substringBeforeLast('.', filename)
@@ -207,7 +280,11 @@ private fun createFreeboxContinueWatchingRoute(
         returnToHomeOnBack = true,
         filename = filename,
         startFromBeginning = startFromBeginning,
-        presentation = preview?.let(::freeboxPlayerPresentation),
+        presentation = continueWatchingPlayerPresentation(
+            item = item,
+            preferSourcePreviewDescription = item.homeSourcePreview?.id
+                ?.startsWith("freebox:", ignoreCase = true) == true,
+        ),
     )
 }
 
@@ -316,11 +393,19 @@ fun NuvioNavHost(
     com.nuvio.tv.livetv.sports.SportsPinsHost(navController)
 }
 
+private fun NavHostController.navigateToServerConnections() {
+    com.nuvio.tv.ui.screens.settings.SettingsLaunch.pendingCategory =
+        com.nuvio.tv.ui.screens.settings.SettingsCategory.FREEBOX
+    navigate(Screen.Settings.route) { launchSingleTop = true }
+}
+
 @Composable
 private fun ModuleTopBarHeader(
     navController: NavHostController,
     modifier: Modifier = Modifier,
 ) {
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    var showSettingsDrawer by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val calendarPreferences = remember(context.applicationContext) {
         dagger.hilt.android.EntryPointAccessors.fromApplication(
@@ -335,11 +420,25 @@ private fun ModuleTopBarHeader(
     HomeTopBarHeader(
         showCalendarShortcut = calendarSettings.calendarInHeader && !calendarSettings.calendarOff,
         onCalendarClick = { navController.navigate(Screen.Calendar.route) { launchSingleTop = true } },
-        onServersClick = { navController.navigate(Screen.ServerHub.route) { launchSingleTop = true } },
         onAppsClick = { navController.navigate(Screen.Apps.route) { launchSingleTop = true } },
-        onSettingsClick = { navController.navigate(Screen.Settings.route) { launchSingleTop = true } },
+        onServersClick = { navController.navigateToServerConnections() },
+        onServerSourceSelected = { sourceId ->
+            navController.navigate(Screen.ServerBrowser.createRoute(sourceId)) { launchSingleTop = true }
+        },
+        selectedServerId = currentBackStackEntry?.arguments?.getString("sourceId"),
+        onSettingsClick = { showSettingsDrawer = true },
         modifier = modifier,
     )
+
+    if (showSettingsDrawer) {
+        HomeSettingsDrawer(
+            onDismiss = { showSettingsDrawer = false },
+            onOpenNuvioSettings = {
+                showSettingsDrawer = false
+                navController.navigate(Screen.Settings.route) { launchSingleTop = true }
+            },
+        )
+    }
 }
 
 @Composable
@@ -481,13 +580,12 @@ private fun PlaybackNavHost(
                 manualSelection: Boolean = false,
                 startFromBeginning: Boolean = false
             ): String {
-                val freeboxProgress = (item as? ContinueWatchingItem.InProgress)?.progress
+                val freeboxItem = item as? ContinueWatchingItem.InProgress
                 val freeboxPath = item.freeboxPlaybackPathOrNull()
-                if (freeboxProgress != null && freeboxPath != null) {
+                if (freeboxItem != null && freeboxPath != null) {
                     return createFreeboxContinueWatchingRoute(
-                        progress = freeboxProgress,
+                        item = freeboxItem,
                         path = freeboxPath,
-                        preview = (item as? ContinueWatchingItem.InProgress)?.homeSourcePreview,
                         startFromBeginning = startFromBeginning,
                     )
                 }
@@ -496,14 +594,17 @@ private fun PlaybackNavHost(
                         videoId = item.progress.videoId,
                         contentType = item.progress.contentType,
                         title = item.progress.name,
-                        poster = item.progress.poster,
-                        backdrop = item.progress.backdrop,
-                        logo = item.progress.logo,
+                        poster = item.progress.poster?.takeIf(String::isNotBlank)
+                            ?: item.homeSourcePreview?.poster,
+                        backdrop = item.progress.backdrop?.takeIf(String::isNotBlank)
+                            ?: item.homeSourcePreview?.backdropUrl,
+                        logo = item.progress.logo?.takeIf(String::isNotBlank)
+                            ?: item.homeSourcePreview?.logo,
                         season = item.progress.season,
                         episode = item.progress.episode,
                         episodeName = item.progress.episodeTitle,
-                        genres = null,
-                        year = null,
+                        genres = item.genres.takeIf { it.isNotEmpty() }?.joinToString(", "),
+                        year = item.releaseInfo?.let { Regex("\\b(?:19|20)\\d{2}\\b").find(it)?.value },
                         contentId = item.progress.contentId,
                         contentName = item.progress.name,
                         runtime = null,
@@ -511,7 +612,8 @@ private fun PlaybackNavHost(
                         returnToDetailOnBack = item.progress.contentType.equals("series", ignoreCase = true),
                         returnToHomeOnBack = true,
                         startFromBeginning = startFromBeginning,
-                        contentLanguage = item.contentLanguage
+                        contentLanguage = item.contentLanguage,
+                        presentation = continueWatchingPlayerPresentation(item)
                     )
                     is ContinueWatchingItem.NextUp -> Screen.Stream.createRoute(
                         videoId = item.info.videoId,
@@ -648,6 +750,7 @@ private fun PlaybackNavHost(
                                     episodeTitle = iptvProgress.episodeTitle ?: itemToPlay.title.takeIf { isSeries },
                                     returnToHomeOnBack = true,
                                     startFromBeginning = startFromBeginning,
+                                    iptvVodPlayback = true,
                                 )
                             )
                         } catch (failure: Exception) {
@@ -677,12 +780,24 @@ private fun PlaybackNavHost(
                 onNavigateToCalendar = {
                     navController.navigate(Screen.Calendar.route) { launchSingleTop = true }
                 },
-                onNavigateToServers = { navController.navigate(Screen.ServerHub.route) },
-                onManageHomeApps = { navController.navigate(Screen.InstalledAppsOrder.route) },
                 onNavigateToApps = {
-                    navController.navigate(Screen.Apps.route) {
-                        launchSingleTop = true
-                    }
+                    navController.navigate(Screen.Apps.route) { launchSingleTop = true }
+                },
+                onNavigateToServers = { navController.navigateToServerConnections() },
+                onNavigateToServerSource = { sourceId ->
+                    navController.navigate(Screen.ServerBrowser.createRoute(sourceId)) { launchSingleTop = true }
+                },
+                onManageHomeApps = { navController.navigate(Screen.InstalledAppsOrder.route) },
+                onNavigateToIptvVodMovieDetail = { tmdbId, favoriteKey ->
+                    val heroBackdrop = HeroBackdropState.consumeAndClear()
+                    navController.navigate(
+                        Screen.Detail.createRoute(
+                            itemId = "tmdb:$tmdbId",
+                            itemType = "movie",
+                            heroBackdropUrl = heroBackdrop,
+                            iptvFavoriteKey = favoriteKey,
+                        )
+                    )
                 },
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
                     val liveChannelIdentity = decodeHomeIptvLiveChannelItemId(itemId)
@@ -730,7 +845,8 @@ private fun PlaybackNavHost(
                     } else if (itemId.startsWith(HOME_IPTV_FAVORITE_ITEM_ID_PREFIX)) {
                         navController.navigate(
                             Screen.HomeIptvFavorite.createRoute(
-                                Uri.decode(itemId.removePrefix(HOME_IPTV_FAVORITE_ITEM_ID_PREFIX))
+                                favoriteKey = Uri.decode(itemId.removePrefix(HOME_IPTV_FAVORITE_ITEM_ID_PREFIX)),
+                                homeLandscapeArtworkUrl = HeroBackdropState.consumeAndClear(),
                             )
                         )
                     } else if (itemId.startsWith(FREEBOX_FOLDER_ID_PREFIX)) {
@@ -928,6 +1044,7 @@ private fun PlaybackNavHost(
                                 returnToDetailOnBack = true,
                                 startFromBeginning = startFromBeginning,
                                 contentLanguage = contentLanguage,
+                                iptvVodPlayback = true,
                             )
                         )
                     } catch (failure: Exception) {
@@ -1154,6 +1271,11 @@ private fun PlaybackNavHost(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                navArgument("presentation") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
@@ -1242,7 +1364,8 @@ private fun PlaybackNavHost(
                                 contentLanguage = playbackInfo.contentLanguage,
                                 profileId = playbackInfo.profileId,
                                 audioDelayMs = playbackInfo.audioDelayMs,
-                                audioDelayLanguage = playbackInfo.audioDelayLanguage
+                                audioDelayLanguage = playbackInfo.audioDelayLanguage,
+                                presentation = streamArgs?.getString("presentation")?.takeIf(String::isNotBlank)
                             )
                         )
                     }
@@ -1281,7 +1404,8 @@ private fun PlaybackNavHost(
                                 contentLanguage = playbackInfo.contentLanguage,
                                 profileId = playbackInfo.profileId,
                                 audioDelayMs = playbackInfo.audioDelayMs,
-                                audioDelayLanguage = playbackInfo.audioDelayLanguage
+                                audioDelayLanguage = playbackInfo.audioDelayLanguage,
+                                presentation = streamArgs?.getString("presentation")?.takeIf(String::isNotBlank)
                             )
                         ) {
                             popUpTo(Screen.Stream.route) { inclusive = true }
@@ -1446,6 +1570,11 @@ private fun PlaybackNavHost(
                     nullable = true
                     defaultValue = "false"
                 },
+                navArgument("iptvVodPlayback") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = "false"
+                },
                 navArgument("presentation") {
                     type = NavType.StringType
                     nullable = true
@@ -1485,13 +1614,16 @@ private fun PlaybackNavHost(
                 contentType: String,
                 returnToDetailOnBack: Boolean,
                 returnToHomeOnBack: Boolean,
+                iptvVodPlayback: Boolean = false,
                 focusSeason: Int? = null,
                 focusEpisode: Int? = null,
                 restoreDetailHero: Boolean = false,
             ): Boolean {
                 val isIptvVod = when {
-                    contentType.equals("movie", ignoreCase = true) -> contentId.contains(":movie:")
-                    contentType.equals("series", ignoreCase = true) -> contentId.contains(":series:")
+                    contentType.equals("movie", ignoreCase = true) ->
+                        iptvVodPlayback || contentId.contains(":movie:")
+                    contentType.equals("series", ignoreCase = true) ->
+                        iptvVodPlayback || contentId.contains(":series:")
                     else -> false
                 }
                 if (!isIptvVod) return false
@@ -1561,6 +1693,9 @@ private fun PlaybackNavHost(
                     }
             } else {
                 null
+            }
+            fun requestYouTubeContentFocusAfterPlayback() {
+                youtubeViewModel?.requestContentFocusRestore()
             }
             val youtubePlayerViewModel: com.nuvio.tv.youtube.YouTubePlayerViewModel =
                 androidx.hilt.navigation.compose.hiltViewModel()
@@ -1674,7 +1809,6 @@ private fun PlaybackNavHost(
                     }
                 },
                 onBackPress = { currentVideoId, currentSeason, currentEpisode, autoPlayEnabled, playbackCompleted ->
-                    requestHomeHeroFocusAfterPlayback()
                     val args = backStackEntry.arguments
                     val initialSeason = args?.getString("season")?.toIntOrNull()
                     val initialEpisode = args?.getString("episode")?.toIntOrNull()
@@ -1686,6 +1820,20 @@ private fun PlaybackNavHost(
                         ?.toBooleanStrictOrNull() == true
                     val contentType = args?.getString("contentType").orEmpty()
                     val contentId = args?.getString("contentId").orEmpty()
+                    if (com.nuvio.tv.youtube.YouTubeProgress.isYouTubeId(contentId)) {
+                        val returnRoute = if (returnToHomeOnBack) {
+                            requestHomeHeroFocusAfterPlayback()
+                            Screen.Home.route
+                        } else {
+                            requestYouTubeContentFocusAfterPlayback()
+                            Screen.YouTube.route
+                        }
+                        if (!navController.popBackStack(returnRoute, inclusive = false)) {
+                            navController.popBackStack()
+                        }
+                        return@PlayerScreen
+                    }
+                    requestHomeHeroFocusAfterPlayback()
                     val focusSeason = currentSeason ?: initialSeason
                     val focusEpisode = currentEpisode ?: initialEpisode
                     fun returnToDetail() {
@@ -1824,10 +1972,11 @@ private fun PlaybackNavHost(
                                 }
                             },
                             onNone = {
-                                requestHomeHeroFocusAfterPlayback()
                                 val returnRoute = if (returnToHomeOnBack) {
+                                    requestHomeHeroFocusAfterPlayback()
                                     Screen.Home.route
                                 } else {
+                                    requestYouTubeContentFocusAfterPlayback()
                                     Screen.YouTube.route
                                 }
                                 if (!navController.popBackStack(returnRoute, inclusive = false)) {
@@ -1838,8 +1987,13 @@ private fun PlaybackNavHost(
                         return@PlayerScreen
                     }
                     if (endedYouTubeId != null) {
-                        requestHomeHeroFocusAfterPlayback()
-                        val returnRoute = if (returnToHomeOnBack) Screen.Home.route else Screen.YouTube.route
+                        val returnRoute = if (returnToHomeOnBack) {
+                            requestHomeHeroFocusAfterPlayback()
+                            Screen.Home.route
+                        } else {
+                            requestYouTubeContentFocusAfterPlayback()
+                            Screen.YouTube.route
+                        }
                         if (!navController.popBackStack(returnRoute, inclusive = false)) {
                             navController.popBackStack()
                         }
@@ -1847,6 +2001,11 @@ private fun PlaybackNavHost(
                     }
                     val contentType = args?.getString("contentType").orEmpty()
                     val contentId = args?.getString("contentId").orEmpty()
+                    val iptvVodPlayback = args?.getString("iptvVodPlayback")
+                        ?.toBooleanStrictOrNull() == true
+                    val isFreeboxPlayback = contentId.startsWith("freebox:", ignoreCase = true) ||
+                        args?.getString("streamUrl")
+                            ?.startsWith("freebox:", ignoreCase = true) == true
                     val returnToDetailOnBack = args?.getString("returnToDetailOnBack")
                         ?.toBooleanStrictOrNull() == true
                     if (nextVideoId != null && nextSeason != null && nextEpisode != null) {
@@ -1881,12 +2040,17 @@ private fun PlaybackNavHost(
                             contentType = contentType,
                             returnToDetailOnBack = returnToDetailOnBack,
                             returnToHomeOnBack = returnToHomeOnBack,
+                            iptvVodPlayback = iptvVodPlayback,
                             focusSeason = focusSeason,
                             focusEpisode = focusEpisode,
                             restoreDetailHero = exitReason == PlayerExitReason.StillWatchingPrompt,
                         )
                         if (returnedToIptvOrigin) {
                             Unit
+                        } else if (isFreeboxPlayback) {
+                            val returnedHome = returnToHomeOnBack &&
+                                navController.popBackStack(Screen.Home.route, inclusive = false)
+                            if (!returnedHome) navController.popBackStack()
                         } else if (exitReason == PlayerExitReason.StillWatchingPrompt) {
                             val detailEntry = navController.currentBackStack.value
                                 .lastOrNull { it.destination.route?.startsWith("detail/") == true }
@@ -1974,43 +2138,59 @@ private fun PlaybackNavHost(
                     )
                 },
                 onPlaybackErrorBack = {
-                    requestHomeHeroFocusAfterPlayback()
-                    val returnedToStream = popBackToStream()
-                    if (!returnedToStream) {
-                        val args = backStackEntry.arguments
-                        val videoId = args?.getString("videoId").orEmpty()
-                        val contentType = args?.getString("contentType").orEmpty()
-                        val title = args?.getString("title").orEmpty()
-
-                        if (videoId.isBlank() || contentType.isBlank() || title.isBlank()) {
-                            navController.popBackStack()
+                    val args = backStackEntry.arguments
+                    val contentId = args?.getString("contentId").orEmpty()
+                    if (com.nuvio.tv.youtube.YouTubeProgress.isYouTubeId(contentId)) {
+                        val returnToHomeOnBack = args?.getString("returnToHomeOnBack")
+                            ?.toBooleanStrictOrNull() == true
+                        val returnRoute = if (returnToHomeOnBack) {
+                            requestHomeHeroFocusAfterPlayback()
+                            Screen.Home.route
                         } else {
-                            val route = Screen.Stream.createRoute(
-                                videoId = videoId,
-                                contentType = contentType,
-                                title = title,
-                                poster = args?.getString("poster"),
-                                backdrop = args?.getString("backdrop"),
-                                logo = args?.getString("logo"),
-                                season = args?.getString("season")?.toIntOrNull(),
-                                episode = args?.getString("episode")?.toIntOrNull(),
-                                episodeName = args?.getString("episodeTitle"),
-                                genres = null,
-                                year = args?.getString("year"),
-                                contentId = args?.getString("contentId"),
-                                contentName = args?.getString("contentName"),
-                                runtime = null,
-                                manualSelection = true,
-                                returnToDetailOnBack = args?.getString("returnToDetailOnBack")
-                                    ?.toBooleanStrictOrNull() == true,
-                                returnToHomeOnBack = args?.getString("returnToHomeOnBack")
-                                    ?.toBooleanStrictOrNull() == true,
-                                profileId = args?.getString("profileId")?.toIntOrNull()
-                            )
+                            requestYouTubeContentFocusAfterPlayback()
+                            Screen.YouTube.route
+                        }
+                        if (!navController.popBackStack(returnRoute, inclusive = false)) {
+                            navController.popBackStack()
+                        }
+                    } else {
+                        requestHomeHeroFocusAfterPlayback()
+                        val returnedToStream = popBackToStream()
+                        if (!returnedToStream) {
+                            val videoId = args?.getString("videoId").orEmpty()
+                            val contentType = args?.getString("contentType").orEmpty()
+                            val title = args?.getString("title").orEmpty()
 
-                            navController.navigate(route) {
-                                popUpTo(Screen.Player.route) { inclusive = true }
-                                launchSingleTop = true
+                            if (videoId.isBlank() || contentType.isBlank() || title.isBlank()) {
+                                navController.popBackStack()
+                            } else {
+                                val route = Screen.Stream.createRoute(
+                                    videoId = videoId,
+                                    contentType = contentType,
+                                    title = title,
+                                    poster = args?.getString("poster"),
+                                    backdrop = args?.getString("backdrop"),
+                                    logo = args?.getString("logo"),
+                                    season = args?.getString("season")?.toIntOrNull(),
+                                    episode = args?.getString("episode")?.toIntOrNull(),
+                                    episodeName = args?.getString("episodeTitle"),
+                                    genres = null,
+                                    year = args?.getString("year"),
+                                    contentId = args?.getString("contentId"),
+                                    contentName = args?.getString("contentName"),
+                                    runtime = null,
+                                    manualSelection = true,
+                                    returnToDetailOnBack = args?.getString("returnToDetailOnBack")
+                                        ?.toBooleanStrictOrNull() == true,
+                                    returnToHomeOnBack = args?.getString("returnToHomeOnBack")
+                                        ?.toBooleanStrictOrNull() == true,
+                                    profileId = args?.getString("profileId")?.toIntOrNull()
+                                )
+
+                                navController.navigate(route) {
+                                    popUpTo(Screen.Player.route) { inclusive = true }
+                                    launchSingleTop = true
+                                }
                             }
                         }
                     }
@@ -2055,6 +2235,7 @@ private fun PlaybackNavHost(
                             contentName = item.seriesTitle.ifBlank { item.title },
                             season = item.season.takeIf { isSeries && it > 0 },
                             episode = item.episode.takeIf { isSeries && it > 0 },
+                            iptvVodPlayback = true,
                         )
                     )
                 }
@@ -2095,6 +2276,7 @@ private fun PlaybackNavHost(
                         contentId = item.id,
                         contentType = "movie",
                         contentName = item.title,
+                        iptvVodPlayback = true,
                     )
                 )
             }
@@ -2118,6 +2300,7 @@ private fun PlaybackNavHost(
                         contentName = item.seriesTitle.ifBlank { item.title },
                         season = item.season.takeIf { it > 0 },
                         episode = item.episode.takeIf { it > 0 },
+                        iptvVodPlayback = true,
                     )
                 )
             }
@@ -2138,11 +2321,17 @@ private fun PlaybackNavHost(
                 onOpenFolder = { childPath, childType ->
                     navController.navigate(Screen.FreeboxFolder.createRoute(childPath, childType))
                 },
-                onPlayVideo = { item ->
-                    navController.navigate(createFreeboxVideoRoute(item))
+                onPlayVideo = { item, episodes ->
+                    navController.navigate(createFreeboxVideoRoute(item, freeboxEpisodes = episodes))
                 },
-                onPlayVideoFromBeginning = { item ->
-                    navController.navigate(createFreeboxVideoRoute(item, startFromBeginning = true))
+                onPlayVideoFromBeginning = { item, episodes ->
+                    navController.navigate(
+                        createFreeboxVideoRoute(
+                            item,
+                            freeboxEpisodes = episodes,
+                            startFromBeginning = true,
+                        ),
+                    )
                 },
                 onBack = { navController.popBackStack() },
             )
@@ -2154,10 +2343,18 @@ private fun PlaybackNavHost(
 
         composable(
             route = Screen.HomeIptvFavorite.route,
-            arguments = listOf(navArgument("favoriteKey") { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument("favoriteKey") { type = NavType.StringType },
+                navArgument("homeLandscapeArtworkUrl") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+            ),
         ) { entry ->
             IptvHomeFavoriteScreen(
                 favoriteKey = entry.arguments?.getString("favoriteKey").orEmpty(),
+                homeLandscapeArtworkUrl = entry.arguments?.getString("homeLandscapeArtworkUrl")
+                    ?.takeIf(String::isNotBlank),
                 onBack = { navController.popBackStack() },
                 onOpenMovieDetails = { tmdbId, favoriteKey ->
                     navController.navigate(
@@ -2187,6 +2384,7 @@ private fun PlaybackNavHost(
                             season = item.season.takeIf { isSeries && it > 0 },
                             episode = item.episode.takeIf { isSeries && it > 0 },
                             returnToHomeOnBack = true,
+                            iptvVodPlayback = true,
                         )
                     )
                 },
@@ -2212,6 +2410,7 @@ private fun PlaybackNavHost(
                             contentName = item.seriesTitle.ifBlank { item.title },
                             season = item.season.takeIf { isSeries && it > 0 },
                             episode = item.episode.takeIf { isSeries && it > 0 },
+                            iptvVodPlayback = true,
                         )
                     )
                 }
@@ -2228,32 +2427,6 @@ private fun PlaybackNavHost(
                     navController.navigate(Screen.CatalogSeeAll.createRoute(catalogId, addonId, type))
                 }
             )
-        }
-
-        composable(Screen.ServerHub.route) {
-            val serverContentFocusRequester = remember { FocusRequester() }
-            CompositionLocalProvider(LocalContentFocusRequester provides serverContentFocusRequester) {
-                Box(Modifier.fillMaxSize()) {
-                    ServerHubScreen(
-                        onOpenLocal = {
-                            navController.navigate(Screen.ServerBrowser.createRoute(ServerBrowserViewModel.LOCAL_SOURCE))
-                        },
-                        onOpenFreebox = {
-                            navController.navigate(Screen.ServerBrowser.createRoute(ServerBrowserViewModel.FREEBOX_SOURCE))
-                        },
-                        onOpenServer = { connectionId ->
-                            navController.navigate(Screen.ServerBrowser.createRoute(connectionId))
-                        },
-                        onManageServers = { navController.navigate(Screen.Settings.route) },
-                        onBackPress = { navController.popBackStack() },
-                        contentFocusRequester = serverContentFocusRequester,
-                    )
-                    ModulePageChrome(
-                        title = stringResource(R.string.server_hub_title),
-                        navController = navController,
-                    )
-                }
-            }
         }
 
         composable(
@@ -2325,14 +2498,6 @@ private fun PlaybackNavHost(
                         openPath = openPath,
                         viewModel = browserViewModel,
                         onBack = { navController.popBackStack() },
-                        onNavigateHome = {
-                            if (!navController.popBackStack(Screen.ServerHub.route, inclusive = false)) {
-                                navController.navigate(Screen.ServerHub.route) {
-                                    launchSingleTop = true
-                                    popUpTo(navController.graph.startDestinationId) { inclusive = false }
-                                }
-                            }
-                        },
                         contentFocusRequester = browserContentFocusRequester,
                         onChooseSource = { nextSource ->
                             navController.navigate(Screen.ServerBrowser.createRoute(nextSource))
@@ -2475,7 +2640,7 @@ private fun PlaybackNavHost(
                             }
                         },
                     )
-                    ModulePageChrome(title = browserState.sourceName, navController = navController)
+                    ModulePageChrome(title = "", navController = navController)
                 }
             }
         }
@@ -2689,7 +2854,7 @@ private fun PlaybackNavHost(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black)
+                    .background(NuvioTheme.colors.Background)
             ) {
                 CompositionLocalProvider(
                     LocalContentFocusRequester provides appsContentFocusRequester
@@ -2698,29 +2863,19 @@ private fun PlaybackNavHost(
                         onManageHomeApps = { navController.navigate(Screen.InstalledAppsOrder.route) },
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(start = 72.dp, top = 80.dp, end = 24.dp, bottom = 24.dp),
+                            .padding(start = 72.dp, top = 96.dp, end = 24.dp, bottom = 24.dp),
                         embedded = true,
                         contentFocusRequester = appsContentFocusRequester
                     )
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(start = 108.dp, top = 28.dp)
-                            .height(36.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Text(
-                            text = stringResource(R.string.nav_apps),
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = NuvioTheme.colors.TextPrimary
-                        )
-                    }
                     HomeTopBarHeader(
                         showCalendarShortcut = calendarSettings.calendarInHeader && !calendarSettings.calendarOff,
                         onCalendarClick = {
                             navController.navigate(Screen.Calendar.route) { launchSingleTop = true }
                         },
-                        onServersClick = { navController.navigate(Screen.ServerHub.route) },
+                        onServersClick = { navController.navigateToServerConnections() },
+                        onServerSourceSelected = { sourceId ->
+                            navController.navigate(Screen.ServerBrowser.createRoute(sourceId)) { launchSingleTop = true }
+                        },
                         onAppsClick = returnToHome,
                         onSettingsClick = { showAppsSettingsDrawer = true },
                         modifier = Modifier.align(Alignment.TopEnd)

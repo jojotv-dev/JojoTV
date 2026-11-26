@@ -21,6 +21,9 @@ import com.nuvio.tv.domain.model.countryToLanguageCode
 import com.nuvio.tv.reshaped.livetv.LiveTvVodCache
 import com.nuvio.tv.reshaped.livetv.normalizeLiveTvVodTitleForTmdb
 import com.nuvio.tv.ui.util.parseEpisodeReleaseDate
+import com.nuvio.tv.youtube.AccountScope
+import com.nuvio.tv.youtube.YouTubeAccountScopes
+import com.nuvio.tv.youtube.YouTubeProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -59,6 +62,7 @@ private const val CW_MAX_RECENT_PROGRESS_ITEMS = 300
 private const val CW_MAX_NEXT_UP_LOOKUPS = 32
 private const val CW_MAX_NEXT_UP_CONCURRENCY = 4
 private const val CW_MAX_ENRICHMENT_CONCURRENCY = 4
+private const val CW_MAX_YOUTUBE_METADATA_LOOKUPS = 8
 private const val CW_PROGRESS_DEBOUNCE_MS = 500L
 
 private data class ProgressSnapshot(
@@ -285,16 +289,85 @@ private fun WatchProgress.continueWatchingIptvVodCacheKey(): Pair<String, String
 }
 
 /** Resolves source-local metadata without asking catalog addons to understand provider IDs. */
+private fun HomeViewModel.resolveYouTubeContinueWatchingMetadata(
+    progress: WatchProgress,
+    lookupMetadata: Boolean
+): CwMetaSummary {
+    val fallback = progress.toCwFallbackSummary()
+    val videoId = progress.contentId
+        .removePrefix(YouTubeProgress.ID_PREFIX)
+        .takeIf { id ->
+            id.length in 6..20 && id.all { char ->
+                char in 'A'..'Z' || char in 'a'..'z' || char in '0'..'9' || char == '_' || char == '-'
+            }
+        }
+        ?: return fallback
+    val cacheKey = "${progress.contentType}:${progress.contentId}"
+    synchronized(cwMetaCache) { cwMetaCache[cacheKey] }?.let { return it }
+
+    val metadata = if (lookupMetadata) {
+        try {
+            YouTubeAccountScopes.engine(appContext, AccountScope.ONETUBE)
+                .mediaItemService
+                .getMetadata(videoId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    } else {
+        null
+    }
+    val thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+    val metadataDescription = listOfNotNull(
+        metadata?.author?.trim()?.takeIf(String::isNotBlank),
+        metadata?.description?.trim()?.takeIf(String::isNotBlank)
+    ).joinToString("\n\n").takeIf(String::isNotBlank)
+    val summary = fallback.copy(
+        name = metadata?.title?.trim()?.takeIf(String::isNotBlank)
+            ?: progress.name.trim().takeIf(String::isNotBlank)
+            ?: videoId,
+        poster = progress.poster?.takeIf(String::isNotBlank) ?: thumbnailUrl,
+        backdropUrl = progress.backdrop?.takeIf(String::isNotBlank) ?: thumbnailUrl,
+        logo = progress.logo?.takeIf(String::isNotBlank),
+        description = metadataDescription ?: fallback.description,
+        releaseInfo = metadata?.publishedDate?.trim()?.takeIf(String::isNotBlank)
+            ?: fallback.releaseInfo
+    )
+    if (metadata != null) {
+        synchronized(cwMetaCache) { cwMetaCache[cacheKey] = summary }
+    }
+    return summary
+}
+
 private suspend fun HomeViewModel.resolveContinueWatchingSourceMetadata(
     items: List<ContinueWatchingItem>
 ): Map<String, CwMetaSummary> = withContext(Dispatchers.IO) {
     val progressItems = items.filterIsInstance<ContinueWatchingItem.InProgress>().map { it.progress }
+    val youtubeItems = progressItems
+        .filter { YouTubeProgress.isYouTubeId(it.contentId) }
+        .distinctBy { it.contentId }
+        .sortedByDescending { it.lastWatched }
     val sourceItems = progressItems.filter {
         it.isFreeboxContinueWatchingItem() || it.continueWatchingIptvVodCacheKey() != null
     }
-    if (sourceItems.isEmpty()) return@withContext emptyMap()
+    if (sourceItems.isEmpty() && youtubeItems.isEmpty()) return@withContext emptyMap()
 
-    val resolved = LinkedHashMap<String, CwMetaSummary>(sourceItems.size)
+    val resolved = LinkedHashMap<String, CwMetaSummary>(sourceItems.size + youtubeItems.size)
+    val youtubeMetadataLookupIds = youtubeItems.asSequence()
+        .filter { it.name.isBlank() }
+        .take(CW_MAX_YOUTUBE_METADATA_LOOKUPS)
+        .map { it.contentId }
+        .toSet()
+    youtubeItems.forEach { progress ->
+        val cacheKey = "${progress.contentType}:${progress.contentId}"
+        val cached = synchronized(cwMetaCache) { cwMetaCache[cacheKey] }
+        resolved[progress.contentId] = cached ?: resolveYouTubeContinueWatchingMetadata(
+            progress = progress,
+            lookupMetadata = progress.contentId in youtubeMetadataLookupIds
+        )
+    }
+
     val freeboxItems = progressItems.filter(WatchProgress::isFreeboxContinueWatchingItem)
     val repository = freeboxRepository
     if (freeboxItems.isNotEmpty()) {
@@ -1100,13 +1173,7 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                                     val item = buildNextUpItem(
                                         progress = seed,
                                         showUnairedNextUp = showUnairedNextUp
-                                    ).also { resolved ->
-                                        logSimklAsyncNextUpResolution(
-                                            seed = seed,
-                                            resolved = resolved,
-                                            watchedItems = allWatchedItems
-                                        )
-                                    }
+                                    )
                                     if (item != null) {
                                         conclusivelyProcessedOlderContentIds += seed.contentId
                                         if (
@@ -1356,19 +1423,6 @@ internal fun HomeViewModel.loadContinueWatchingPipeline() {
                         state.copy(continueWatchingItems = normalMain, upcomingItems = normalUpcoming)
                     }
                 }
-                SimklContinueWatchingDisplayLogger.log(
-                    buildSimklCwDisplayDiagnosticReport(
-                        displayedItems = _uiState.value.continueWatchingItems + _uiState.value.upcomingItems,
-                        liveProgress = items,
-                        nextUpSeeds = nextUpSeeds,
-                        watchedItems = allWatchedItems,
-                        freshNextUpItems = nextUpItems,
-                        olderResolvedNextUpItems = persistedOlderItems,
-                        cachedNextUpItems = cachedNextUpItems,
-                        preferFurthestEpisode = nextUpFromFurthestEpisode,
-                        hasLoadedRemoteProgress = snapshot.hasLoadedRemoteProgress
-                    )
-                )
                 debug.recordLightweightRendered(
                     count = normalItems.size,
                     elapsedMs = SystemClock.elapsedRealtime() - cycleStartMs
@@ -2204,8 +2258,23 @@ private suspend fun HomeViewModel.enrichInProgressItem(
     debug: CwDebugSession? = null,
     sourceMetadata: CwMetaSummary? = null
 ): ContinueWatchingItem.InProgress = coroutineScope {
-    if (com.nuvio.tv.youtube.YouTubeProgress.isYouTubeId(item.progress.contentId)) {
-        return@coroutineScope item
+    if (YouTubeProgress.isYouTubeId(item.progress.contentId)) {
+        val youtubeMeta = sourceMetadata ?: resolveYouTubeContinueWatchingMetadata(
+            progress = item.progress,
+            lookupMetadata = item.progress.name.isBlank()
+        )
+        return@coroutineScope item.copy(
+            progress = item.progress.copy(
+                name = item.progress.name.takeIf(String::isNotBlank) ?: youtubeMeta.name,
+                poster = item.progress.poster?.takeIf(String::isNotBlank) ?: youtubeMeta.poster,
+                backdrop = item.progress.backdrop?.takeIf(String::isNotBlank) ?: youtubeMeta.backdropUrl,
+                logo = item.progress.logo?.takeIf(String::isNotBlank) ?: youtubeMeta.logo
+            ),
+            episodeDescription = item.episodeDescription?.takeIf(String::isNotBlank)
+                ?: youtubeMeta.description,
+            genres = item.genres.ifEmpty { youtubeMeta.genres },
+            releaseInfo = item.releaseInfo?.takeIf(String::isNotBlank) ?: youtubeMeta.releaseInfo
+        )
     }
 
     val shouldEnrichTmdb = currentTmdbSettings.enabled && currentTmdbSettings.enrichContinueWatching
@@ -2238,10 +2307,12 @@ private suspend fun HomeViewModel.enrichInProgressItem(
         ?.let { mergeCwMetaSummaries(it, item.progress.toCwFallbackSummary()) }
         ?: item.progress.toCwFallbackSummary()
     val video = resolveVideoForProgress(item.progress, meta)
+    var resolvedTmdbId = item.resolvedTmdbId
     val tmdbData = if (shouldEnrichTmdb) {
         // Use early-resolved TMDB ID if available, otherwise fall back to full resolve
         val earlyTmdbId = tmdbIdDeferred?.await()
         if (earlyTmdbId != null) {
+            resolvedTmdbId = earlyTmdbId
             // Cache the early result
             val cacheKey = "${item.progress.contentType}:${item.progress.contentId}"
             synchronized(cwTmdbIdCache) { cwTmdbIdCache[cacheKey] = earlyTmdbId }
@@ -2351,11 +2422,43 @@ private suspend fun HomeViewModel.enrichInProgressItem(
         genres = genres,
         releaseInfo = releaseInfo,
         homeSourcePreview = sourceMetadata?.sourcePreview ?: item.homeSourcePreview,
+        resolvedTmdbId = sourceMetadata?.sourcePreview?.tmdbId?.takeIf(String::isNotBlank)
+            ?: resolvedTmdbId,
         contentLanguage = tmdbData?.contentLanguage
             ?: normalizeLanguageCode(meta.language)
             ?: countryToLanguageCode(meta.country)
             ?: item.contentLanguage
     )
+}
+
+internal suspend fun HomeViewModel.resolveIptvVodTmdbId(
+    title: String,
+    type: String,
+    year: String? = null,
+): String? {
+    val normalizedType = when (type.lowercase(Locale.ROOT)) {
+        "movie" -> "movie"
+        "series" -> "series"
+        else -> return null
+    }
+    val expectedContentType = if (normalizedType == "movie") ContentType.MOVIE else ContentType.SERIES
+    val normalizedTitle = normalizeLiveTvVodTitleForTmdb(title)
+        .takeIf(String::isNotBlank) ?: return null
+    val settings = currentTmdbSettings
+    if (!settings.enabled) return null
+    val match = try {
+        tmdbService.findExactTitleMatch(
+            title = normalizedTitle,
+            mediaType = normalizedType,
+            language = settings.language,
+            year = year?.take(4)?.toIntOrNull(),
+        )
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+    return match?.takeIf { it.contentType == expectedContentType }?.tmdbId?.toString()
 }
 
 private suspend fun HomeViewModel.enrichNextUpItem(
@@ -3674,6 +3777,9 @@ internal fun HomeViewModel.removeContinueWatchingPipeline(
         }
         return
     }
+    val removedProgressItem = _uiState.value.continueWatchingItems
+        .filterIsInstance<ContinueWatchingItem.InProgress>()
+        .firstOrNull { it.progress.contentId == contentId }
     viewModelScope.launch {
         // Optimistic UI: remove the item from the CW list immediately
         // so the user sees instant feedback while the DataStore write propagates.
@@ -3700,5 +3806,49 @@ internal fun HomeViewModel.removeContinueWatchingPipeline(
             season = targetSeason,
             episode = targetEpisode
         )
+        removedProgressItem?.let { suppressHomeCatalogItem(it) }
     }
+}
+
+internal fun homeCatalogRemovalGroupKey(item: ContinueWatchingItem.InProgress): String =
+    "${item.progress.contentType.trim().lowercase(Locale.ROOT)}:${item.progress.contentId.trim()}"
+
+internal suspend fun HomeViewModel.suppressHomeCatalogItem(item: ContinueWatchingItem.InProgress) {
+    val state = _uiState.value
+    val catalogItems = (state.catalogRows + favoriteHomeCatalogRows.value).flatMap { it.items }
+    val directIdentityKeys = sequenceOf(
+        item.progress.contentId,
+        item.progress.videoId,
+        item.homeSourcePreview?.id,
+        item.homeSourcePreview?.tmdbId,
+        item.homeSourcePreview?.imdbId,
+    ).filterNotNull()
+        .map { it.trim().lowercase(Locale.ROOT) }
+        .filter(String::isNotEmpty)
+        .flatMap { key ->
+            when {
+                key.startsWith("tmdb:") -> sequenceOf(key, key.removePrefix("tmdb:"))
+                key.startsWith("imdb:") -> sequenceOf(key, key.removePrefix("imdb:"))
+                else -> sequenceOf(key)
+            }
+        }
+        .toSet()
+    val matchKeys = continueWatchingMatchKeys(
+        items = listOf(item),
+        catalogItems = catalogItems
+    ) + directIdentityKeys
+    if (matchKeys.isEmpty()) return
+
+    layoutPreferenceDataStore.addRemovedHomeCatalogItemMatchKeys(
+        groupKey = homeCatalogRemovalGroupKey(item),
+        matchKeys = matchKeys
+    )
+    updateCatalogRowsPipeline()
+}
+
+internal suspend fun HomeViewModel.restoreHomeCatalogItem(item: ContinueWatchingItem.InProgress) {
+    layoutPreferenceDataStore.removeRemovedHomeCatalogItemMatchKeys(
+        homeCatalogRemovalGroupKey(item)
+    )
+    updateCatalogRowsPipeline()
 }

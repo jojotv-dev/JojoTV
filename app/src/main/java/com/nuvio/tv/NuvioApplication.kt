@@ -17,6 +17,7 @@ import coil3.request.crossfade
 import coil3.request.allowHardware
 import coil3.request.allowRgb565
 import coil3.bitmapFactoryMaxParallelism
+import com.github.awxkee.avifcoil.decoder.HeifDecoder
 
 import okio.Path.Companion.toOkioPath
 import com.nuvio.tv.core.diagnostics.SentryInitializer
@@ -30,7 +31,6 @@ import com.nuvio.tv.core.network.imageNetworkFetcherFactory
 import com.nuvio.tv.data.local.ImagePerformancePreferences
 import com.nuvio.tv.data.local.SentrySettingsDataStore
 import com.nuvio.tv.data.mediaserver.ServerUserStateProjection
-import com.nuvio.tv.data.simkl.SimklAnimeIdPreferenceHolder
 import com.nuvio.tv.ui.screens.settings.MemoryBudget
 import dagger.hilt.android.HiltAndroidApp
 import okhttp3.Cookie
@@ -49,7 +49,6 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
     @Inject lateinit var androidTvChannelSyncService: AndroidTvChannelSyncService
     @Inject lateinit var sentrySettingsDataStore: SentrySettingsDataStore
     @Inject lateinit var imagePerformancePreferences: ImagePerformancePreferences
-    @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
     @Inject lateinit var serverUserStateProjection: ServerUserStateProjection
 
     companion object {
@@ -134,6 +133,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
         return ImageLoader.Builder(this)
             .components {
                 add(CustomPosterFallbackInterceptor())
+                add(HeifDecoder.Factory())
                 if (Build.VERSION.SDK_INT >= 28) {
                     add(AnimatedImageDecoder.Factory())
                 } else {

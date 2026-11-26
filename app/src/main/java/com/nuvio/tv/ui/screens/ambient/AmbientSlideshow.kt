@@ -101,8 +101,27 @@ fun AmbientSlideshow(
     var previousMotionProgress by remember { mutableStateOf(1f) }
 
     val latestSlides by rememberUpdatedState(slides)
+    val slideSourceKey = remember(slides) {
+        slides
+            .map { it.id to it.backdropUrl }
+            .distinct()
+            .sortedWith(compareBy({ it.first }, { it.second }))
+    }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(slideSourceKey) {
+        val availableSources = slideSourceKey.toSet()
+        val currentSource = current?.slide?.let { it.id to it.backdropUrl }
+        val previousSource = previous?.slide?.let { it.id to it.backdropUrl }
+        if (currentSource == null || currentSource !in availableSources) {
+            current = null
+            previous = null
+            backdropAlpha.snapTo(0f)
+            titleAlpha.snapTo(0f)
+            genresAlpha.snapTo(0f)
+            motionProgress.snapTo(0f)
+        } else if (previousSource == null || previousSource !in availableSources) {
+            previous = null
+        }
         coroutineScope {
             var index = 0
             var misses = 0

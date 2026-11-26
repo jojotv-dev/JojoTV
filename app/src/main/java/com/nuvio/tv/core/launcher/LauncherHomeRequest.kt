@@ -6,8 +6,8 @@ import android.content.Intent
  * Shared contract for "go back to the top of the Nuvio Home screen" requests.
  *
  * A Home request reaches [com.nuvio.tv.MainActivity] in two ways:
- * - [LauncherAccessibilityService] intercepts the device HOME key (it is consumed before the
- *   system can act on it) and re-delivers it as an explicit intent carrying [EXTRA_GO_HOME].
+ * - [LauncherAccessibilityService] or [FireOsHomeButtonService] observes the device HOME event
+ *   and re-delivers it as an explicit intent carrying [EXTRA_GO_HOME].
  * - When Nuvio is the default launcher and the service is disabled, the system delivers a plain
  *   ACTION_MAIN / CATEGORY_HOME intent instead, which is treated the same way.
  */

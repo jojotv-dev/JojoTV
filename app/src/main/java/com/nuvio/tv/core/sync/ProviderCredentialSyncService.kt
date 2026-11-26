@@ -13,6 +13,7 @@ import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.reshaped.livetv.LiveTvRepository
 import com.nuvio.tv.reshaped.livetv.LiveTvStorage
 import com.nuvio.tv.reshaped.livetv.LiveTvSource
+import com.nuvio.tv.reshaped.livetv.LiveTvVodCache
 import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -273,8 +274,32 @@ class ProviderCredentialSyncService @Inject constructor(
                     val localOnlySources = currentSources.filterNot(liveTvStorage::isSynchronizedSource)
                     val synchronizedSources = liveTvStorage.decodeSources(credential.value)
                         .filter(liveTvStorage::isSynchronizedSource)
+                    val remoteByIdentity = synchronizedSources.associateBy(LiveTvSource::identity)
+                    val sourceIdAliases = currentSources
+                        .filter(liveTvStorage::isSynchronizedSource)
+                        .mapNotNull { localSource ->
+                            val remoteSource = remoteByIdentity[localSource.identity]
+                                ?.takeIf { it.id != localSource.id }
+                                ?: return@mapNotNull null
+                            localSource.id to remoteSource.id
+                        }
+                        .toMap()
+                    sourceIdAliases.forEach { (oldId, canonicalId) ->
+                        liveTvStorage.rememberVodSourceIdAlias(oldId, canonicalId)
+                    }
+                    liveTvStorage.remapStoredVodFavoriteKeys()
+                    liveTvStorage.remapStoredVodCategoryKeys()
                     val combinedSources = (synchronizedSources + localOnlySources).distinctBy(LiveTvSource::id)
                     liveTvStorage.saveSources(combinedSources)
+                    sourceIdAliases.forEach { (oldId, canonicalId) ->
+                        LiveTvVodCache.copySourceId(context, oldId, canonicalId)
+                    }
+                    if (sourceIdAliases.isNotEmpty()) {
+                        Log.i(
+                            PROVIDER_CREDENTIAL_TAG,
+                            "Reconciled ${sourceIdAliases.size} IPTV source identities for profile ${snapshot.profileId}"
+                        )
+                    }
                     LiveTvRepository.onSynchronizedSourcesChanged(snapshot.profileId, combinedSources)
                 }
             }

@@ -78,6 +78,8 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val heroCatalogKeysKey = stringPreferencesKey("hero_catalog_keys")
     private val homeCatalogOrderKeysKey = stringPreferencesKey("home_catalog_order_keys")
     private val disabledHomeCatalogKeysKey = stringPreferencesKey("disabled_home_catalog_keys")
+    private val removedHomeCatalogItemMatchGroupsKey =
+        stringPreferencesKey("removed_home_catalog_item_match_groups")
     private val cinemetaVideosDisabledMigratedKey = booleanPreferencesKey("cinemeta_videos_disabled_migrated")
     private val customCatalogTitlesKey = stringPreferencesKey("custom_catalog_titles")
     private val sidebarCollapsedKey = booleanPreferencesKey("sidebar_collapsed_by_default")
@@ -259,6 +261,12 @@ class LayoutPreferenceDataStore @Inject constructor(
                 flowOf(MyListsDefaultSeed.DEFAULT_DISABLED_STOCK_CATALOG_KEYS)
             }
         }
+    }
+
+    val removedHomeCatalogItemMatchKeys: Flow<Set<String>> = profileFlow { prefs ->
+        parseRemovedHomeCatalogItemMatchGroups(
+            prefs.getStringOrMigrateSet(removedHomeCatalogItemMatchGroupsKey)
+        ).values.asSequence().flatten().toSet()
     }
 
     val customCatalogTitles: Flow<Map<String, String>> = profileManager.activeProfileId.flatMapLatest { pid ->
@@ -616,6 +624,43 @@ class LayoutPreferenceDataStore @Inject constructor(
         }
     }
 
+    suspend fun addRemovedHomeCatalogItemMatchKeys(groupKey: String, matchKeys: Set<String>) {
+        val normalizedGroupKey = groupKey.trim().takeIf(String::isNotEmpty) ?: return
+        val normalizedMatchKeys = matchKeys.asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .toSet()
+        if (normalizedMatchKeys.isEmpty()) return
+
+        store().edit { prefs ->
+            val groups = parseRemovedHomeCatalogItemMatchGroups(
+                prefs.getStringOrMigrateSet(removedHomeCatalogItemMatchGroupsKey)
+            ).toMutableMap()
+            groups[normalizedGroupKey] = groups[normalizedGroupKey].orEmpty() + normalizedMatchKeys
+            prefs[removedHomeCatalogItemMatchGroupsKey] = gson.toJson(
+                groups.mapValues { (_, keys) -> keys.sorted() }
+            )
+        }
+    }
+
+    suspend fun removeRemovedHomeCatalogItemMatchKeys(groupKey: String) {
+        val normalizedGroupKey = groupKey.trim().takeIf(String::isNotEmpty) ?: return
+        store().edit { prefs ->
+            val groups = parseRemovedHomeCatalogItemMatchGroups(
+                prefs.getStringOrMigrateSet(removedHomeCatalogItemMatchGroupsKey)
+            ).toMutableMap()
+            if (groups.remove(normalizedGroupKey) != null) {
+                if (groups.isEmpty()) {
+                    prefs.remove(removedHomeCatalogItemMatchGroupsKey)
+                } else {
+                    prefs[removedHomeCatalogItemMatchGroupsKey] = gson.toJson(
+                        groups.mapValues { (_, keys) -> keys.sorted() }
+                    )
+                }
+            }
+        }
+    }
+
     suspend fun setSidebarCollapsedByDefault(collapsed: Boolean) {
         store().edit { prefs ->
             prefs[sidebarCollapsedKey] = collapsed
@@ -930,6 +975,27 @@ class LayoutPreferenceDataStore @Inject constructor(
             normalizeCatalogOrderKeys(parsed)
         } catch (_: Exception) {
             emptyList()
+        }
+    }
+
+    private fun parseRemovedHomeCatalogItemMatchGroups(json: String?): Map<String, Set<String>> {
+        if (json.isNullOrBlank()) return emptyMap()
+        return try {
+            val type = object : TypeToken<Map<String, List<String>>>() {}.type
+            gson.fromJson<Map<String, List<String>>>(json, type).orEmpty()
+                .mapNotNull { (groupKey, keys) ->
+                    val normalizedGroupKey = groupKey.trim().takeIf(String::isNotEmpty)
+                        ?: return@mapNotNull null
+                    val normalizedKeys = keys.asSequence()
+                        .map(String::trim)
+                        .filter(String::isNotEmpty)
+                        .toSet()
+                    normalizedGroupKey to normalizedKeys
+                }
+                .filter { (_, keys) -> keys.isNotEmpty() }
+                .toMap()
+        } catch (_: Exception) {
+            emptyMap()
         }
     }
 

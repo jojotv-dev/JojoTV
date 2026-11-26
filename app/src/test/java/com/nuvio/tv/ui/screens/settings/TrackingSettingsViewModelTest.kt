@@ -7,12 +7,8 @@ import com.nuvio.tv.core.tracking.TrackingSourceController
 import com.nuvio.tv.core.tracking.TrackingSourceSelection
 import com.nuvio.tv.data.local.TraktAuthDataStore
 import com.nuvio.tv.data.local.TraktAuthState
-import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressSource
 import com.nuvio.tv.data.mdblist.MdbListTestHarness
-import com.nuvio.tv.data.simkl.SimklAnimeIdPreference
-import com.nuvio.tv.data.simkl.SimklAuthRepository
-import com.nuvio.tv.data.simkl.SimklAuthState
 import com.nuvio.tv.domain.model.LibrarySourceMode
 import io.mockk.coEvery
 import io.mockk.every
@@ -50,12 +46,8 @@ class TrackingSettingsViewModelTest {
                 TrackingSourceSelection(WatchProgressSource.MDBLIST, LibrarySourceMode.LOCAL)
             }
         }
-        val settings = mockk<TraktSettingsDataStore> {
-            every { simklAnimeIdPreference } returns MutableStateFlow(SimklAnimeIdPreference.DEFAULT)
-        }
         val trakt = mockk<TraktAuthDataStore> { every { state } returns flowOf(TraktAuthState()) }
-        val simkl = mockk<SimklAuthRepository> { every { state } returns MutableStateFlow(SimklAuthState()) }
-        val viewModel = TrackingSettingsViewModel(controller, settings, mockk(), trakt, simkl, harness.store, profiles)
+        val viewModel = TrackingSettingsViewModel(controller, trakt, harness.store, profiles)
         runCurrent()
         assertEquals(setOf(TrackingProviderId.MDBLIST), viewModel.uiState.value.connectedProviderIds)
         val previousCount = reconciliations.size

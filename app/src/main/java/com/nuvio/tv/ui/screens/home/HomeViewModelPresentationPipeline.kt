@@ -12,6 +12,7 @@ import com.nuvio.tv.core.poster.withCustomPosterUrls
 import com.nuvio.tv.core.tmdb.TmdbEnrichment
 import com.nuvio.tv.data.freebox.FREEBOX_FOLDER_ID_PREFIX
 import com.nuvio.tv.data.mediaserver.ServerItemRef
+import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeImdbRatingsVisibility
 import com.nuvio.tv.domain.model.DetailImdbRatingsVisibility
@@ -19,6 +20,8 @@ import com.nuvio.tv.domain.model.HomeLayout
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.TmdbSettings
+import com.nuvio.tv.domain.model.stableItemKeys
+import com.nuvio.tv.domain.model.stableKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.async
@@ -318,10 +321,32 @@ private data class ContinueWatchingPosterOverlay(
     val upcomingItems: List<ContinueWatchingItem>,
 )
 
+private data class CatalogRowPresentationIdentity(
+    val key: String,
+    val title: String,
+    val itemKeys: List<String>,
+    val isLoading: Boolean,
+    val hasMore: Boolean,
+)
+
+// Track row membership and ordering while ignoring artwork and metadata enrichment updates.
+private fun CatalogRow.presentationIdentity() = CatalogRowPresentationIdentity(
+    key = stableKey(),
+    title = catalogName,
+    itemKeys = stableItemKeys(),
+    isLoading = isLoading,
+    hasMore = hasMore,
+)
+
 private fun ModernHomePresentationInput.continueWatchingIdentitySnapshot(): List<Pair<String, Set<String>>> =
     catalogRows.asSequence()
         .flatMap { it.items.asSequence() }
-        .map { item -> item.id to item.continueWatchingIdentityKeys().toSet() }
+        .map { item ->
+            val badgeIdentity = item.continueWatchingIdentityKeys().toMutableSet()
+            listOfNotNull(item.name, item.type.name, item.apiType, item.releaseInfo)
+                .forEach(badgeIdentity::add)
+            item.id to badgeIdentity
+        }
         .toList()
 
 @OptIn(FlowPreview::class)
@@ -369,12 +394,14 @@ internal fun HomeViewModel.observeModernHomePresentationPipeline() {
                     catalogRows = state.catalogRows,
                     continueWatchingItems = overlay.continueWatchingItems,
                     upcomingItems = overlay.upcomingItems,
+                    modernContinueWatchingHeroEnabled = state.modernContinueWatchingHeroEnabled,
                     useLandscapePosters = state.modernLandscapePostersEnabled,
                     showCatalogTypeSuffix = state.catalogTypeSuffixEnabled,
                     showFullReleaseDate = state.showFullReleaseDate,
                     showImdbRatings = state.homeImdbRatingsVisibility.showRatings,
                     detailImdbRatingsVisibility = state.detailImdbRatingsVisibility,
-                    localeTag = localeTag
+                    localeTag = localeTag,
+                    catalogBadgeProgressItems = state.continueWatchingItems + state.upcomingItems
                 )
             }
             // Ignore ordinary metadata changes so enrichment does not rebuild
@@ -384,14 +411,20 @@ internal fun HomeViewModel.observeModernHomePresentationPipeline() {
                 old.homeRows === new.homeRows
                     && old.continueWatchingItems == new.continueWatchingItems
                     && old.upcomingItems == new.upcomingItems
+                    && old.catalogBadgeProgressItems == new.catalogBadgeProgressItems
+                    && old.modernContinueWatchingHeroEnabled == new.modernContinueWatchingHeroEnabled
                     && old.useLandscapePosters == new.useLandscapePosters
                     && old.showCatalogTypeSuffix == new.showCatalogTypeSuffix
                     && old.showFullReleaseDate == new.showFullReleaseDate
                     && old.showImdbRatings == new.showImdbRatings
                     && old.localeTag == new.localeTag
-                    && old.catalogRows.size == new.catalogRows.size
                     && (
-                        (old.continueWatchingItems.isEmpty() && new.continueWatchingItems.isEmpty()) ||
+                        old.catalogRows === new.catalogRows ||
+                            old.catalogRows.map { it.presentationIdentity() } ==
+                            new.catalogRows.map { it.presentationIdentity() }
+                    )
+                    && (
+                        (old.catalogBadgeProgressItems.isEmpty() && new.catalogBadgeProgressItems.isEmpty()) ||
                             old.continueWatchingIdentitySnapshot() == new.continueWatchingIdentitySnapshot()
                     )
             }

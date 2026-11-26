@@ -193,6 +193,7 @@
     <string name="iptv_vod_playback_error">Could not start this IPTV stream.</string>
     <string name="iptv_vod_all">All</string>
     <string name="iptv_vod_back">Back</string>
+    <string name="iptv_vod_refresh_list">Refresh list</string>
     <string name="iptv_vod_favorites">Favorites</string>
     <string name="iptv_vod_empty_favorites">No favorites in this section.</string>
     <string name="iptv_vod_history">History</string>

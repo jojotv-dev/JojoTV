@@ -3,10 +3,14 @@
 package com.nuvio.tv.ui.screens.home
 
 import android.view.KeyEvent as AndroidKeyEvent
-import androidx.compose.foundation.BorderStroke
+import android.os.SystemClock
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,9 +28,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.State
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,7 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Border
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -63,16 +70,21 @@ import com.nuvio.tv.data.freebox.FREEBOX_FOLDER_ID_PREFIX
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.SeriesLifecycleStatus
 import com.nuvio.tv.domain.model.normalizeTmdbSeriesStatus
-import com.nuvio.tv.ui.components.LightweightCard
 import com.nuvio.tv.ui.components.formatContinueWatchingProgressLabel
-import com.nuvio.tv.ui.components.shineSweepOnFocus
+import com.nuvio.tv.ui.components.squishOnPress
+import com.nuvio.tv.ui.screens.ambient.AmbientSlideshow
+import com.nuvio.tv.ui.screens.profile.ProfileSelectionArtworkViewModel
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.util.StableMap
+import com.nuvio.tv.ui.util.formatCompactRuntimeMinutes
 import com.nuvio.tv.ui.util.formatHeroRuntime
 import com.nuvio.tv.ui.util.localizedGenreLabel
 import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val HERO_EPISODE_LABEL_PATTERN = Regex("""^S(\d+)\s*E(\d+)$""", RegexOption.IGNORE_CASE)
 
@@ -96,7 +108,51 @@ internal fun ModernContinueWatchingHero(
     enrichedPreviews: State<StableMap<String, MetaPreview>>,
     modifier: Modifier = Modifier
 ) {
-    if (items.isEmpty()) return
+    if (items.isEmpty()) {
+        val emptyHeroShape = NuvioTheme.configuredShape(RoundedCornerShape(26.dp))
+        val artworkViewModel: ProfileSelectionArtworkViewModel = hiltViewModel()
+        val favoriteSlides by artworkViewModel.slides.collectAsState()
+
+        LaunchedEffect(artworkViewModel) {
+            artworkViewModel.observeActiveFavoriteSlides()
+        }
+
+        Box(
+            modifier = modifier
+                .height(height)
+                .focusRequester(focusRequester)
+                .onFocusChanged { state ->
+                    if (state.isFocused) onFocused(0)
+                }
+                .onPreviewKeyEvent { event ->
+                    event.type == KeyEventType.KeyDown &&
+                        (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)
+                }
+                .focusable()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(emptyHeroShape)
+                    .background(modernHomeBackgroundColor())
+            ) {
+                if (favoriteSlides.isNotEmpty()) {
+                    AmbientSlideshow(
+                        slides = favoriteSlides,
+                        modifier = Modifier.fillMaxSize(),
+                        showMetadata = true,
+                        showTitleLogo = true
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .border(2.dp, Color.White, emptyHeroShape)
+                )
+            }
+        }
+        return
+    }
 
     val index = selectedIndex.coerceIn(0, items.lastIndex)
     val selected = items[index]
@@ -150,7 +206,7 @@ internal fun ModernContinueWatchingHero(
     val seriesRuntime = formatHeroRuntime(seriesPreview?.runtime)
     val isFreeboxFolderPreview = seriesPreview?.id
         ?.startsWith(FREEBOX_FOLDER_ID_PREFIX, ignoreCase = true) == true
-    val progressRuntime = progress?.duration?.takeIf { it > 0L }?.let { formatDuration(context, it) }
+    val progressRuntime = progress?.duration?.takeIf { it > 0L }?.let(::formatDuration)
     // The Freebox folder preview may contain a series average; progress.duration is the actual file length.
     val duration = if (isFreeboxVideo) {
         progressRuntime ?: preview.runtimeText
@@ -192,12 +248,21 @@ internal fun ModernContinueWatchingHero(
         .distinct()
         .take(2)
         .joinToString(", ")
-    val synopsis = if (isSeries) {
-        seriesPreview?.description?.takeIf(String::isNotBlank)
-            ?: inProgress?.seriesDescription?.takeIf(String::isNotBlank)
+    val synopsisCandidates = if (isSeries) {
+        listOfNotNull(
+            seriesPreview?.description,
+            inProgress?.seriesDescription,
+            enriched?.description?.takeIf { enrichedIsSeries }
+        )
     } else {
-        enriched?.description?.takeIf(String::isNotBlank) ?: preview.description
+        listOfNotNull(enriched?.description, preview.description)
     }
+    val synopsis = synopsisCandidates
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .minByOrNull { it.length }
     val metadata = listOfNotNull(
         genres.takeIf(String::isNotBlank),
         year?.takeIf(String::isNotBlank),
@@ -217,26 +282,50 @@ internal fun ModernContinueWatchingHero(
     }
     val cardShape = NuvioTheme.configuredShape(RoundedCornerShape(26.dp))
     val resumeButtonShape = NuvioTheme.configuredShape(RoundedCornerShape(24.dp))
-    val focusedBorder = remember(cardShape) {
-        Border(
-            border = BorderStroke(2.dp, Color.White),
-            shape = cardShape
-        )
-    }
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
     var isHeroFocused by remember { mutableStateOf(false) }
     var isResumeButtonFocused by remember { mutableStateOf(false) }
+    var isResumeButtonDpadPressed by remember { mutableStateOf(false) }
+    val resumeButtonInteractionSource = remember { MutableInteractionSource() }
+    val isResumeButtonPressed by resumeButtonInteractionSource.collectIsPressedAsState()
+    var dpadPressStartedAt by remember { mutableStateOf(0L) }
+    var dpadReleaseJob by remember { mutableStateOf<Job?>(null) }
+    val dpadPressScope = rememberCoroutineScope()
+    val tactilePressed = isResumeButtonDpadPressed || isResumeButtonPressed
 
-    LightweightCard(
-        onClick = {
-            if (longPressTriggered) longPressTriggered = false else onClick(item)
-        },
+    Box(
         modifier = modifier
             .height(height)
-            .focusProperties { canFocus = false }
             .onPreviewKeyEvent { event ->
                 val native = event.nativeKeyEvent
+                if (isResumeButtonFocused && isHeroSelectKey(native.keyCode)) {
+                    when (native.action) {
+                        AndroidKeyEvent.ACTION_DOWN -> {
+                            if (!isResumeButtonDpadPressed) {
+                                dpadPressStartedAt = SystemClock.uptimeMillis()
+                            }
+                            dpadReleaseJob?.cancel()
+                            dpadReleaseJob = null
+                            isResumeButtonDpadPressed = true
+                        }
+                        AndroidKeyEvent.ACTION_UP -> {
+                            val heldFor = SystemClock.uptimeMillis() - dpadPressStartedAt
+                            val visibleRemainder = (130L - heldFor).coerceAtLeast(0L)
+                            dpadReleaseJob?.cancel()
+                            if (visibleRemainder == 0L) {
+                                isResumeButtonDpadPressed = false
+                                dpadReleaseJob = null
+                            } else {
+                                dpadReleaseJob = dpadPressScope.launch {
+                                    delay(visibleRemainder)
+                                    isResumeButtonDpadPressed = false
+                                    dpadReleaseJob = null
+                                }
+                            }
+                        }
+                    }
+                }
                 if (native.action == AndroidKeyEvent.ACTION_DOWN && native.keyCode == AndroidKeyEvent.KEYCODE_MENU) {
                     longPressTriggered = true
                     onLongClick(item)
@@ -266,14 +355,16 @@ internal fun ModernContinueWatchingHero(
                     }
                 }
                 false
-            },
-        shape = cardShape,
-        containerColor = Color.Black.copy(alpha = 0.38f),
-        focusedBorder = focusedBorder
+            }
+            .clip(cardShape)
+            .background(modernHomeBackgroundColor())
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .then(
+                    if (isHeroFocused) Modifier.border(2.dp, Color.White, cardShape) else Modifier
+                )
                 .clip(cardShape)
         ) {
             if (!backdrop.isNullOrBlank()) {
@@ -281,12 +372,7 @@ internal fun ModernContinueWatchingHero(
                     model = backdrop,
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .shineSweepOnFocus(
-                            isFocused = isHeroFocused,
-                            restartKey = selected.key
-                        )
+                    modifier = Modifier.fillMaxSize()
                 )
             }
             Box(
@@ -420,7 +506,7 @@ internal fun ModernContinueWatchingHero(
                                 .fillMaxWidth()
                         ) {
                             val maxSynopsisLines = with(LocalDensity.current) {
-                                (maxHeight.toPx() / 20.sp.toPx()).toInt().coerceAtLeast(1)
+                                (maxHeight.toPx() / 20.sp.toPx()).toInt().coerceIn(1, 3)
                             }
                             Text(
                                 text = description,
@@ -443,6 +529,7 @@ internal fun ModernContinueWatchingHero(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Row(
                             modifier = Modifier
+                                .squishOnPress(tactilePressed, "homeHeroResumeButtonSquish")
                                 .focusRequester(focusRequester)
                                 .focusProperties { canFocus = true }
                                 .onFocusChanged { state ->
@@ -451,18 +538,19 @@ internal fun ModernContinueWatchingHero(
                                     if (state.isFocused) {
                                         longPressTriggered = false
                                         onFocused(index)
+                                    } else if (!isResumeButtonDpadPressed) {
+                                        dpadReleaseJob?.cancel()
+                                        dpadReleaseJob = null
                                     }
                                 }
-                                .focusable()
+                                .clickable(
+                                    interactionSource = resumeButtonInteractionSource,
+                                    indication = null
+                                ) {
+                                    if (longPressTriggered) longPressTriggered = false else onClick(item)
+                                }
                                 .clip(resumeButtonShape)
                                 .background(NuvioTheme.colors.Secondary)
-                                .then(
-                                    if (isResumeButtonFocused) {
-                                        Modifier.border(2.dp, Color.White, resumeButtonShape)
-                                    } else {
-                                        Modifier
-                                    }
-                                )
                                 .padding(horizontal = 22.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -526,15 +614,9 @@ internal fun ModernContinueWatchingHero(
     }
 }
 
-private fun formatDuration(context: android.content.Context, durationMs: Long): String {
+private fun formatDuration(durationMs: Long): String {
     val totalMinutes = TimeUnit.MILLISECONDS.toMinutes(durationMs).coerceAtLeast(1L)
-    val hours = (totalMinutes / 60L).toInt()
-    val minutes = (totalMinutes % 60L).toInt()
-    return if (hours > 0) {
-        context.getString(R.string.home_hero_duration_hours_minutes, hours, minutes)
-    } else {
-        context.getString(R.string.home_hero_duration_minutes, totalMinutes.toInt())
-    }
+    return formatCompactRuntimeMinutes(totalMinutes.toInt()).orEmpty()
 }
 
 private fun isHeroSelectKey(keyCode: Int): Boolean =

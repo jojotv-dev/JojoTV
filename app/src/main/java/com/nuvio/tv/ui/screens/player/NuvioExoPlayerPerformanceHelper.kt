@@ -78,7 +78,7 @@ object NuvioExoPlayerPerformanceHelper {
     var bufferForPlaybackMs: Int = 3_000
 
     @Volatile
-    var bufferForPlaybackAfterRebufferMs: Int = 3_000
+    var bufferForPlaybackAfterRebufferMs: Int = 0
 
     @Volatile
     var backBufferMs: Int = DEFAULT_NUVIO_BACK_BUFFER_MS
@@ -103,7 +103,7 @@ object NuvioExoPlayerPerformanceHelper {
         minBufferMs = if (customBuffers) bufferSettings.minBufferMs else DEFAULT_NUVIO_MIN_BUFFER_MS
         maxBufferMs = if (customBuffers) bufferSettings.maxBufferMs else DEFAULT_NUVIO_MAX_BUFFER_MS
         bufferForPlaybackMs = if (customBuffers) bufferSettings.bufferForPlaybackMs else 3_000
-        bufferForPlaybackAfterRebufferMs = if (customBuffers) bufferSettings.bufferForPlaybackAfterRebufferMs else 3_000
+        bufferForPlaybackAfterRebufferMs = if (customBuffers) bufferSettings.bufferForPlaybackAfterRebufferMs else 0
         backBufferMs = if (customBuffers) bufferSettings.backBufferDurationMs else DEFAULT_NUVIO_BACK_BUFFER_MS
 
         val safeLimitMb = getSafeNativeMemoryLimitMb(context)

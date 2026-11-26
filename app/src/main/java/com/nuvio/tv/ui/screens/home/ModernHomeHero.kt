@@ -98,6 +98,7 @@ internal fun ModernHeroScene(
 ) {
     ModernHeroMediaLayer(
         heroBackdrop = { state().heroBackdrop },
+        heroIdentityKey = { state().heroIdentityKey },
         enrichmentActive = { state().enrichmentActive },
         showBackdropArtwork = showBackdropArtwork,
         shouldPlayHeroTrailer = { state().shouldPlayTrailer },
@@ -127,6 +128,7 @@ internal fun ModernHeroScene(
 @Composable
 internal fun ModernHeroMediaLayer(
     heroBackdrop: () -> String?,
+    heroIdentityKey: () -> String?,
     enrichmentActive: () -> Boolean,
     showBackdropArtwork: Boolean = true,
     shouldPlayHeroTrailer: () -> Boolean,
@@ -153,6 +155,7 @@ internal fun ModernHeroMediaLayer(
     // Backdrop URL is managed upstream (heroSceneStateLambda freezes it
     // during rapid nav / scroll). Only update when enrichment is not active
     val rawBackdrop by remember { derivedStateOf { heroBackdrop() } }
+    val identityKey by remember { derivedStateOf { heroIdentityKey() } }
     val enriching by remember { derivedStateOf { enrichmentActive() } }
     var displayedBackdrop by remember { mutableStateOf(heroBackdrop()) }
     if (rawBackdrop != displayedBackdrop && !enriching) {
@@ -172,7 +175,11 @@ internal fun ModernHeroMediaLayer(
         }
     }
     // Keep HeroBackdropState in sync for navigation transitions.
-    LaunchedEffect(displayedBackdrop) { HeroBackdropState.update(displayedBackdrop) }
+    LaunchedEffect(displayedBackdrop, identityKey, enriching) {
+        if (!enriching) {
+            HeroBackdropState.update(displayedBackdrop, identityKey)
+        }
+    }
 
     Box(modifier = modifier) {
         if (showBackdropArtwork) {
@@ -386,7 +393,7 @@ private fun HeroTitleContent(
     val headlineLarge = MaterialTheme.typography.headlineLarge
     val labelMedium = MaterialTheme.typography.labelMedium
     val bodyMedium = MaterialTheme.typography.bodyMedium
-    val logoMaxWidthPx = remember(density) { with(density) { 220.dp.roundToPx() } }
+    val logoMaxWidthPx = remember(density) { with(density) { 320.dp.roundToPx() } }
     val logoHeightPx = remember(density) { with(density) { 100.dp.roundToPx() } }
 
     val logoModel = remember(context, preview.logo, logoMaxWidthPx, logoHeightPx) {
@@ -396,6 +403,7 @@ private fun HeroTitleContent(
                 .crossfade(true)
                 .allowHardware(false)
                 .size(width = logoMaxWidthPx, height = logoHeightPx)
+                .scale(coil3.size.Scale.FIT)
                 .build()
         }
     }
@@ -472,7 +480,7 @@ private fun HeroTitleContent(
                 contentDescription = preview.title,
                 modifier = Modifier
                     .height(100.dp)
-                    .widthIn(min = 100.dp, max = 220.dp)
+                    .widthIn(min = 100.dp, max = 320.dp)
                     .fillMaxWidth(),
                 contentScale = ContentScale.Fit,
                 alignment = Alignment.CenterStart,

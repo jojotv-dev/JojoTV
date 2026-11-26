@@ -234,7 +234,6 @@
     <string name="detail_tab_trailer">Трейлър</string>
     <string name="detail_more_like_this_powered_by_tmdb">Задвижвано от TMDB</string>
     <string name="detail_more_like_this_powered_by_trakt">Задвижвано от Trakt</string>
-    <string name="detail_more_like_this_powered_by_simkl">Задвижвано от Simkl</string>
     <string name="detail_comments_title">Коментари</string>
     <string name="detail_comments_subtitle">Отзиви от Trakt</string>
     <string name="detail_comments_subtitle_episode">Отзиви от Trakt за Сезон %1$d еп. %2$d</string>
@@ -446,8 +445,6 @@
     <string name="licenses_attributions_tmdb_body">JojoTV използва TMDB API за метаданни за филми и телевизионни предавания, произведения на изкуството, трейлъри, актьорски състав, подробности за продукцията, колекции и препоръки. Този продукт използва TMDB API, но не е одобрен или сертифициран от TMDB.</string>
     <string name="licenses_attributions_trakt_title">Тракт</string>
     <string name="licenses_attributions_trakt_body">JojoTV се свързва с Trakt за удостоверяване на акаунта, история на гледане, синхронизиране на напредъка, данни от библиотеката, оценки, списъци и коментари. JojoTV не е свързан с Trakt или не е одобрен от него.</string>
-    <string name="licenses_attributions_simkl_title">Simkl</string>
-    <string name="licenses_attributions_simkl_body">JojoTV се свързва със Simkl за удостоверяване на акаунт, списъци за гледане, история на гледане, напредък на възпроизвеждане и скробълинг. Данните за проследяване на филми, телевизионни предавания и аниме се предоставят от Simkl. JojoTV не е свързан с или одобрен от Simkl.</string>
     <string name="licenses_attributions_mdblist_title">MDBList</string>
     <string name="licenses_attributions_mdblist_body">JojoTV използва MDBList за оценки, история на гледане и проследяване на възпроизвеждане. JojoTV не е свързан с MDBList или не е одобрен от него.</string>
     <string name="licenses_attributions_introdb_title">IntroDB</string>
@@ -481,14 +478,6 @@
     <string name="tracking_sources_subtitle">Изберете къде JojoTV да чете вашата библиотека и да наблюдава напредъка. Възпроизвеждането се прехвърля към всяка свързана услуга.</string>
     <string name="tracking_trakt_features_title">Характеристики на Trakt</string>
     <string name="tracking_trakt_features_subtitle">История, отзиви и препоръки, специфични за Trakt</string>
-    <string name="tracking_simkl_features_title">Функции на Simkl</string>
-    <string name="tracking_simkl_features_subtitle">Настройки, специфични за Simkl</string>
-    <string name="tracking_simkl_anime_id_title">Предпочитание за аниме ID</string>
-    <string name="tracking_simkl_anime_id_subtitle">Контролира как се идентифицират аниме сериалите. Избирането на MAL или Kitsu дава на всеки сезон собствен запис, вместо да се групират под един IMDB ID.</string>
-    <string name="tracking_simkl_anime_id_imdb">Предпочитам IMDB</string>
-    <string name="tracking_simkl_anime_id_mal">Предпочитам MyAnimeList</string>
-    <string name="tracking_simkl_anime_id_kitsu">Предпочитам Кицу</string>
-    <string name="tracking_simkl_anime_id_tvdb">Предпочитам TVDB</string>
     <string name="tracking_status_connected">Свързан</string>
     <string name="tracking_status_disconnected">Няма връзка</string>
     <string name="tracking_status_waiting">Изчаква се одобрение</string>
@@ -499,7 +488,6 @@
     <string name="tracking_library_source_dialog_subtitle">Изберете услугата, която JojoTV чете за вашата библиотека. Възпроизвеждането се пренасочва към всяка свързана услуга.</string>
     <string name="tracking_trakt_progress_required">Налично, когато Trakt е източникът за напредък при гледане</string>
     <string name="trakt_name">Тракт</string>
-    <string name="simkl_name">Симкл</string>
     <string name="settings_network">Скорост на мрежата</string>
     <string name="settings_network_subtitle">Диагностика на латентността и изтеглянията</string>
     <string name="settings_advanced">Разширени</string>
@@ -1352,7 +1340,7 @@
     <string name="trakt_code_expires">Кодът изтича след %1$s</string>
     <string name="trakt_token_refreshes">Токенът за достъп до Trakt се обновява в %1$s</string>
     <string name="trakt_login_instruction">Натиснете „Вход“, за да стартирате удостоверяването на устройството Trakt. Тук ще се появи QR код.</string>
-    <string name="trakt_missing_credentials">Липсва TRAKT_CLIENT_ID / TRAKT_CLIENT_SECRET в local.properties.</string>
+    <string name="trakt_missing_credentials">Липсва TRAKT_CLIENT_ID в local.properties.</string>
     <string name="trakt_watch_progress_title">Наблюдение на напредъка</string>
     <string name="trakt_watch_progress_subtitle">Изберете кои сили на източника на прогрес да се възобновят и да продължите да гледате</string>
     <string name="trakt_watch_progress_dialog_title">Наблюдение на напредъка</string>
@@ -1391,7 +1379,6 @@
     <string name="trakt_more_like_this_source_dialog_subtitle">Изберете източника за препоръки, показвани на екраните с подробности и след игра.</string>
     <string name="trakt_more_like_this_source_trakt">Тракт</string>
     <string name="trakt_more_like_this_source_tmdb">TMDB</string>
-    <string name="trakt_more_like_this_source_simkl">Симкл</string>
     <string name="trakt_cached_label">Кеширано</string>
     <string name="trakt_stat_movies">Филми</string>
     <string name="trakt_stat_shows">Представления</string>
@@ -1961,10 +1948,6 @@
     <string name="library_empty_trakt_subtitle">Използвайте + в подробностите, за да добавите елементи към списъка за наблюдение или списъците</string>
     <string name="library_empty_trakt_not_auth_title">Трактът не е свързан</string>
     <string name="library_empty_trakt_not_auth_subtitle">Свържете акаунта си в Trakt в Настройки, за да видите библиотеката си в Trakt</string>
-    <string name="library_empty_simkl_title">Няма %1$s в този статус</string>
-    <string name="library_empty_simkl_subtitle">Използвайте + в детайлите, за да добавите елементи към Simkl статус</string>
-    <string name="library_empty_simkl_not_auth_title">Simkl не е свързан</string>
-    <string name="library_empty_simkl_not_auth_subtitle">Свържете вашия Simkl акаунт в Настройки, за да видите вашата Simkl библиотека</string>
     <string name="library_list_create_dialog_title">Създаване на списък</string>
     <string name="library_list_edit_dialog_title">Редактиране на списък</string>
     <string name="library_sync_btn">Синхронизиране</string>
@@ -2764,46 +2747,13 @@
     <string name="trakt_library_error_list_limit_reached">Достигнат е лимитът на списъка с трактати. Необходимо е надграждане.</string>
     
     <string name="trakt_error_request_failed">Заявката в Trakt е неуспешна</string>
-    <string name="simkl_account_title">Simkl акаунт</string>
-    <string name="simkl_description">Свържете Simkl за синхронизиране на списъци, история на гледане, напредък на възпроизвеждане и Scrobbles.</string>
-    <string name="simkl_connect">Свързване със Simkl</string>
-    <string name="simkl_disconnect">Изключване на Simkl</string>
-    <string name="simkl_disconnect_title">Да прекъсна ли Simkl?</string>
-    <string name="simkl_disconnect_subtitle">Това премахва Simkl акаунта и кешираните Simkl данни от този профил.</string>
-    <string name="simkl_connected_as">Свързан като %1$s</string>
-    <string name="simkl_user_fallback">Потребител на Simkl</string>
-    <string name="simkl_awaiting_instruction">Отворете страницата за потвърждение на Simkl и въведете този код.</string>
-    <string name="simkl_code_expires">Кодът изтича след %1$s</string>
-    <string name="simkl_sync_now">Синхронизирай сега</string>
-    <string name="simkl_visit">Посетете Simkl</string>
-    <string name="simkl_sync_info_action">Как работи синхронизирането</string>
-    <string name="simkl_sync_info_title">Как работи синхронизирането със Simkl</string>
-    <string name="simkl_sync_info_description">JojoTV автоматично проверява Simkl най-много веднъж на всеки %1$d минути. Промените, направени чрез друго приложение или уебсайта на Simkl, може да отнемат толкова време, за да се покажат.</string>
-    <string name="simkl_sync_info_activity">Всяко обновяване първо проверява дали Simkl докладва промени и изтегля само актуализациите. Това следва правилата на Simkl за API, намалява ненужното използване на данни и помага за поддържане на стабилността на услугата.</string>
-    <string name="simkl_sync_info_manual">Промените, направени в JojoTV, се изпращат към Simkl незабавно. Използвайте „Синхронизиране сега“, когато искате JojoTV да проверява за отдалечени промени по-рано.</string>
-    <string name="simkl_sync_info_library_statuses">Предложенията, поставени в списъците „Задържани“ или „Изтрити“ на Simkl, са скрити от „Продължи гледането“. Те остават скрити, докато са в някой от списъците.</string>
-    <string name="simkl_sync_info_docs">Прочетете ръководството за синхронизиране на Simkl</string>
     <string name="error_open_browser_failed">Неуспешно отваряне на браузъра</string>
-    <string name="simkl_missing_credentials">Липсва SIMKL_CLIENT_ID</string>
-    <string name="simkl_status_enter_code">Въведете кода в Simkl, за да завършите свързването</string>
-    <string name="simkl_status_waiting">Изчаква се одобрение от Simkl…</string>
-    <string name="simkl_status_connected">Свързан със Simkl</string>
-    <string name="simkl_status_disconnected">Връзката със Simkl е прекъсната</string>
-    <string name="simkl_status_syncing">Синхронизиране на Simkl…</string>
-    <string name="simkl_status_synced">Синхронизирането на Simkl е завършено</string>
-    <string name="simkl_watch_progress_selected">Simkl е избран за продължаване на гледането</string>
-    <string name="simkl_library_source_selected">Simkl е избран за библиотека</string>
-    <string name="simkl_error_code_expired">Simkl кодът е изтекъл. Започнете отново.</string>
-    <string name="simkl_error_authorization_revoked">Авторизацията на Simkl беше отменена. Свържете се отново.</string>
-    <string name="simkl_error_network">Не е възможно да се свържете със Simkl. Опитайте отново.</string>
     <string name="tracking_removal_title">Премахване от %1$s?</string>
     <string name="tracking_removal_message">Премахването на „%1$s“ от %2$s ще изчисти и неговите %3$s там. Това не може да бъде отменено.</string>
     <string name="tracking_removal_impact_history">история на гледанията</string>
     <string name="tracking_removal_impact_rating">оценка</string>
     <string name="tracking_removal_impact_history_rating">история на гледанията и рейтинг</string>
     <string name="action_remove_anyway">Премахване въпреки това</string>
-    <string name="cd_simkl_qr">QR код за активиране на Simkl</string>
-    <string name="cd_simkl_logo">Лого на Simkl</string>
     <string name="trakt_error_mark_watched_failed">Неуспешно маркиране като гледано в Trakt (%1$d)</string>
 
 <!-- Detail / poster options errors --> 

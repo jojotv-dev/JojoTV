@@ -165,6 +165,56 @@ class TmdbService @Inject constructor(
         matches.distinctBy { it.tmdbId to it.contentType }
     }
 
+    /** TMDB company logos are useful as a fallback for broadcaster/network brands. */
+    suspend fun channelCompanyLogoCandidates(title: String): List<TmdbCompanyLogoCandidate> =
+        withContext(Dispatchers.IO) {
+            if (TMDB_API_KEY.isBlank() || title.isBlank()) return@withContext emptyList()
+            val cleanedTitle = title
+                .replace(Regex("(?i)\\b(?:HD|FHD|UHD|4K|1080P?|720P?)\\b"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            val queries = listOf(title.trim(), cleanedTitle).distinct().filter(String::isNotBlank)
+            val results = linkedMapOf<Int, com.nuvio.tv.data.remote.api.TmdbCompanySearchResult>()
+            for (query in queries) {
+                val response = try {
+                    tmdbApi.searchCompanies(TMDB_API_KEY, query)
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (_: Exception) {
+                    null
+                }
+                response?.takeIf { it.isSuccessful }?.body()?.results.orEmpty().forEach { result ->
+                    results.putIfAbsent(result.id, result)
+                }
+                if (results.size >= 30) break
+            }
+
+            val normalizedTitle = normalizeSearchTitle(cleanedTitle)
+            results.values
+                .filter { !it.logoPath.isNullOrBlank() }
+                .sortedBy { result ->
+                    val candidate = normalizeSearchTitle(result.name.orEmpty())
+                    when {
+                        candidate == normalizedTitle -> 0
+                        candidate.startsWith(normalizedTitle) || normalizedTitle.startsWith(candidate) -> 1
+                        else -> 2
+                    }
+                }
+                .take(20)
+                .mapNotNull { result ->
+                    val path = result.logoPath?.takeIf { it.startsWith('/') } ?: return@mapNotNull null
+                    val label = listOfNotNull(
+                        result.name?.takeIf(String::isNotBlank),
+                        result.originCountry?.takeIf(String::isNotBlank),
+                        "TMDB"
+                    ).joinToString(" · ")
+                    TmdbCompanyLogoCandidate(
+                        imageUrl = "https://image.tmdb.org/t/p/w300$path",
+                        label = label
+                    )
+                }
+        }
+
     /** Finds manual folder artwork choices only from exact title matches. */
     suspend fun artworkCandidatesForExactTitle(
         title: String,
@@ -833,6 +883,11 @@ data class TmdbExactTitleMatch(
 data class TmdbArtworkCandidate(
     val imageUrl: String,
     val match: TmdbExactTitleMatch,
+)
+
+data class TmdbCompanyLogoCandidate(
+    val imageUrl: String,
+    val label: String,
 )
 
 data class TmdbImages(val backdropUrl: String?, val posterUrl: String?, val runtimeMinutes: Int? = null)

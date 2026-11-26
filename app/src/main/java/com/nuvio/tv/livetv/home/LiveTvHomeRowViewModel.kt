@@ -116,6 +116,7 @@ class LiveTvHomeRowViewModel @Inject constructor(
     fun playFromHome(channel: LiveChannel) {
         val groupId = homeRowGroup(settings.value)
         session.currentGroupId.value = groupId
+        session.homeZapSourceId = channel.sourceId.takeIf(String::isNotBlank)
         // Another channel from a provider that's recording: the recording holds a connection.
         recorder.recordings.value.firstOrNull {
             it.isRecording && it.channelKey != channel.key &&

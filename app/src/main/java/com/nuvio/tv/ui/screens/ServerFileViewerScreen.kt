@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,7 +40,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -134,6 +138,23 @@ private fun ServerImageViewer(
     var navigationError by remember(uri) { mutableStateOf(false) }
     var coverThumbnails by remember(imageEntries) { mutableStateOf<Map<Int, Uri>>(emptyMap()) }
     val scope = rememberCoroutineScope()
+    val contentFocusRequester = remember { FocusRequester() }
+    var imageFocused by remember(uri) { mutableStateOf(false) }
+    var isFullScreen by remember(uri, showCoverflow) { mutableStateOf(!showCoverflow) }
+    var slideshowPaused by remember(uri) { mutableStateOf(false) }
+    val showCoverflowLayout = showCoverflow && !isFullScreen
+    val handleViewerBack: () -> Unit = {
+        if (showCoverflow && isFullScreen) isFullScreen = false else onBack()
+    }
+
+    BackHandler(enabled = showCoverflow && isFullScreen) {
+        handleViewerBack()
+    }
+
+    LaunchedEffect(uri) {
+        withFrameNanos { }
+        contentFocusRequester.requestFocus()
+    }
 
     fun movePhoto(direction: Int, wrapAtEnds: Boolean = false) {
         if (loadingNext || activeIndex !in imageEntries.indices) return
@@ -164,16 +185,23 @@ private fun ServerImageViewer(
         }
     }
 
-    LaunchedEffect(slideshowEnabled, slideshowIntervalSeconds, activeIndex, loadingNext, imageEntries) {
-        if (!slideshowEnabled || imageEntries.size < 2 || loadingNext || activeIndex !in imageEntries.indices) {
+    LaunchedEffect(
+        slideshowEnabled,
+        slideshowPaused,
+        slideshowIntervalSeconds,
+        activeIndex,
+        loadingNext,
+        imageEntries,
+    ) {
+        if (!slideshowEnabled || slideshowPaused || imageEntries.size < 2 || loadingNext || activeIndex !in imageEntries.indices) {
             return@LaunchedEffect
         }
         delay(slideshowIntervalSeconds.coerceIn(1, 10) * 1_000L)
         movePhoto(direction = 1, wrapAtEnds = true)
     }
 
-    LaunchedEffect(activeIndex, imageEntries, showCoverflow) {
-        if (!showCoverflow || activeIndex !in imageEntries.indices || imageEntries.size < 2) {
+    LaunchedEffect(activeIndex, imageEntries, showCoverflowLayout) {
+        if (!showCoverflowLayout || activeIndex !in imageEntries.indices || imageEntries.size < 2) {
             coverThumbnails = emptyMap()
             return@LaunchedEffect
         }
@@ -206,6 +234,20 @@ private fun ServerImageViewer(
                     when (event.key) {
                         Key.DirectionLeft -> { movePhoto(-1); true }
                         Key.DirectionRight -> { movePhoto(1); true }
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                            if (!imageFocused) {
+                                false
+                            } else if (event.nativeKeyEvent.repeatCount > 0) {
+                                true
+                            } else {
+                                if (isFullScreen) {
+                                    if (slideshowEnabled) slideshowPaused = !slideshowPaused
+                                } else {
+                                    isFullScreen = true
+                                }
+                                true
+                            }
+                        }
                         else -> false
                     }
                 }
@@ -217,7 +259,7 @@ private fun ServerImageViewer(
             val previousIndex = activeIndex - 1
             val nextIndex = activeIndex + 1
 
-            if (showCoverflow && previousIndex in imageEntries.indices) {
+            if (showCoverflowLayout && previousIndex in imageEntries.indices) {
                 coverThumbnails[previousIndex]?.let { thumbnail ->
                     FreeboxCoverflowPhotoCard(
                         entry = imageEntries[previousIndex],
@@ -234,7 +276,7 @@ private fun ServerImageViewer(
                 }
             }
 
-            if (showCoverflow && nextIndex in imageEntries.indices) {
+            if (showCoverflowLayout && nextIndex in imageEntries.indices) {
                 coverThumbnails[nextIndex]?.let { thumbnail ->
                     FreeboxCoverflowPhotoCard(
                         entry = imageEntries[nextIndex],
@@ -260,10 +302,13 @@ private fun ServerImageViewer(
                 },
                 label = "freebox-photo-coverflow",
                 modifier = Modifier
+                    .focusRequester(contentFocusRequester)
+                    .onFocusChanged { imageFocused = it.isFocused }
+                    .focusable()
                     .align(Alignment.Center)
-                    .fillMaxWidth(if (showCoverflow) 0.56f else 1f)
-                    .fillMaxHeight(if (showCoverflow) 0.88f else 1f)
-                    .padding(if (showCoverflow) 12.dp else 24.dp)
+                    .fillMaxWidth(if (showCoverflowLayout) 0.56f else 1f)
+                    .fillMaxHeight(if (showCoverflowLayout) 0.88f else 1f)
+                    .padding(if (showCoverflowLayout) 12.dp else 0.dp)
                     .zIndex(2f),
             ) { (imageUri, imageName) ->
                 AsyncImage(
@@ -275,7 +320,19 @@ private fun ServerImageViewer(
                 )
             }
         }
-        FileViewerHeader(displayedName, onBack, Modifier.align(Alignment.TopStart).padding(24.dp))
+        FileViewerHeader(displayedName, handleViewerBack, Modifier.align(Alignment.TopStart).padding(24.dp))
+        if (isFullScreen && slideshowPaused) {
+            Text(
+                text = "Diaporama en pause",
+                style = MaterialTheme.typography.titleMedium,
+                color = NuvioTheme.colors.TextPrimary,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 76.dp)
+                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(50))
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
         if (failed) {
             Text(
                 text = "Cette image ne peut pas être affichée.",

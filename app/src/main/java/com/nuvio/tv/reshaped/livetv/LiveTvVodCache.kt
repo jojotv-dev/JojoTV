@@ -4,20 +4,39 @@ import android.content.Context
 import android.util.JsonReader
 import android.util.JsonToken
 import java.io.File
+import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+private const val VOD_CACHE_BATCH_FLUSH_DELAY_MS = 15_000L
+private const val VOD_CACHE_BATCH_FLUSH_ITEM_LIMIT = 5_000
+
 /** A compact on-disk copy of the last IPTV movie/series catalogue, so it is available on restart. */
 internal object LiveTvVodCache {
     @Volatile
     var onCacheChanged: (() -> Unit)? = null
+
+    private val mutableCacheRevision = MutableStateFlow(0L)
+    val cacheRevision = mutableCacheRevision.asStateFlow()
 
     private data class VodFileStamp(
         val sourceId: String,
@@ -39,21 +58,108 @@ internal object LiveTvVodCache {
         val items: List<LiveTvVodItem>,
     )
 
+    private data class VodCatalogState(
+        val sourceFingerprint: String = "",
+        val catalogComplete: Boolean = false,
+        val categoryListComplete: Boolean = false,
+        val completedCategoryIds: Set<String> = emptySet(),
+    )
+
     private val favoriteReadMutex = Mutex()
+    private val vodWriteMutex = Mutex()
+    private val catalogStateMutex = Mutex()
     private val vodCacheGeneration = AtomicLong(0L)
 
     @Volatile
     private var favoriteSnapshot: FavoriteSnapshot? = null
 
-    suspend fun upsert(context: Context, item: LiveTvVodItem) {
-        val current = read(context, item.sourceId, item.type)
-        val existingIndex = current.indexOfFirst { it.id == item.id }
-        val updated = if (existingIndex >= 0) {
-            current.toMutableList().also { it[existingIndex] = item }
-        } else {
-            current + item
+    class BatchWriter internal constructor(
+        private val context: Context,
+        private val sourceId: String,
+        private val type: String,
+    ) {
+        private val flushScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val pendingMutex = Mutex()
+        private val flushMutex = Mutex()
+        private val pending = LinkedHashMap<String, LiveTvVodItem>()
+        private var flushJob: Job? = null
+        private var lastFlushAtMs = 0L
+
+        suspend fun append(items: List<LiveTvVodItem>) {
+            val validItems = items.asSequence()
+                .filter { it.sourceId == sourceId && it.type == type && it.id.isNotBlank() }
+                .toList()
+            if (validItems.isEmpty()) return
+
+            val flushNow = pendingMutex.withLock {
+                validItems.forEach { pending[it.id] = it }
+                if (lastFlushAtMs == 0L || pending.size >= VOD_CACHE_BATCH_FLUSH_ITEM_LIMIT) {
+                    true
+                } else {
+                    if (flushJob?.isActive != true) {
+                        flushJob = flushScope.launch {
+                            delay(VOD_CACHE_BATCH_FLUSH_DELAY_MS)
+                            flush()
+                        }
+                    }
+                    false
+                }
+            }
+            if (flushNow) flush()
         }
-        write(context, item.sourceId, item.type, updated)
+
+        suspend fun finish() {
+            try {
+                withContext(NonCancellable) { flush() }
+            } finally {
+                flushScope.cancel()
+            }
+        }
+
+        private suspend fun flush() {
+            flushMutex.withLock {
+                val currentJob = currentCoroutineContext()[Job]
+                val batch = pendingMutex.withLock {
+                    flushJob?.takeIf { it != currentJob }?.cancel()
+                    flushJob = null
+                    if (pending.isEmpty()) {
+                        emptyList()
+                    } else {
+                        pending.values.toList().also {
+                            pending.clear()
+                            lastFlushAtMs = System.nanoTime() / 1_000_000L
+                        }
+                    }
+                }
+                if (batch.isNotEmpty()) {
+                    try {
+                        LiveTvVodCache.merge(context, sourceId, type, batch)
+                    } catch (failure: CancellationException) {
+                        restorePending(batch)
+                        throw failure
+                    } catch (failure: Exception) {
+                        restorePending(batch)
+                        throw failure
+                    }
+                }
+            }
+        }
+
+        private suspend fun restorePending(batch: List<LiveTvVodItem>) {
+            withContext(NonCancellable) {
+                pendingMutex.withLock {
+                    batch.forEach { pending.putIfAbsent(it.id, it) }
+                    lastFlushAtMs = 0L
+                }
+            }
+        }
+    }
+
+    fun batchWriter(context: Context, sourceId: String, type: String): BatchWriter =
+        BatchWriter(context.applicationContext, sourceId, type)
+
+    suspend fun upsert(context: Context, item: LiveTvVodItem) {
+        merge(context, item.sourceId, item.type, listOf(item))
     }
 
     suspend fun read(context: Context, sourceId: String, type: String): List<LiveTvVodItem> = withContext(Dispatchers.IO) {
@@ -125,14 +231,110 @@ internal object LiveTvVodCache {
         }
     }
 
-    suspend fun write(context: Context, sourceId: String, type: String, items: List<LiveTvVodItem>): Unit = withContext(Dispatchers.IO) {
-        vodCacheGeneration.incrementAndGet()
-        favoriteSnapshot = null
+    /** Merges a provider page into the saved catalogue without discarding older pages. */
+    suspend fun merge(context: Context, sourceId: String, type: String, items: List<LiveTvVodItem>): Unit =
+        withContext(Dispatchers.IO) {
+            if (items.isEmpty()) return@withContext
+            vodWriteMutex.withLock {
+                val current = read(context, sourceId, type)
+                currentCoroutineContext().ensureActive()
+                val merged = LinkedHashMap<String, LiveTvVodItem>(current.size + items.size)
+                current.forEach { merged[it.id] = it }
+                items.forEach { item ->
+                    if (item.sourceId != sourceId || item.type != type || item.id.isBlank()) return@forEach
+                    val existing = merged[item.id]
+                    val updated = existing?.let { item.withMissingVodFieldsFrom(it) } ?: item
+                    merged[item.id] = updated
+                }
+                val updatedItems = merged.values.toList()
+                if (updatedItems != current) {
+                    writeUnlocked(context, sourceId, type, updatedItems, notifyRemote = false)
+                }
+            }
+        }
+
+    suspend fun write(context: Context, sourceId: String, type: String, items: List<LiveTvVodItem>): Unit =
+        withContext(Dispatchers.IO) {
+            vodWriteMutex.withLock {
+                writeUnlocked(context, sourceId, type, items, notifyRemote = true)
+                Unit
+            }
+        }
+
+    suspend fun writeCompleteCatalog(
+        context: Context,
+        source: LiveTvSource,
+        type: String,
+        items: List<LiveTvVodItem>,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val sourceId = source.id
+        val sourceFingerprint = source.catalogFingerprint()
+        vodWriteMutex.withLock {
+            if (!writeUnlocked(context, sourceId, type, items, notifyRemote = true)) {
+                return@withLock false
+            }
+            catalogStateMutex.withLock {
+                val current = readCatalogStateUnlocked(context, sourceId, type)
+                val state = current.takeIf { it.sourceFingerprint == sourceFingerprint }
+                    ?: VodCatalogState(sourceFingerprint = sourceFingerprint)
+                writeCatalogStateUnlocked(context, sourceId, type, state.copy(catalogComplete = true))
+            }
+        }
+    }
+
+    suspend fun isCatalogComplete(context: Context, source: LiveTvSource, type: String): Boolean =
+        readCatalogState(context, source.id, type).takeIf {
+            it.sourceFingerprint == source.catalogFingerprint()
+        }?.catalogComplete == true
+
+    suspend fun isCategoryListComplete(context: Context, source: LiveTvSource, type: String): Boolean {
+        val state = readCatalogState(context, source.id, type).takeIf {
+            it.sourceFingerprint == source.catalogFingerprint()
+        } ?: return false
+        return state.categoryListComplete && readCategories(context, source.id, type).isNotEmpty()
+    }
+
+    suspend fun completedCategoryIds(context: Context, source: LiveTvSource, type: String): Set<String> =
+        readCatalogState(context, source.id, type).takeIf {
+            it.sourceFingerprint == source.catalogFingerprint()
+        }?.completedCategoryIds.orEmpty()
+
+    suspend fun markCategoriesComplete(
+        context: Context,
+        source: LiveTvSource,
+        type: String,
+        categoryIds: Set<String>,
+    ) {
+        if (categoryIds.isEmpty()) return
+        val fingerprint = source.catalogFingerprint()
+        updateCatalogState(context, source.id, type) { current ->
+            val state = current.takeIf { it.sourceFingerprint == fingerprint }
+                ?: VodCatalogState(sourceFingerprint = fingerprint)
+            state.copy(completedCategoryIds = state.completedCategoryIds + categoryIds)
+        }
+    }
+
+    suspend fun clearCategoryCompletions(context: Context, source: LiveTvSource, type: String) {
+        val fingerprint = source.catalogFingerprint()
+        updateCatalogState(context, source.id, type) { current ->
+            val state = current.takeIf { it.sourceFingerprint == fingerprint }
+                ?: VodCatalogState(sourceFingerprint = fingerprint)
+            state.copy(completedCategoryIds = emptySet())
+        }
+    }
+
+    private fun writeUnlocked(
+        context: Context,
+        sourceId: String,
+        type: String,
+        items: List<LiveTvVodItem>,
+        notifyRemote: Boolean,
+    ): Boolean {
         try {
             val target = file(context, sourceId, type)
             if (items.isEmpty()) {
-                target.delete()
-                return@withContext
+                if (target.exists() && !target.delete()) return false
+                return !target.exists()
             }
             target.parentFile?.mkdirs()
             val temp = File.createTempFile(target.name, ".part", target.parentFile)
@@ -144,19 +346,84 @@ internal object LiveTvVodCache {
                 }
                 if (!temp.renameTo(target)) {
                     target.delete()
-                    temp.renameTo(target)
+                    if (!temp.renameTo(target)) return false
                 }
+                return target.isFile
             } finally {
                 temp.delete()
             }
         } catch (_: Exception) {
             // A cache write must never make a successfully loaded catalogue disappear.
+            return false
         } finally {
-            favoriteSnapshot = null
-            vodCacheGeneration.incrementAndGet()
-            onCacheChanged?.invoke()
+            notifyCacheChanged(notifyRemote)
         }
     }
+
+    /** Copies a same-provider cache to its account-wide source ID and leaves the old files intact. */
+    suspend fun copySourceId(context: Context, oldSourceId: String, canonicalSourceId: String) {
+        if (oldSourceId.isBlank() || canonicalSourceId.isBlank() || oldSourceId == canonicalSourceId) return
+        for (type in listOf("movie", "series")) {
+            val oldItems = read(context, oldSourceId, type)
+            if (oldItems.isNotEmpty()) {
+                merge(
+                    context,
+                    canonicalSourceId,
+                    type,
+                    oldItems.map { item ->
+                        item.copy(
+                            id = "$canonicalSourceId:$type:${item.providerId}",
+                            sourceId = canonicalSourceId,
+                        )
+                    },
+                )
+            }
+
+            val oldCategories = readCategories(context, oldSourceId, type)
+            if (oldCategories.isNotEmpty()) {
+                val merged = LinkedHashMap<String, LiveTvVodCategory>()
+                readCategories(context, canonicalSourceId, type).forEach { merged[it.id] = it }
+                oldCategories.forEach { category ->
+                    merged.putIfAbsent(category.id, category.copy(sourceId = canonicalSourceId))
+                }
+                writeCategories(context, canonicalSourceId, type, merged.values.toList())
+            }
+
+            val oldState = readCatalogState(context, oldSourceId, type)
+            if (oldState != VodCatalogState()) {
+                updateCatalogState(context, canonicalSourceId, type) { current ->
+                    if (current.sourceFingerprint.isNotBlank() &&
+                        current.sourceFingerprint != oldState.sourceFingerprint
+                    ) {
+                        current
+                    } else {
+                        current.copy(
+                            sourceFingerprint = oldState.sourceFingerprint,
+                            catalogComplete = current.catalogComplete || oldState.catalogComplete,
+                            categoryListComplete = current.categoryListComplete || oldState.categoryListComplete,
+                            completedCategoryIds = current.completedCategoryIds + oldState.completedCategoryIds,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun LiveTvVodItem.withMissingVodFieldsFrom(fallback: LiveTvVodItem): LiveTvVodItem = copy(
+        providerId = providerId.ifBlank { fallback.providerId },
+        title = title.ifBlank { fallback.title },
+        categoryId = categoryId.ifBlank { fallback.categoryId },
+        categoryName = categoryName.ifBlank { fallback.categoryName },
+        posterUrl = posterUrl.ifBlank { fallback.posterUrl },
+        extension = extension.ifBlank { fallback.extension },
+        year = year.ifBlank { fallback.year },
+        plot = plot.ifBlank { fallback.plot },
+        season = season.takeIf { it > 0 } ?: fallback.season,
+        episode = episode.takeIf { it > 0 } ?: fallback.episode,
+        command = command.ifBlank { fallback.command },
+        seriesId = seriesId.ifBlank { fallback.seriesId },
+        seriesTitle = seriesTitle.ifBlank { fallback.seriesTitle },
+    )
 
     private fun readFavoritesFromFile(file: File, favoriteKeys: Set<String>): List<LiveTvVodItem> = runCatching {
         GZIPInputStream(file.inputStream().buffered()).bufferedReader(Charsets.UTF_8).use { reader ->
@@ -303,8 +570,35 @@ internal object LiveTvVodCache {
         } catch (_: Exception) {
             // Keep the live catalogue usable when the disk cache cannot be updated.
         } finally {
-            onCacheChanged?.invoke()
+            notifyCacheChanged()
         }
+    }
+
+    suspend fun writeCategoriesAndMarkComplete(
+        context: Context,
+        source: LiveTvSource,
+        type: String,
+        categories: List<LiveTvVodCategory>,
+    ) {
+        if (categories.isEmpty()) return
+        val sourceId = source.id
+        writeCategories(context, sourceId, type, categories)
+        val expected = categories
+            .map { it.copy(sourceId = sourceId) }
+            .distinctBy(LiveTvVodCategory::id)
+        if (readCategories(context, sourceId, type) != expected) return
+        val sourceFingerprint = source.catalogFingerprint()
+        updateCatalogState(context, sourceId, type) { current ->
+            val state = current.takeIf { it.sourceFingerprint == sourceFingerprint }
+                ?: VodCatalogState(sourceFingerprint = sourceFingerprint)
+            state.copy(categoryListComplete = true)
+        }
+    }
+
+    private fun notifyCacheChanged(notifyRemote: Boolean = true) {
+        favoriteSnapshot = null
+        mutableCacheRevision.value = vodCacheGeneration.incrementAndGet()
+        if (notifyRemote) runCatching { onCacheChanged?.invoke() }
     }
 
     private fun file(context: Context, sourceId: String, type: String): File {
@@ -316,6 +610,93 @@ internal object LiveTvVodCache {
     private fun categoryFile(context: Context, sourceId: String, type: String): File {
         val base = file(context, sourceId, type)
         return File(base.parentFile, base.name.removeSuffix(".json.gz") + "_groups.json.gz")
+    }
+
+    private fun catalogStateFile(context: Context, sourceId: String, type: String): File {
+        val base = file(context, sourceId, type)
+        return File(base.parentFile, base.name.removeSuffix(".json.gz") + "_state.json")
+    }
+
+    private suspend fun readCatalogState(context: Context, sourceId: String, type: String): VodCatalogState =
+        withContext(Dispatchers.IO) {
+            catalogStateMutex.withLock { readCatalogStateUnlocked(context, sourceId, type) }
+        }
+
+    private suspend fun updateCatalogState(
+        context: Context,
+        sourceId: String,
+        type: String,
+        update: (VodCatalogState) -> VodCatalogState,
+    ): Boolean = withContext(Dispatchers.IO) {
+        catalogStateMutex.withLock {
+            val current = readCatalogStateUnlocked(context, sourceId, type)
+            writeCatalogStateUnlocked(context, sourceId, type, update(current))
+        }
+    }
+
+    private fun readCatalogStateUnlocked(context: Context, sourceId: String, type: String): VodCatalogState =
+        runCatching {
+            val stateFile = catalogStateFile(context, sourceId, type)
+            if (!stateFile.isFile) return@runCatching VodCatalogState()
+            val json = JSONObject(stateFile.readText(Charsets.UTF_8))
+            VodCatalogState(
+                sourceFingerprint = json.optString("sourceFingerprint"),
+                catalogComplete = json.optBoolean("catalogComplete"),
+                categoryListComplete = json.optBoolean("categoryListComplete"),
+                completedCategoryIds = buildSet {
+                    val ids = json.optJSONArray("completedCategoryIds") ?: return@buildSet
+                    for (index in 0 until ids.length()) {
+                        ids.optString(index).takeIf(String::isNotBlank)?.let(::add)
+                    }
+                },
+            )
+        }.getOrDefault(VodCatalogState())
+
+    private fun LiveTvSource.catalogFingerprint(): String {
+        val providerSettings = when (type) {
+            LiveTvSourceType.Xtream -> xtream.toString()
+            LiveTvSourceType.Stalker -> stalker.toString()
+            LiveTvSourceType.M3u -> url
+        }
+        val value = "${type.name}\u0000$providerSettings".toByteArray(Charsets.UTF_8)
+        return MessageDigest.getInstance("SHA-256")
+            .digest(value)
+            .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
+    }
+
+    private fun writeCatalogStateUnlocked(
+        context: Context,
+        sourceId: String,
+        type: String,
+        state: VodCatalogState,
+    ): Boolean {
+        return try {
+            val target = catalogStateFile(context, sourceId, type)
+            target.parentFile?.mkdirs()
+            val temp = File.createTempFile(target.name, ".part", target.parentFile)
+            try {
+                val completedCategoryIds = JSONArray()
+                state.completedCategoryIds.sorted().forEach(completedCategoryIds::put)
+                temp.writeText(
+                    JSONObject()
+                        .put("sourceFingerprint", state.sourceFingerprint)
+                        .put("catalogComplete", state.catalogComplete)
+                        .put("categoryListComplete", state.categoryListComplete)
+                        .put("completedCategoryIds", completedCategoryIds)
+                        .toString(),
+                    Charsets.UTF_8,
+                )
+                if (!temp.renameTo(target)) {
+                    target.delete()
+                    if (!temp.renameTo(target)) return false
+                }
+                target.isFile
+            } finally {
+                temp.delete()
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun LiveTvVodItem.toJson() = JSONObject().apply {

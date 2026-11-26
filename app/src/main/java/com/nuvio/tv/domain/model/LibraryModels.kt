@@ -60,7 +60,14 @@ enum class LibrarySourceMode {
     LOCAL,
     TRAKT,
     SIMKL,
-    MDBLIST
+    MDBLIST;
+
+    companion object {
+        fun fromStorage(value: String?): LibrarySourceMode? = when (value) {
+            "SIMKL" -> LOCAL
+            else -> entries.firstOrNull { it.name == value && it != SIMKL }
+        }
+    }
 }
 
 enum class LibraryListPrivacy(val apiValue: String) {

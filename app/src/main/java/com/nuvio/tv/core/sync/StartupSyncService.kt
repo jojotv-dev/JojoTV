@@ -35,8 +35,8 @@ private const val TAG = "StartupSyncService"
 private const val FORCE_RESYNC_MIN_INTERVAL_MS = 30_000L
 private const val FULL_STARTUP_PULL_TTL_MS = 6 * 60 * 60 * 1000L
 private const val FOREGROUND_ACTIVITY_PULL_DELAY_MS = 2_500L
-private const val FOREGROUND_ACTIVITY_PULL_MIN_INTERVAL_MS = 2 * 60_000L
-private const val PERIODIC_SURFACE_PULL_INTERVAL_MS = 15 * 60_000L
+private const val FOREGROUND_ACTIVITY_PULL_MIN_INTERVAL_MS = 30_000L
+private const val PERIODIC_SURFACE_PULL_INTERVAL_MS = 60_000L
 
 internal data class SurfacePullFreshness(
     val key: String? = null,
@@ -307,6 +307,12 @@ class StartupSyncService @Inject constructor(
             val succeeded = coroutineScope {
                 val watchState = async { pullPeriodicWatchState() }
                 val library = async { pullPeriodicLibrary() }
+                val providerCredentials = async {
+                    providerCredentialSyncService.syncFromRemote(profileId)
+                }
+                providerCredentials.await().onFailure { error ->
+                    Log.e(TAG, "Activity provider credential pull failed profile=$profileId", error)
+                }
                 watchState.await() && library.await()
             }
             if (succeeded) {

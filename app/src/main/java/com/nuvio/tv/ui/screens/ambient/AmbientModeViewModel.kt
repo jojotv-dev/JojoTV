@@ -72,7 +72,7 @@ class AmbientModeViewModel @Inject constructor(
             ) { libraryFavorites, iptvFavorites -> libraryFavorites to iptvFavorites }
                 .distinctUntilChanged()
                 .collect {
-                    if (settings.value.enabled && loadedAt > 0L) {
+                    if (settings.value.enabled && (loadedAt > 0L || loadJob?.isActive == true)) {
                         refresh(settings.value.catalogKeys, force = true)
                     }
                 }
@@ -101,7 +101,11 @@ class AmbientModeViewModel @Inject constructor(
         loadingProfileId = profileId
         loadJob = viewModelScope.launch {
             val slides = try {
-                loader.load(keys, profileId)
+                loader.load(
+                    legacyCatalogKeys = keys,
+                    profileId = profileId,
+                    onLibrarySlides = { librarySlides -> _slides.value = librarySlides },
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

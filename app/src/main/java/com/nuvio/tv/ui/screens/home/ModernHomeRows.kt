@@ -11,9 +11,15 @@ import com.nuvio.tv.ui.screens.apps.AppContextMenuModal
 import com.nuvio.tv.ui.screens.apps.AppContextMenuViewModel
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -33,6 +39,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -67,6 +74,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.focusGroup
@@ -145,7 +153,6 @@ import com.nuvio.tv.ui.components.nuvioCardDepth
 import com.nuvio.tv.ui.components.LightweightCard
 import com.nuvio.tv.ui.components.rememberArtworkBackedFocusGlow
 import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
-import com.nuvio.tv.ui.components.shineSweepOnFocus
 import com.nuvio.tv.LocalSidebarExpanded
 import kotlin.math.abs
 import kotlinx.coroutines.withContext
@@ -160,12 +167,23 @@ import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import com.nuvio.tv.ui.components.InProgressBadge
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 
 private const val MODERN_HORIZONTAL_FOCUS_DEBOUNCE_MS = 140L
-private const val POSTER_PREFETCH_DISTANCE = 1
+private const val MODERN_CYCLIC_ROW_MOVE_DURATION_MS = 180
+private const val MODERN_CYCLIC_SELECTION_FADE_DURATION_MS = 120
+private const val POSTER_PREFETCH_DISTANCE = 2
 private const val NESTED_PREFETCH_COUNT = 2
 
 internal val LocalVerticalRowsScrolling = compositionLocalOf<State<Boolean>> { mutableStateOf(false) }
+
+private fun ModernCarouselItem.cyclicMediaIdentity(): String? {
+    val catalog = payload as? ModernPayload.Catalog ?: return null
+    val itemId = catalog.itemId.takeIf(String::isNotBlank)
+        ?: metaPreview?.id?.takeIf(String::isNotBlank)
+        ?: key
+    return "${catalog.addonBaseUrl.trimEnd('/').lowercase()}|${catalog.itemType.lowercase()}|$itemId"
+}
 
 /**
  * True while the user is actively "fast-scrolling" — i.e. holding DPAD_LEFT/RIGHT or
@@ -248,7 +266,10 @@ private fun ModernCatalogRowItem(
     item: ModernCarouselItem,
     payload: ModernPayload,
     requester: FocusRequester,
+    isRowActive: Boolean,
     isTargetItem: Boolean = false,
+    fixedFocusFrame: Boolean = false,
+    fixedFrameSelected: Boolean = false,
     useLandscapePosters: Boolean,
     alwaysShowLandscapeClearlogo: Boolean = false,
     showLabels: Boolean,
@@ -384,28 +405,38 @@ private fun ModernCatalogRowItem(
     val cardMetrics = remember(
         item,
         useLandscapePosters,
+        fixedFocusFrame,
+        fixedFrameSelected,
         portraitCatalogCardWidth,
         portraitCatalogCardHeight,
         landscapeCatalogCardWidth,
         landscapeCatalogCardHeight
     ) {
-        item.catalogCardMetrics(
-            useLandscapePosters = useLandscapePosters,
-            portraitCardWidth = portraitCatalogCardWidth,
-            portraitCardHeight = portraitCatalogCardHeight,
-            landscapeCardWidth = landscapeCatalogCardWidth,
-            landscapeCardHeight = landscapeCatalogCardHeight
-        )
+        if (fixedFocusFrame && !fixedFrameSelected) {
+            // Row cards stay portrait; the separate fixed-frame overlay renders landscape.
+            ModernCatalogCardMetrics(portraitCatalogCardWidth, portraitCatalogCardHeight)
+        } else {
+            item.catalogCardMetrics(
+                useLandscapePosters = useLandscapePosters,
+                portraitCardWidth = portraitCatalogCardWidth,
+                portraitCardHeight = portraitCatalogCardHeight,
+                landscapeCardWidth = landscapeCatalogCardWidth,
+                landscapeCardHeight = landscapeCatalogCardHeight
+            )
+        }
     }
 
-    val cardItem = if (metaPreview?.id?.startsWith("freebox:", ignoreCase = true) == true) {
+    val cardItem = if (!useLandscapePosters && metaPreview?.id?.startsWith("freebox:", ignoreCase = true) == true) {
         enrichedMeta?.poster?.takeIf(String::isNotBlank)?.let { imageUrl -> item.copy(imageUrl = imageUrl) } ?: item
     } else item
     ModernCarouselCard(
         item = cardItem,
         useLandscapeOverlayTreatment = useLandscapePosters,
+        isRowActive = isRowActive,
         alwaysShowLandscapeClearlogo = alwaysShowLandscapeClearlogo,
         showLabels = showLabels,
+        fixedFocusFrame = fixedFocusFrame,
+        fixedFrameSelected = fixedFrameSelected,
         placeholderShimmerOffsetState = placeholderShimmerOffsetState,
         cardCornerRadius = posterCardCornerRadius,
         cardWidth = cardMetrics.width,
@@ -455,7 +486,7 @@ private fun ModernCatalogRowItem(
     )
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 internal fun ModernRowSection(
     row: HeroCarouselRow,
@@ -463,6 +494,8 @@ internal fun ModernRowSection(
     modernContinueWatchingHeroHeight: Dp = 0.dp,
     isActiveRow: () -> Boolean,
     rowFocusRequester: FocusRequester,
+    onMoveUp: (() -> Boolean)? = null,
+    onMoveDown: (() -> Boolean)? = null,
     isVerticalRowsScrollingState: State<Boolean>,
     rowTitleBottom: Dp,
     defaultBringIntoViewSpec: BringIntoViewSpec,
@@ -523,29 +556,143 @@ internal fun ModernRowSection(
     val rowKey = row.key
     val isFreeboxVideosRow = row.key == HOME_FREEBOX_VIDEOS_ROW_KEY ||
         row.addonId?.startsWith("freebox:", ignoreCase = true) == true
-    val isContinuousCarouselRow = row.isContinuousCatalogCarousel()
-    val continuousItemIndices = remember(row.items.list) { row.continuousItemIndices() }
-    val isInfiniteCarouselRow = isContinuousCarouselRow && continuousItemIndices.size > 1
+    val isCyclicMediaRow = isFreeboxVideosRow ||
+        row.apiType.equals("video", ignoreCase = true) ||
+        row.apiType.equals("movie", ignoreCase = true) ||
+        row.apiType.equals("series", ignoreCase = true) ||
+        row.apiType.equals("tv", ignoreCase = true) ||
+        row.apiType.equals("channel", ignoreCase = true)
+    val cyclicItemIndices = remember(row.key, row.items.list, isCyclicMediaRow) {
+        if (isCyclicMediaRow) {
+            row.continuousItemIndices().filter { index ->
+                row.items.list.getOrNull(index)?.payload is ModernPayload.Catalog
+            }.distinctBy { index ->
+                row.items.list.getOrNull(index)?.cyclicMediaIdentity() ?: "missing:$index"
+            }
+        } else {
+            emptyList()
+        }
+    }
+    val supportsCyclicNavigation = cyclicItemIndices.size > 1
+    val cyclicItemIndexByIdentity = remember(row.items.list, cyclicItemIndices) {
+        cyclicItemIndices.mapNotNull { index ->
+            row.items.list.getOrNull(index)?.cyclicMediaIdentity()?.let { it to index }
+        }.toMap()
+    }
+
+    fun canonicalCyclicItemIndex(logicalIndex: Int): Int {
+        if (logicalIndex in cyclicItemIndices) return logicalIndex
+        val identity = row.items.list.getOrNull(logicalIndex)?.cyclicMediaIdentity()
+        return identity?.let { cyclicItemIndexByIdentity[it] }
+            ?: cyclicItemIndices.firstOrNull()
+            ?: 0
+    }
+
+    fun cyclicDisplayOrder(selectedLogicalIndex: Int): List<Int> {
+        if (cyclicItemIndices.isEmpty()) return row.items.list.indices.toList()
+        val selectedPosition = cyclicItemIndices
+            .indexOf(canonicalCyclicItemIndex(selectedLogicalIndex))
+            .coerceAtLeast(0)
+        return buildList(cyclicItemIndices.size) {
+            cyclicItemIndices.indices.forEach { offset ->
+                add(cyclicItemIndices[(selectedPosition + offset).mod(cyclicItemIndices.size)])
+            }
+        }
+    }
+
     val isSeriesRow = isSeriesType(row.apiType)
     val isContinueWatchingRow = row.key == MODERN_CONTINUE_WATCHING_ROW_KEY || row.key == MODERN_UPCOMING_ROW_KEY
     val showsInlineMetadata = isFreeboxVideosRow ||
+        row.apiType.equals("video", ignoreCase = true) ||
         row.apiType.equals("movie", ignoreCase = true) ||
-        row.apiType.equals("series", ignoreCase = true)
-    val rowMaskColor = NuvioTheme.colors.Background
+        row.apiType.equals("series", ignoreCase = true) ||
+        row.apiType.equals("tv", ignoreCase = true) ||
+        row.apiType.equals("channel", ignoreCase = true)
+    val rowMaskColor = modernHomeBackgroundColor()
 
     // Per-row derived state: only invalidates when THIS row's focused index
     // changes, not when any other row's index changes in the shared map.
     val rowFocusedIndex = remember(rowKey) {
         derivedStateOf { focusedItemByRow[rowKey] ?: 0 }
     }
-    val rowHasFocus = remember(rowKey) { mutableStateOf(false) }
-    val rowFocusResetNonce = remember(rowKey) { mutableIntStateOf(0) }
-    val pendingLoopFocusTarget = remember(rowKey) { mutableIntStateOf(-1) }
-    val focusedItemIndex = if (isFreeboxVideosRow && pendingLoopFocusTarget.intValue >= 0) {
-        row.logicalItemIndexAtVirtualIndex(pendingLoopFocusTarget.intValue, continuousItemIndices)
-            ?: rowFocusedIndex.value
+    val focusedItemIndex = rowFocusedIndex.value
+    var cyclicSelectionIndex by remember(rowKey) { mutableIntStateOf(focusedItemIndex) }
+    var cyclicDisplayAnchorIndex by remember(rowKey) { mutableIntStateOf(focusedItemIndex) }
+    var cyclicPresentationIndex by remember(rowKey) { mutableIntStateOf(focusedItemIndex) }
+    val cyclicSelectionTransition = updateTransition(
+        targetState = cyclicPresentationIndex,
+        label = "modern-home-cyclic-selection"
+    )
+    var pendingCyclicFocusIndex by remember(rowKey) { mutableStateOf<Int?>(null) }
+    var selectedCyclicDisplayIndex by remember(rowKey, cyclicItemIndices) {
+        mutableIntStateOf(0)
+    }
+    var pendingCyclicDisplayIndex by remember(rowKey) { mutableStateOf<Int?>(null) }
+    val cyclicNavigationRequests = remember(rowKey) {
+        kotlinx.coroutines.channels.Channel<Int>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    }
+    val cyclicDensity = LocalDensity.current
+    val cyclicIsRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val showFixedFocusFrame = supportsCyclicNavigation && isActiveRow() &&
+        (useLandscapePosters || effectiveExpandEnabled)
+    val latestShowFixedFocusFrame = rememberUpdatedState(showFixedFocusFrame)
+    val fixedFocusFrameHeight = if (useLandscapePosters) {
+        landscapeCatalogCardHeight
     } else {
-        rowFocusedIndex.value
+        portraitCatalogCardHeight
+    }
+    val fixedFocusFrameWidth = if (useLandscapePosters) {
+        landscapeCatalogCardWidth
+    } else {
+        fixedFocusFrameHeight * (16f / 9f)
+    }
+    val pendingRowCyclicFocusIndex = if (
+        supportsCyclicNavigation && pendingRowFocusKey.value == row.key
+    ) {
+        canonicalCyclicItemIndex(pendingRowFocusIndex.value ?: focusedItemIndex)
+    } else {
+        null
+    }
+    val displayedItemIndices = remember(
+        row.items.list,
+        cyclicItemIndices,
+        cyclicDisplayAnchorIndex,
+        pendingRowCyclicFocusIndex
+    ) {
+        cyclicDisplayOrder(pendingRowCyclicFocusIndex ?: cyclicDisplayAnchorIndex)
+    }
+
+    fun centeredCyclicDisplayIndex(logicalIndex: Int): Int {
+        return displayedItemIndices.indexOf(canonicalCyclicItemIndex(logicalIndex)).coerceAtLeast(0)
+    }
+
+    fun normalizeCyclicDisplayIndex(displayIndex: Int): Int {
+        val cycleSize = cyclicItemIndices.size
+        return if (cycleSize > 0) displayIndex.mod(cycleSize) else 0
+    }
+
+    LaunchedEffect(
+        row.key,
+        cyclicItemIndices,
+        focusedItemIndex,
+        isActiveRow(),
+        pendingCyclicFocusIndex,
+        pendingRowFocusKey.value,
+        pendingRowFocusIndex.value
+    ) {
+        if (pendingRowFocusKey.value == row.key && supportsCyclicNavigation) {
+            val requestedIndex = canonicalCyclicItemIndex(pendingRowFocusIndex.value ?: focusedItemIndex)
+            cyclicSelectionIndex = requestedIndex
+            cyclicDisplayAnchorIndex = requestedIndex
+            cyclicPresentationIndex = requestedIndex
+        } else if (pendingCyclicFocusIndex == null && isActiveRow()) {
+            val focusedLogicalIndex = if (cyclicItemIndices.isNotEmpty()) {
+                canonicalCyclicItemIndex(focusedItemIndex)
+            } else focusedItemIndex
+            cyclicSelectionIndex = focusedLogicalIndex
+            cyclicDisplayAnchorIndex = focusedLogicalIndex
+            cyclicPresentationIndex = focusedLogicalIndex
+        }
     }
 
     if (modernContinueWatchingHeroEnabled && rowKey == MODERN_CONTINUE_WATCHING_ROW_KEY) {
@@ -553,26 +700,56 @@ internal fun ModernRowSection(
             row.items.list.filter { it.payload is ModernPayload.ContinueWatching }
         }
         val selectedIndex = rowFocusedIndex.value.coerceIn(0, (heroItems.size - 1).coerceAtLeast(0))
-        if (heroItems.isNotEmpty()) {
-            ModernContinueWatchingHero(
-                items = heroItems,
-                selectedIndex = selectedIndex,
-                focusRequester = rowFocusRequester,
-                height = modernContinueWatchingHeroHeight,
-                onFocused = { index ->
-                    onRowItemFocused(rowKey, index, true)
-                },
-                onSelectIndex = { index ->
-                    onRowItemFocused(rowKey, index, true)
-                },
-                onClick = onContinueWatchingClick,
-                onLongClick = onContinueWatchingOptions,
-                enrichedPreviews = enrichedPreviews,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 52.dp, end = 40.dp, top = 8.dp, bottom = 2.dp)
-            )
+        LaunchedEffect(
+            row.key,
+            pendingRowFocusKey.value,
+            pendingRowFocusIndex.value,
+            pendingRowFocusNonce.value,
+            selectedIndex
+        ) {
+            if (pendingRowFocusKey.value != row.key ||
+                (pendingRowFocusIndex.value != null && pendingRowFocusIndex.value != selectedIndex)
+            ) return@LaunchedEffect
+
+            repeat(12) {
+                androidx.compose.runtime.withFrameNanos { }
+                val requested = runCatching { rowFocusRequester.requestFocus() }.getOrDefault(false)
+                if (requested) {
+                    onPendingRowFocusCleared()
+                    return@LaunchedEffect
+                }
+            }
         }
+        ModernContinueWatchingHero(
+            items = heroItems,
+            selectedIndex = selectedIndex,
+            focusRequester = rowFocusRequester,
+            height = modernContinueWatchingHeroHeight,
+            onFocused = { index ->
+                onRowItemFocused(rowKey, index, true)
+            },
+            onSelectIndex = { index ->
+                onRowItemFocused(rowKey, index, true)
+            },
+            onClick = onContinueWatchingClick,
+            onLongClick = onContinueWatchingOptions,
+            enrichedPreviews = enrichedPreviews,
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusProperties {
+                    up = if (onMoveUp != null) FocusRequester.Cancel else FocusRequester.Default
+                    down = if (onMoveDown != null) FocusRequester.Cancel else FocusRequester.Default
+                }
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionUp -> onMoveUp?.invoke() ?: false
+                        Key.DirectionDown -> onMoveDown?.invoke() ?: false
+                        else -> false
+                    }
+                }
+                .padding(start = 52.dp, end = 40.dp, top = 8.dp, bottom = 2.dp)
+        )
         return
     }
 
@@ -606,14 +783,17 @@ internal fun ModernRowSection(
         pinSpent.value = true
     }
     Column(
-        modifier = Modifier.then(
-            if (blockingFocusExit.value) {
-                Modifier.focusProperties {
-                    up = FocusRequester.Cancel
-                    down = FocusRequester.Cancel
-                }
-            } else Modifier
-        )
+        modifier = Modifier
+            // Keep cards, focus rings and metadata inside this section's own row block.
+            .clipToBounds()
+            .then(
+                if (blockingFocusExit.value) {
+                    Modifier.focusProperties {
+                        up = FocusRequester.Cancel
+                        down = FocusRequester.Cancel
+                    }
+                } else Modifier
+            )
     ) {
         val titleMediumStyle = MaterialTheme.typography.titleMedium
         val rowTitleStyle = remember(titleMediumStyle) {
@@ -632,151 +812,19 @@ internal fun ModernRowSection(
         )
 
         val rowListState = rowListStates.getOrPut(row.key) {
-            // Looping rows restore from a stable logical item key, then start far from
-            // either end of the virtual rail. Other rows retain their saved list index.
             val anchorIndex = focusStateCatalogRowScrollAnchor
                 ?.let { anchor -> row.items.list.indexOfFirst { it.key == anchor } }
                 ?.takeIf { it >= 0 }
-            val restoredIndex = if (isInfiniteCarouselRow) {
-                row.virtualIndexForLogicalItem(
-                    anchorIndex ?: focusedItemIndex,
-                    cycleIndices = continuousItemIndices
-                )
+            val restoredIndex = if (supportsCyclicNavigation) {
+                centeredCyclicDisplayIndex(cyclicSelectionIndex)
             } else {
-                anchorIndex ?: focusStateCatalogRowScrollIndex.coerceIn(
-                    0,
-                    (row.items.list.size - 1).coerceAtLeast(0)
-                )
+                (anchorIndex ?: focusStateCatalogRowScrollIndex)
+                    .coerceIn(0, (row.items.list.size - 1).coerceAtLeast(0))
             }
             LazyListState(
                 firstVisibleItemIndex = restoredIndex,
                 prefetchStrategy = LazyListPrefetchStrategy(nestedPrefetchItemCount = NESTED_PREFETCH_COUNT)
             )
-        }
-        val focusedLoopVirtualIndex = remember(rowKey, rowListState) {
-            mutableIntStateOf(
-                if (isInfiniteCarouselRow) {
-                    row.virtualIndexForLogicalItem(
-                        focusedItemIndex,
-                        rowListState.firstVisibleItemIndex,
-                        continuousItemIndices
-                    )
-                } else {
-                    focusedItemIndex
-                }
-            )
-        }
-        val pinnedFirstVirtualIndex = remember(rowKey) { mutableIntStateOf(-1) }
-        if (isInfiniteCarouselRow && pinFirstCard.value && pinnedItemKey.value != null &&
-            pinnedFirstVirtualIndex.intValue < 0
-        ) {
-            pinnedFirstVirtualIndex.intValue = focusedLoopVirtualIndex.intValue
-        }
-
-        LaunchedEffect(isInfiniteCarouselRow, continuousItemIndices, rowFocusedIndex.value) {
-            if (!isInfiniteCarouselRow) return@LaunchedEffect
-            val selectedLogicalIndex = rowFocusedIndex.value
-            val currentVirtualIndex = focusedLoopVirtualIndex.intValue
-            val currentLogicalIndex = row.logicalItemIndexAtVirtualIndex(currentVirtualIndex, continuousItemIndices)
-            val nearVirtualBoundary = currentVirtualIndex < 1_024 || currentVirtualIndex > Int.MAX_VALUE - 1_024
-            if (currentLogicalIndex == selectedLogicalIndex && !nearVirtualBoundary) return@LaunchedEffect
-            val currentViewportIndex = rowListState.firstVisibleItemIndex
-                .takeIf { it >= 1_024 && it <= Int.MAX_VALUE - 1_024 }
-            val targetVirtualIndex = row.virtualIndexForLogicalItem(
-                selectedLogicalIndex,
-                nearVirtualIndex = currentViewportIndex,
-                cycleIndices = continuousItemIndices
-            )
-            if (pinFirstCard.value &&
-                row.items.list.getOrNull(selectedLogicalIndex)?.key == pinnedItemKey.value
-            ) {
-                pinnedFirstVirtualIndex.intValue = targetVirtualIndex
-            }
-            focusedLoopVirtualIndex.intValue = targetVirtualIndex
-            rowListState.scrollToItem(targetVirtualIndex)
-            if (isActiveRow() && rowHasFocus.value) {
-                val requester = itemFocusRequesters.getOrPut(targetVirtualIndex) { FocusRequester() }
-                var focusRequested = false
-                repeat(12) {
-                    if (!focusRequested) {
-                        androidx.compose.runtime.withFrameNanos { }
-                        focusRequested = runCatching { requester.requestFocus() }.getOrDefault(false)
-                    }
-                }
-            }
-        }
-
-        LaunchedEffect(rowFocusResetNonce.intValue, isInfiniteCarouselRow, continuousItemIndices) {
-            if (rowFocusResetNonce.intValue == 0) return@LaunchedEffect
-            val firstIndex = if (isContinuousCarouselRow) continuousItemIndices.firstOrNull() ?: 0 else 0
-            if (isInfiniteCarouselRow) {
-                val targetVirtualIndex = row.virtualIndexForLogicalItem(
-                    logicalIndex = firstIndex,
-                    nearVirtualIndex = rowListState.firstVisibleItemIndex,
-                    cycleIndices = continuousItemIndices
-                )
-                pendingLoopFocusTarget.intValue = -1
-                focusedLoopVirtualIndex.intValue = targetVirtualIndex
-                rowListState.scrollToItem(targetVirtualIndex)
-            } else {
-                rowListState.scrollToItem(0)
-            }
-        }
-
-        // Freebox videos and the physical ends of other catalog rails need an
-        // explicit focus target; ordinary film and series movement stays native.
-        val pendingCyclicFocusTarget = remember(rowKey) { mutableIntStateOf(-1) }
-        val cyclicItemIndices = remember(row.items.list, isInfiniteCarouselRow, continuousItemIndices) {
-            if (isInfiniteCarouselRow) return@remember continuousItemIndices
-            row.items.list.indices.filterNot { index ->
-                index > 0 && (row.items.list[index].payload as? ModernPayload.Catalog)
-                    ?.itemId?.startsWith("__placeholder_") == true
-            }
-        }
-        LaunchedEffect(pendingLoopFocusTarget.intValue, continuousItemIndices) {
-            val targetVirtualIndex = pendingLoopFocusTarget.intValue
-            if (!isInfiniteCarouselRow || targetVirtualIndex < 0) return@LaunchedEffect
-            if (row.logicalItemIndexAtVirtualIndex(targetVirtualIndex, continuousItemIndices) == null) {
-                pendingLoopFocusTarget.intValue = -1
-                return@LaunchedEffect
-            }
-            rowListState.animateScrollToItem(targetVirtualIndex)
-            val requester = itemFocusRequesters.getOrPut(targetVirtualIndex) { FocusRequester() }
-            var focusRequested = false
-            repeat(12) {
-                if (!focusRequested) {
-                    androidx.compose.runtime.withFrameNanos { }
-                    focusRequested = runCatching { requester.requestFocus() }.getOrDefault(false)
-                }
-            }
-            if (!focusRequested) {
-                pendingLoopFocusTarget.intValue = -1
-                row.logicalItemIndexAtVirtualIndex(focusedLoopVirtualIndex.intValue, continuousItemIndices)?.let { actualIndex ->
-                    onRowItemFocused(rowKey, actualIndex, isContinueWatchingRow)
-                }
-            }
-        }
-        LaunchedEffect(isActiveRow()) {
-            if (!isActiveRow()) pendingLoopFocusTarget.intValue = -1
-        }
-
-        // Non-catalog rails still wrap focus at their finite endpoints.
-        LaunchedEffect(pendingCyclicFocusTarget.intValue, cyclicItemIndices) {
-            val targetIndex = pendingCyclicFocusTarget.intValue
-            if (targetIndex !in cyclicItemIndices) {
-                pendingCyclicFocusTarget.intValue = -1
-                return@LaunchedEffect
-            }
-            rowListState.animateScrollToItem(targetIndex)
-            val requester = itemFocusRequesters.getOrPut(targetIndex) { FocusRequester() }
-            var focusRequested = false
-            repeat(12) {
-                if (!focusRequested) {
-                    androidx.compose.runtime.withFrameNanos { }
-                    focusRequested = runCatching { requester.requestFocus() }.getOrDefault(false)
-                }
-            }
-            pendingCyclicFocusTarget.intValue = -1
         }
 
         // Keep the selected card directly above its metadata panel. The panel is
@@ -785,21 +833,180 @@ internal fun ModernRowSection(
             row.key,
             showsInlineMetadata,
             focusedItemIndex,
+            cyclicSelectionIndex,
+            displayedItemIndices,
             isActiveRow(),
-            pendingLoopFocusTarget.intValue,
-            focusedLoopVirtualIndex.intValue
+            pendingCyclicFocusIndex
         ) {
-            if (!showsInlineMetadata || !isActiveRow() || row.items.list.isEmpty()) return@LaunchedEffect
-            if (isFreeboxVideosRow && pendingLoopFocusTarget.intValue >= 0) return@LaunchedEffect
-            val selectedIndex = if (isInfiniteCarouselRow) {
-                focusedLoopVirtualIndex.intValue
-            } else {
-                focusedItemIndex.coerceIn(0, row.items.list.lastIndex)
-            }
+            if (supportsCyclicNavigation || !showsInlineMetadata ||
+                !isActiveRow() || row.items.list.isEmpty()
+            ) return@LaunchedEffect
+            val selectedIndex = displayedItemIndices.indexOf(focusedItemIndex).takeIf { it >= 0 } ?: 0
             if (rowListState.firstVisibleItemIndex != selectedIndex ||
                 rowListState.firstVisibleItemScrollOffset != 0
             ) {
                 rowListState.animateScrollToItem(selectedIndex)
+            }
+        }
+
+        LaunchedEffect(
+            row.key,
+            cyclicItemIndices,
+            cyclicSelectionIndex,
+            cyclicDisplayAnchorIndex,
+            pendingRowCyclicFocusIndex,
+            pendingCyclicDisplayIndex,
+            isActiveRow()
+        ) {
+            if (!supportsCyclicNavigation || !isActiveRow() || pendingCyclicDisplayIndex != null) {
+                return@LaunchedEffect
+            }
+            val selectedIndex = pendingRowCyclicFocusIndex ?: cyclicSelectionIndex
+            val selectedLogicalIndex = displayedItemIndices.getOrNull(selectedCyclicDisplayIndex)
+            val selectedItemIsAlreadyAligned = pendingRowCyclicFocusIndex == null &&
+                selectedLogicalIndex == selectedIndex &&
+                rowListState.firstVisibleItemIndex == selectedCyclicDisplayIndex &&
+                rowListState.firstVisibleItemScrollOffset == 0
+            if (selectedItemIsAlreadyAligned) return@LaunchedEffect
+
+            val targetDisplayIndex = centeredCyclicDisplayIndex(selectedIndex)
+            selectedCyclicDisplayIndex = targetDisplayIndex
+            if (rowListState.firstVisibleItemIndex != targetDisplayIndex ||
+                rowListState.firstVisibleItemScrollOffset != 0
+            ) {
+                rowListState.scrollToItem(targetDisplayIndex)
+            }
+        }
+
+        LaunchedEffect(row.key, supportsCyclicNavigation, cyclicItemIndices) {
+            if (!supportsCyclicNavigation) return@LaunchedEffect
+            val itemSpacingPx = with(cyclicDensity) { NuvioTheme.spacing.md.roundToPx() }
+
+            fun baseCardWidthPx(logicalIndex: Int): Int {
+                if (latestShowFixedFocusFrame.value) {
+                    return with(cyclicDensity) { portraitCatalogCardWidth.roundToPx() }.coerceAtLeast(1)
+                }
+                val item = row.items.list.getOrNull(logicalIndex) ?: return with(cyclicDensity) {
+                    portraitCatalogCardWidth.roundToPx()
+                }
+                val metrics = item.catalogCardMetrics(
+                    useLandscapePosters = useLandscapePosters,
+                    portraitCardWidth = portraitCatalogCardWidth,
+                    portraitCardHeight = portraitCatalogCardHeight,
+                    landscapeCardWidth = landscapeCatalogCardWidth,
+                    landscapeCardHeight = landscapeCatalogCardHeight
+                )
+                return with(cyclicDensity) { metrics.width.roundToPx() }.coerceAtLeast(1)
+            }
+
+            try {
+                for (step in cyclicNavigationRequests) {
+                    if (!isActiveRow()) continue
+                    val cycleSize = cyclicItemIndices.size
+                    if (cycleSize <= 1) continue
+
+                    val targetDisplayIndex = normalizeCyclicDisplayIndex(selectedCyclicDisplayIndex + step)
+                    // This worker outlives recompositions, so the remembered display list it
+                    // captures would stay anchored to the first selection. Rebuild the order
+                    // from the latest logical selection for every move.
+                    val currentSelectedLogicalIndex = if (pendingRowFocusKey.value == row.key) {
+                        pendingRowFocusIndex.value ?: rowFocusedIndex.value
+                    } else {
+                        cyclicSelectionIndex
+                    }
+                    val currentDisplayOrder = cyclicDisplayOrder(currentSelectedLogicalIndex)
+                    val targetLogicalIndex = currentDisplayOrder[targetDisplayIndex]
+                    val currentItemInfo = rowListState.layoutInfo.visibleItemsInfo
+                        .firstOrNull { it.index == selectedCyclicDisplayIndex }
+                    pendingCyclicFocusIndex = targetLogicalIndex
+                    pendingCyclicDisplayIndex = targetDisplayIndex
+
+                    // Move the currently selected slot out of the fixed frame. Its reserved
+                    // width is landscape, while every neighboring card remains portrait.
+                    val currentLogicalIndex = currentDisplayOrder.getOrNull(selectedCyclicDisplayIndex)
+                        ?: currentSelectedLogicalIndex
+                    val currentSlotWidthPx = currentItemInfo?.size?.takeIf { it > 0 }
+                        ?: if (latestShowFixedFocusFrame.value && selectedCyclicDisplayIndex == 0) {
+                            with(cyclicDensity) { fixedFocusFrameWidth.roundToPx() }
+                        } else {
+                            baseCardWidthPx(currentLogicalIndex)
+                        }
+                    val cyclicStepDistancePx = currentSlotWidthPx + itemSpacingPx
+                    val scrollDeltaPx = when {
+                        step > 0 && !cyclicIsRtl -> cyclicStepDistancePx
+                        step > 0 && cyclicIsRtl -> -cyclicStepDistancePx
+                        step < 0 && !cyclicIsRtl -> -cyclicStepDistancePx
+                        else -> cyclicStepDistancePx
+                    }
+                    val wrapsBeforeFirstItem = step < 0 && selectedCyclicDisplayIndex == 0
+                    if (!wrapsBeforeFirstItem && kotlin.math.abs(scrollDeltaPx) > 1) {
+                        rowListState.animateScrollBy(
+                            scrollDeltaPx.toFloat(),
+                            animationSpec = tween(
+                                durationMillis = MODERN_CYCLIC_ROW_MOVE_DURATION_MS,
+                                easing = LinearEasing
+                            )
+                        )
+                    }
+                    if (!isActiveRow()) {
+                        cyclicPresentationIndex = cyclicSelectionIndex
+                        pendingCyclicFocusIndex = null
+                        pendingCyclicDisplayIndex = null
+                        continue
+                    }
+
+                    // Rotate the items and request the zero-offset position for the same
+                    // remeasure. A suspending scrollToItem here can briefly draw the rotated
+                    // order with the old offset, placing following cards under the frame.
+                    cyclicDisplayAnchorIndex = targetLogicalIndex
+                    rowListState.requestScrollToItem(0)
+                    if (!isActiveRow()) {
+                        cyclicDisplayAnchorIndex = cyclicSelectionIndex
+                        cyclicPresentationIndex = cyclicSelectionIndex
+                        pendingCyclicFocusIndex = null
+                        pendingCyclicDisplayIndex = null
+                        continue
+                    }
+
+                    selectedCyclicDisplayIndex = 0
+                    cyclicSelectionIndex = targetLogicalIndex
+                    onRowItemFocused(row.key, targetLogicalIndex, isContinueWatchingRow)
+                    // Keep the landscape artwork and its details on the current item while the
+                    // portrait strip moves. Swap both only after the target has reached the frame.
+                    cyclicPresentationIndex = targetLogicalIndex
+
+                    // Serialize moves against the visual selection transition. Do not wait on
+                    // LazyRow layout measurements here: an item can temporarily leave the
+                    // visible range while the list rotates, which would stall the key queue.
+                    snapshotFlow {
+                        cyclicSelectionTransition.targetState == targetLogicalIndex &&
+                            cyclicSelectionTransition.currentState == targetLogicalIndex
+                    }.first { it }
+                    pendingCyclicFocusIndex = null
+                    pendingCyclicDisplayIndex = null
+                    if (!isActiveRow()) continue
+
+                    var focusRequested = false
+                    repeat(4) {
+                        if (focusRequested) return@repeat
+                        androidx.compose.runtime.withFrameNanos { }
+                        val requester = itemFocusRequesters[0]
+                        if (requester != null &&
+                            runCatching { requester.requestFocus() }.getOrDefault(false)
+                        ) {
+                            focusRequested = true
+                        }
+                    }
+                }
+            } finally {
+                // Data refreshes can cancel an in-flight move; release its pending state so the
+                // alignment effect can restore the last committed selection under the frame.
+                if (pendingCyclicDisplayIndex != null) {
+                    cyclicDisplayAnchorIndex = cyclicSelectionIndex
+                    cyclicPresentationIndex = cyclicSelectionIndex
+                    pendingCyclicFocusIndex = null
+                    pendingCyclicDisplayIndex = null
+                }
             }
         }
 
@@ -841,22 +1048,24 @@ internal fun ModernRowSection(
             !loadMoreAddonId.isNullOrBlank() &&
             !loadMoreApiType.isNullOrBlank()
 
-        LaunchedEffect(row.key, pendingRowFocusNonce.value, isInfiniteCarouselRow, continuousItemIndices) {
+        LaunchedEffect(
+            row.key,
+            pendingRowFocusNonce.value,
+            pendingRowFocusKey.value,
+            pendingRowFocusIndex.value,
+            displayedItemIndices,
+            supportsCyclicNavigation
+        ) {
             if (pendingRowFocusKey.value != row.key) return@LaunchedEffect
+            // Cyclic rows rotate their unique logical items around the selected item; their
+            // horizontal owner aligns that selection before focus is requested.
+            if (supportsCyclicNavigation) return@LaunchedEffect
             val targetIndex = (pendingRowFocusIndex.value ?: 0)
                 .coerceIn(0, (row.items.list.size - 1).coerceAtLeast(0))
-            val targetVirtualIndex = if (isInfiniteCarouselRow) {
-                row.virtualIndexForLogicalItem(
-                    targetIndex,
-                    rowListState.firstVisibleItemIndex,
-                    continuousItemIndices
-                )
-            } else {
-                targetIndex
-            }
+            val targetDisplayIndex = displayedItemIndices.indexOf(targetIndex).takeIf { it >= 0 }
+                ?: targetIndex
             if (!rowListState.isScrollInProgress) {
-                runCatching { rowListState.scrollToItem(targetVirtualIndex) }
-                if (isInfiniteCarouselRow) focusedLoopVirtualIndex.intValue = targetVirtualIndex
+                runCatching { rowListState.scrollToItem(targetDisplayIndex) }
             }
         }
 
@@ -865,19 +1074,19 @@ internal fun ModernRowSection(
                 row.key,
                 rowListState,
                 canObserveLoadMore,
-                row.items.list,
-                continuousItemIndices
+                row.items.list
             ) {
                 snapshotFlow {
                     val layoutInfo = rowListState.layoutInfo
                     val total = row.items.list.size
-                    val isNearEnd = if (isInfiniteCarouselRow) {
-                        val lastNavigableItem = continuousItemIndices.lastOrNull() ?: -1
-                        layoutInfo.visibleItemsInfo.any { itemInfo ->
-                            (row.logicalItemIndexAtVirtualIndex(itemInfo.index, continuousItemIndices) ?: -1) >= lastNavigableItem - 4
-                        }
+                    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                    val firstVisible = rowListState.firstVisibleItemIndex
+                    val isNearEnd = if (supportsCyclicNavigation) {
+                        val cycleSize = cyclicItemIndices.size
+                        val selectedPosition = cyclicItemIndices.indexOf(cyclicSelectionIndex)
+                            .coerceAtLeast(0)
+                        selectedPosition >= (cycleSize - 4).coerceAtLeast(0)
                     } else {
-                        val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
                         lastVisible >= total - 4
                     }
                     isNearEnd to total
@@ -887,7 +1096,9 @@ internal fun ModernRowSection(
                         if (total <= 0) return@collect
                         val rowState = currentRowState.value
                         if (!isNearEnd) {
-                            if (!isInfiniteCarouselRow) loadMoreRequestedTotals.remove(rowState.key)
+                            if (!supportsCyclicNavigation) {
+                                loadMoreRequestedTotals.remove(rowState.key)
+                            }
                             return@collect
                         }
                         val lastRequestedTotal = loadMoreRequestedTotals[rowState.key]
@@ -908,9 +1119,13 @@ internal fun ModernRowSection(
 
         val density = LocalDensity.current
         val rowStartPadding = 52.dp
-        // Focus scaling and the ring extend a few dp before a card's layout bounds. Keep the
-        // leading-edge mask inside the empty inset so it cannot paint over the first card.
-        val rowLeadingMaskInset = (rowStartPadding - 8.dp).coerceAtLeast(0.dp)
+        // Cover the full empty inset so outgoing landscape pixels cannot peek past the frame.
+        // The fixed frame border is drawn above the row and remains visible.
+        val rowLeadingMaskInset = rowStartPadding
+        val fixedFocusFrameShape = remember(posterCardCornerRadius) {
+            NuvioTheme.configuredShape(RoundedCornerShape(posterCardCornerRadius))
+        }
+        val fixedFocusFrameBorder = NuvioTheme.focusRing.border(NuvioTheme.spacing.xxs)
         val context = LocalContext.current
         val imageLoader = context.imageLoader
 
@@ -920,6 +1135,7 @@ internal fun ModernRowSection(
             isActiveRow,
             isVerticalRowsScrollingState,
             rowItemCount,
+            displayedItemIndices,
             portraitCatalogCardWidth,
             portraitCatalogCardHeight,
             landscapeCatalogCardWidth,
@@ -1004,17 +1220,10 @@ internal fun ModernRowSection(
             // Prefetch initial visible + ahead items immediately when row appears
             val prefetchRow = currentRowState.value
             val items = prefetchRow.items.list
-            val prefetchCycleIndices = if (prefetchRow.isContinuousCatalogCarousel()) {
-                prefetchRow.continuousItemIndices()
-            } else emptyList()
-            val initialVirtualIndex = if (prefetchCycleIndices.size > 1) rowListState.firstVisibleItemIndex else 0
+            val initialIndex = rowListState.firstVisibleItemIndex
             withContext(Dispatchers.IO) {
                 for (offset in 0 until POSTER_PREFETCH_DISTANCE) {
-                    val logicalIndex = prefetchRow.logicalItemIndexAtVirtualIndex(
-                        initialVirtualIndex + offset,
-                        prefetchCycleIndices
-                    )
-                        ?: continue
+                    val logicalIndex = displayedItemIndices.getOrNull(initialIndex + offset) ?: continue
                     val item = items.getOrNull(logicalIndex) ?: continue
                     val (wPx, hPx) = when (item.payload) {
                         is ModernPayload.Catalog -> {
@@ -1051,16 +1260,9 @@ internal fun ModernRowSection(
                 .collect { lastVisibleIndex ->
                     val prefetchRow = currentRowState.value
                     val currentItems = prefetchRow.items.list
-                    val prefetchCycleIndices = if (prefetchRow.isContinuousCatalogCarousel()) {
-                        prefetchRow.continuousItemIndices()
-                    } else emptyList()
                     withContext(Dispatchers.IO) {
-                        for (virtualIndex in (lastVisibleIndex + 1)..(lastVisibleIndex + POSTER_PREFETCH_DISTANCE)) {
-                            val logicalIndex = prefetchRow.logicalItemIndexAtVirtualIndex(
-                                virtualIndex,
-                                prefetchCycleIndices
-                            )
-                                ?: continue
+                        for (displayIndex in (lastVisibleIndex + 1)..(lastVisibleIndex + POSTER_PREFETCH_DISTANCE)) {
+                            val logicalIndex = displayedItemIndices.getOrNull(displayIndex) ?: continue
                             val item = currentItems.getOrNull(logicalIndex) ?: continue
                             val (wPx, hPx) = when (item.payload) {
                                 is ModernPayload.Catalog -> {
@@ -1144,8 +1346,9 @@ internal fun ModernRowSection(
                 (portraitCatalogCardHeight * (16f / 9f)).roundToPx()
             }
         }
-        LaunchedEffect(row.key, effectiveExpandEnabled, rowItemCount) {
-            if (!effectiveExpandEnabled) return@LaunchedEffect
+        LaunchedEffect(row.key, effectiveExpandEnabled, rowItemCount, displayedItemIndices, supportsCyclicNavigation) {
+            // The fixed-frame navigation effect owns scrolling for these rows.
+            if (!effectiveExpandEnabled || supportsCyclicNavigation) return@LaunchedEffect
             snapshotFlow { expandedCatalogFocusKey.value }
                 .collect { expandedKey ->
                     if (expandedKey == null) return@collect
@@ -1158,15 +1361,8 @@ internal fun ModernRowSection(
                         }
                     }
                     if (expandedIndex < 0) return@collect
-                    val expandedVirtualIndex = if (isInfiniteCarouselRow) {
-                        row.virtualIndexForLogicalItem(
-                            expandedIndex,
-                            focusedLoopVirtualIndex.intValue,
-                            continuousItemIndices
-                        )
-                    } else {
-                        expandedIndex
-                    }
+                    val expandedDisplayIndex = displayedItemIndices.indexOf(expandedIndex)
+                    if (expandedDisplayIndex < 0) return@collect
                     // Small delay so the item is still in visible layout info
                     delay(50)
                     if (showsInlineMetadata) {
@@ -1174,7 +1370,7 @@ internal fun ModernRowSection(
                         // The panel starts at the same 52dp inset as the rail's first card.
                         isExpansionScrollActive = true
                         try {
-                            rowListState.animateScrollToItem(expandedVirtualIndex)
+                            rowListState.animateScrollToItem(expandedDisplayIndex)
                         } finally {
                             isExpansionScrollActive = false
                         }
@@ -1183,7 +1379,7 @@ internal fun ModernRowSection(
                     // Calculate overshoot using the known final expanded width rather than
                     // the mid-animation layout size which underestimates the trailing edge.
                     val layoutInfo = rowListState.layoutInfo
-                    val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == expandedVirtualIndex }
+                    val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == expandedDisplayIndex }
                         ?: return@collect
                     val viewportEnd = layoutInfo.viewportEndOffset
                     val itemEndExpanded = itemInfo.offset + expandedCardWidthPx
@@ -1196,6 +1392,12 @@ internal fun ModernRowSection(
                         isExpansionScrollActive = false
                     }
                 }
+        }
+
+        fun moveCyclicSelection(step: Int): Boolean {
+            if (!supportsCyclicNavigation) return false
+            cyclicNavigationRequests.trySend(step)
+            return true
         }
 
         CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalBringIntoViewSpec) {
@@ -1211,96 +1413,66 @@ internal fun ModernRowSection(
                     state = rowListState,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clipToBounds()
                         .recompositionHighlighter()
                         .focusRequester(rowFocusRequester)
-                        .focusRestorer {
-                            if (isInfiniteCarouselRow) {
-                                val targetIndex = pendingLoopFocusTarget.intValue
-                                    .takeIf { it >= 0 } ?: focusedLoopVirtualIndex.intValue
-                                itemFocusRequesters[targetIndex] ?: FocusRequester.Default
-                            } else {
-                                val savedIdx = rowFocusedIndex.value
-                                itemFocusRequesters[savedIdx]
-                                    ?: itemFocusRequesters[0]
-                                    ?: FocusRequester.Default
-                            }
+                        .focusProperties {
+                            up = if (onMoveUp != null) FocusRequester.Cancel else FocusRequester.Default
+                            down = if (onMoveDown != null) FocusRequester.Cancel else FocusRequester.Default
                         }
-                        .onFocusChanged { focusState ->
-                            val hadRowFocus = rowHasFocus.value
-                            rowHasFocus.value = focusState.hasFocus
-                            if (hadRowFocus && !focusState.hasFocus) {
-                                val firstIndex = if (isContinuousCarouselRow) {
-                                    continuousItemIndices.firstOrNull() ?: 0
-                                } else {
-                                    0
-                                }
-                                if (focusedItemByRow[rowKey] != firstIndex) {
-                                    focusedItemByRow[rowKey] = firstIndex
-                                }
-                                rowFocusResetNonce.intValue++
+                        .focusRestorer {
+                            val savedDisplayIndex = if (supportsCyclicNavigation) {
+                                centeredCyclicDisplayIndex(
+                                    pendingRowCyclicFocusIndex ?: cyclicDisplayAnchorIndex
+                                )
+                            } else {
+                                rowFocusedIndex.value
                             }
+                            itemFocusRequesters.getOrPut(savedDisplayIndex) { FocusRequester() }
                         }
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                            val step = when (event.key) {
-                                Key.DirectionLeft -> -1
-                                Key.DirectionRight -> 1
-                                else -> return@onPreviewKeyEvent false
+                            val currentIndex = if (supportsCyclicNavigation) {
+                                cyclicSelectionIndex
+                            } else {
+                                rowFocusedIndex.value
                             }
-                            if (isInfiniteCarouselRow) {
-                                val currentVirtualIndex = pendingLoopFocusTarget.intValue
-                                    .takeIf { it >= 0 } ?: focusedLoopVirtualIndex.intValue
-                                val rawTargetVirtualIndex = currentVirtualIndex + step
-                                val isAtPhysicalBoundary = rawTargetVirtualIndex !in 0 until Int.MAX_VALUE
-                                if (!isFreeboxVideosRow && !isAtPhysicalBoundary) {
-                                    return@onPreviewKeyEvent false
+                            when (event.key) {
+                                Key.DirectionUp -> onMoveUp?.invoke() ?: false
+                                Key.DirectionDown -> onMoveDown?.invoke() ?: false
+                                Key.DirectionLeft -> if (supportsCyclicNavigation) {
+                                    moveCyclicSelection(-1)
+                                } else when {
+                                    currentIndex > 0 -> runCatching {
+                                        itemFocusRequesters[currentIndex - 1]?.requestFocus() ?: false
+                                    }.getOrDefault(false)
+                                    row.items.list.getOrNull(currentIndex)?.payload is ModernPayload.CollectionFolder ->
+                                        runCatching {
+                                            itemFocusRequesters[row.items.list.lastIndex]?.requestFocus() ?: false
+                                        }.getOrDefault(false)
+                                    else -> false
                                 }
-                                val targetVirtualIndex = if (!isAtPhysicalBoundary) {
-                                    rawTargetVirtualIndex
-                                } else {
-                                    val currentLogicalIndex =
-                                        row.logicalItemIndexAtVirtualIndex(currentVirtualIndex, continuousItemIndices)
-                                            ?: continuousItemIndices.first()
-                                    val currentPosition = continuousItemIndices.indexOf(currentLogicalIndex)
-                                        .coerceAtLeast(0)
-                                    val targetPosition = Math.floorMod(
-                                        currentPosition + step,
-                                        continuousItemIndices.size
-                                    )
-                                    row.virtualIndexForLogicalItem(
-                                        continuousItemIndices[targetPosition],
-                                        cycleIndices = continuousItemIndices
-                                    )
+                                Key.DirectionRight -> if (supportsCyclicNavigation) {
+                                    moveCyclicSelection(1)
+                                } else when {
+                                    row.isLoading -> true
+                                    currentIndex < row.items.list.lastIndex -> runCatching {
+                                        itemFocusRequesters[currentIndex + 1]?.requestFocus() ?: false
+                                    }.getOrDefault(false)
+                                    row.items.list.getOrNull(currentIndex)?.payload is ModernPayload.CollectionFolder ->
+                                        runCatching {
+                                            itemFocusRequesters[0]?.requestFocus() ?: false
+                                        }.getOrDefault(false)
+                                    else -> false
                                 }
-                                val targetIndex = row.logicalItemIndexAtVirtualIndex(targetVirtualIndex, continuousItemIndices)
-                                    ?: return@onPreviewKeyEvent false
-                                if (isActiveRow()) {
-                                    onRowItemFocused(rowKey, targetIndex, isContinueWatchingRow)
-                                }
-                                focusedLoopVirtualIndex.intValue = targetVirtualIndex
-                                pendingLoopFocusTarget.intValue = targetVirtualIndex
-                                // Videos owns every horizontal KeyDown to update its details panel;
-                                // other rows intercept only at the physical ends of the virtual rail.
-                                return@onPreviewKeyEvent true
+                                else -> false
                             }
-                            if (cyclicItemIndices.size < 2) return@onPreviewKeyEvent false
-                            val currentPosition = cyclicItemIndices.indexOf(rowFocusedIndex.value)
-                            if (currentPosition < 0) return@onPreviewKeyEvent false
-                            val targetPosition = currentPosition + step
-                            if (targetPosition in cyclicItemIndices.indices) {
-                                // Leave ordinary movement to Compose so a failed off-screen
-                                // FocusRequester cannot swallow every Left/Right press.
-                                return@onPreviewKeyEvent false
-                            }
-                            val wrappedPosition = if (step < 0) cyclicItemIndices.lastIndex else 0
-                            pendingCyclicFocusTarget.intValue = cyclicItemIndices[wrappedPosition]
-                            true
                         }
                         .focusGroup()
                         .drawWithContent {
                             drawContent()
                             if (showsInlineMetadata) {
-                                // Keep the focus ring visible while masking the old card in the inset.
+                                // Erase overdraw across the full inset; the fixed outline overlays it.
                                 val insetPx = rowLeadingMaskInset.toPx().coerceAtMost(size.width)
                                 val leadingEdge = if (layoutDirection == LayoutDirection.Ltr) 0f else size.width - insetPx
                                 drawRect(
@@ -1317,31 +1489,26 @@ internal fun ModernRowSection(
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
                 ) {
                 items(
-                    count = if (isInfiniteCarouselRow) Int.MAX_VALUE else row.items.list.size,
-                    key = { virtualIndex ->
-                        val logicalIndex = row.logicalItemIndexAtVirtualIndex(virtualIndex, continuousItemIndices) ?: virtualIndex
-                        val item = row.items.list.getOrNull(logicalIndex)
-                        if (isInfiniteCarouselRow) {
-                            if (pinFirstCard.value && item?.key == pinnedItemKey.value &&
-                                virtualIndex == pinnedFirstVirtualIndex.intValue
-                            ) firstCardKey else "loop:$virtualIndex:${item?.key.orEmpty()}"
+                    count = displayedItemIndices.size,
+                    key = { displayIndex ->
+                        val index = displayedItemIndices.getOrNull(displayIndex)
+                        val item = index?.let { row.items.list.getOrNull(it) }
+                        if (item == null) {
+                            "empty:$displayIndex"
                         } else {
-                            if (item == null) {
-                                "empty:$virtualIndex"
-                            } else {
-                                val pinned = pinnedItemKey.value
-                                when {
-                                    !pinFirstCard.value -> item.key
-                                    pinned != null -> if (item.key == pinned) firstCardKey else item.key
-                                    logicalIndex == 0 -> firstCardKey
-                                    else -> item.key
-                                }
+                            val pinned = pinnedItemKey.value
+                            val stableItemKey = when {
+                                !pinFirstCard.value -> item.key
+                                pinned != null -> if (item.key == pinned) firstCardKey else item.key
+                                index == 0 -> firstCardKey
+                                else -> item.key
                             }
+                            stableItemKey
                         }
                     },
-                    contentType = { virtualIndex ->
-                        val logicalIndex = row.logicalItemIndexAtVirtualIndex(virtualIndex, continuousItemIndices) ?: virtualIndex
-                        when (val payload = row.items.list.getOrNull(logicalIndex)?.payload) {
+                    contentType = { displayIndex ->
+                        val index = displayedItemIndices.getOrNull(displayIndex)
+                        when (val payload = index?.let { row.items.list.getOrNull(it)?.payload }) {
                             is ModernPayload.InstalledApp -> "installed_app"
                             is ModernPayload.ContinueWatching -> "modern_cw_card"
                             is ModernPayload.Catalog -> if (payload.itemId.startsWith("__placeholder_")) "placeholder" else payload.itemType
@@ -1349,55 +1516,68 @@ internal fun ModernRowSection(
                             null -> "empty"
                         }
                     }
-                ) { virtualIndex ->
-                    val index = row.logicalItemIndexAtVirtualIndex(virtualIndex, continuousItemIndices) ?: virtualIndex
+                ) { displayIndex ->
+                    val index = displayedItemIndices.getOrNull(displayIndex) ?: return@items
                     val item = row.items.list.getOrNull(index) ?: return@items
-                    val requesterIndex = if (isInfiniteCarouselRow) virtualIndex else index
-                    val requester = itemFocusRequesters.getOrPut(requesterIndex) { FocusRequester() }
-                    val onFocused = remember(row.key, virtualIndex, index, item.key, isContinueWatchingRow, isInfiniteCarouselRow) {
+                    val requester = itemFocusRequesters.getOrPut(
+                        if (supportsCyclicNavigation) displayIndex else index
+                    ) { FocusRequester() }
+                    val onFocused = remember(
+                        row.key,
+                        index,
+                        displayIndex,
+                        item.key,
+                        isContinueWatchingRow,
+                        supportsCyclicNavigation
+                    ) {
                         {
-                            val isPendingLoopTarget = isInfiniteCarouselRow &&
-                                pendingLoopFocusTarget.intValue == virtualIndex
-                            if (isPendingLoopTarget) {
-                                pendingLoopFocusTarget.intValue = -1
-                            }
-                            if (isInfiniteCarouselRow) {
-                                focusedLoopVirtualIndex.intValue = virtualIndex
-                                val keepFrom = (virtualIndex - 48).coerceAtLeast(0)
-                                val keepThrough = (virtualIndex + 48).coerceAtMost(Int.MAX_VALUE - 1)
-                                itemFocusRequesters.keys.removeAll { it !in keepFrom..keepThrough }
-                            }
-                            if (!isPendingLoopTarget) {
+                            val isCyclicMoveInProgress = supportsCyclicNavigation &&
+                                (pendingCyclicFocusIndex != null || pendingCyclicDisplayIndex != null)
+                            if (!isCyclicMoveInProgress) {
+                                if (supportsCyclicNavigation) {
+                                    cyclicSelectionIndex = index
+                                    cyclicDisplayAnchorIndex = index
+                                    cyclicPresentationIndex = index
+                                    selectedCyclicDisplayIndex = 0
+                                }
                                 onRowItemFocused(row.key, index, isContinueWatchingRow)
-                            }
-                            if (pendingRowFocusKey.value == row.key && (pendingRowFocusIndex.value ?: 0) == index) {
-                                onPendingRowFocusCleared()
+                                val pendingIndex = pendingRowFocusIndex.value ?: 0
+                                val pendingIndexForRow = if (cyclicItemIndices.isNotEmpty()) {
+                                    canonicalCyclicItemIndex(pendingIndex)
+                                } else pendingIndex
+                                if (pendingRowFocusKey.value == row.key && pendingIndexForRow == index) {
+                                    onPendingRowFocusCleared()
+                                }
                             }
                         }
                     }
 
                     // Use derivedStateOf so only the ONE item that becomes/loses
                     // target status recomposes — not all items in all visible rows.
-                    val isTargetItem by remember(row.key, virtualIndex, index, isFreeboxVideosRow, isInfiniteCarouselRow) {
+                    val isTargetItem by remember(
+                        row.key,
+                        index,
+                        isFreeboxVideosRow,
+                        cyclicItemIndices,
+                        supportsCyclicNavigation
+                    ) {
                         derivedStateOf {
-                            val isPending = if (isInfiniteCarouselRow) {
-                                pendingLoopFocusTarget.intValue == virtualIndex ||
-                                    (pendingRowFocusKey.value == row.key &&
-                                        (pendingRowFocusIndex.value ?: 0) == index &&
-                                        row.virtualIndexForLogicalItem(
-                                            index,
-                                            rowListState.firstVisibleItemIndex,
-                                            continuousItemIndices
-                                        ) == virtualIndex)
+                            val pendingLogicalIndex = pendingRowFocusIndex.value ?: 0
+                            val canonicalPendingLogicalIndex = if (cyclicItemIndices.isNotEmpty()) {
+                                canonicalCyclicItemIndex(pendingLogicalIndex)
+                            } else pendingLogicalIndex
+                            val isPending = pendingRowFocusKey.value == row.key && if (supportsCyclicNavigation) {
+                                centeredCyclicDisplayIndex(canonicalPendingLogicalIndex) == displayIndex
                             } else {
-                                pendingRowFocusKey.value == row.key &&
-                                    (pendingRowFocusIndex.value ?: 0) == index
+                                canonicalPendingLogicalIndex == index
                             }
-                            val isCurrent = if (isInfiniteCarouselRow) {
-                                isActiveRow() && pendingLoopFocusTarget.intValue < 0 &&
-                                    focusedLoopVirtualIndex.intValue == virtualIndex
+                            val isCurrent = isActiveRow() && if (supportsCyclicNavigation) {
+                                selectedCyclicDisplayIndex == displayIndex
                             } else {
-                                isActiveRow() && rowFocusedIndex.value == index
+                                val currentLogicalIndex = if (cyclicItemIndices.isNotEmpty()) {
+                                    canonicalCyclicItemIndex(rowFocusedIndex.value)
+                                } else rowFocusedIndex.value
+                                currentLogicalIndex == index
                             }
                             isPending || isCurrent
                         }
@@ -1414,7 +1594,9 @@ internal fun ModernRowSection(
                                 app = payload.app,
                                 tileWidth = installedAppTileWidth,
                                 cornerRadius = installedAppTileCornerRadius,
-                                modifier = Modifier.focusRequester(requester),
+                                modifier = Modifier
+                                    .padding(vertical = 8.dp)
+                                    .focusRequester(requester),
                                 onFocused = onFocused,
                                 onClick = {
                                     onFocused()
@@ -1447,45 +1629,36 @@ internal fun ModernRowSection(
 
                         is ModernPayload.Catalog,
                         is ModernPayload.CollectionFolder -> {
-                            val cyclePosition = continuousItemIndices.indexOf(index)
-                            val nextCatalogItem = if (isInfiniteCarouselRow && cyclePosition >= 0) {
-                                row.items.list.getOrNull(continuousItemIndices[(cyclePosition + 1) % continuousItemIndices.size])?.metaPreview
+                            val currentDisplayPosition = if (supportsCyclicNavigation) {
+                                displayIndex
                             } else {
-                                row.items.list.getOrNull(index + 1)?.metaPreview
+                                displayedItemIndices.indexOf(index)
                             }
-                            val prevCatalogItem = if (isInfiniteCarouselRow && cyclePosition >= 0) {
-                                row.items.list.getOrNull(continuousItemIndices[
-                                    (cyclePosition - 1 + continuousItemIndices.size) % continuousItemIndices.size
-                                ])?.metaPreview
-                            } else {
-                                row.items.list.getOrNull(index - 1)?.metaPreview
+                            val nextDisplayPosition = when {
+                                currentDisplayPosition < 0 -> -1
+                                supportsCyclicNavigation ->
+                                    (currentDisplayPosition + 1).mod(displayedItemIndices.size)
+                                else -> currentDisplayPosition + 1
                             }
+                            val previousDisplayPosition = when {
+                                currentDisplayPosition < 0 -> -1
+                                supportsCyclicNavigation ->
+                                    (currentDisplayPosition - 1).mod(displayedItemIndices.size)
+                                else -> currentDisplayPosition - 1
+                            }
+                            val nextIndex = displayedItemIndices.getOrNull(nextDisplayPosition)
+                            val previousIndex = displayedItemIndices.getOrNull(previousDisplayPosition)
+                            val nextCatalogItem = nextIndex?.let { row.items.list.getOrNull(it)?.metaPreview }
+                            val prevCatalogItem = previousIndex?.let { row.items.list.getOrNull(it)?.metaPreview }
                             val metaPreview = item.metaPreview
                             val navigateToDetailForCurrentSelection: (String, String, String) -> Unit =
-                                remember(row.items.list, isFreeboxVideosRow, onNavigateToDetail) {
+                                remember(onNavigateToDetail) {
                                     { clickedItemId: String, clickedItemType: String, clickedAddonBaseUrl: String ->
-                                        val pendingVideo = if (isFreeboxVideosRow) {
-                                            val pendingLogicalIndex = pendingLoopFocusTarget.intValue
-                                                .takeIf { it >= 0 }
-                                                ?.let { virtualIndex ->
-                                                    row.logicalItemIndexAtVirtualIndex(virtualIndex, continuousItemIndices)
-                                                }
-                                            row.items.list.getOrNull(pendingLogicalIndex ?: -1)
-                                                ?.payload as? ModernPayload.Catalog
-                                        } else null
-                                        if (pendingVideo != null) {
-                                            onNavigateToDetail(
-                                                pendingVideo.itemId,
-                                                pendingVideo.itemType,
-                                                pendingVideo.addonBaseUrl
-                                            )
-                                        } else {
-                                            onNavigateToDetail(
-                                                clickedItemId,
-                                                clickedItemType,
-                                                clickedAddonBaseUrl
-                                            )
-                                        }
+                                        onNavigateToDetail(
+                                            clickedItemId,
+                                            clickedItemType,
+                                            clickedAddonBaseUrl
+                                        )
                                     }
                                 }
                             val isPlaceholder = payload is ModernPayload.Catalog &&
@@ -1511,25 +1684,52 @@ internal fun ModernRowSection(
                                 effectiveExpandEnabled,
                                 isRowScrollingState,
                                 expandedCatalogFocusKey,
-                                expandedFocusKey
+                                expandedFocusKey,
+                                supportsCyclicNavigation,
+                                pendingCyclicFocusIndex,
+                                isActiveRow(),
+                                cyclicSelectionIndex
                             ) {
                                 {
-                                    effectiveExpandEnabled &&
-                                        (!isRowScrollingState.value || isExpansionScrollActive) &&
-                                        expandedCatalogFocusKey.value == expandedFocusKey
+                                    if (supportsCyclicNavigation) {
+                                        effectiveExpandEnabled &&
+                                            pendingCyclicFocusIndex == null &&
+                                            isActiveRow() &&
+                                            cyclicSelectionIndex == index &&
+                                            (!isRowScrollingState.value || isExpansionScrollActive) &&
+                                            expandedCatalogFocusKey.value == expandedFocusKey
+                                    } else {
+                                        effectiveExpandEnabled &&
+                                            (!isRowScrollingState.value || isExpansionScrollActive) &&
+                                            expandedCatalogFocusKey.value == expandedFocusKey
+                                    }
                                 }
                             }
                             val placeholderFocusBlock = isPlaceholder && index > 0
+                            // Keep every LazyRow card at its portrait size. The selected item is
+                            // visually rendered separately; reserve the frame width in the row
+                            // so the next portrait card starts beyond its right edge.
+                            val isFixedFrameSlot = showFixedFocusFrame && displayIndex == 0
                             Box(
-                                modifier = (if (placeholderFocusBlock) {
-                                    Modifier.focusProperties { canFocus = false }
-                                } else Modifier)
+                                modifier = Modifier
+                                    .then(if (showFixedFocusFrame) {
+                                        Modifier.width(
+                                            if (isFixedFrameSlot) fixedFocusFrameWidth
+                                            else portraitCatalogCardWidth
+                                        )
+                                    } else Modifier)
+                                    .then(if (placeholderFocusBlock) {
+                                        Modifier.focusProperties { canFocus = false }
+                                    } else Modifier)
                             ) {
                             ModernCatalogRowItem(
                                 item = item,
                                 payload = payload,
                                 requester = requester,
+                                isRowActive = isActiveRow(),
                                 isTargetItem = isTargetItem,
+                                fixedFocusFrame = showFixedFocusFrame,
+                                fixedFrameSelected = false,
                                 useLandscapePosters = useLandscapePosters,
                                 alwaysShowLandscapeClearlogo = alwaysShowLandscapeClearlogo,
                                 showLabels = showLabels && !showsInlineMetadata,
@@ -1568,18 +1768,125 @@ internal fun ModernRowSection(
                     }
                 }
                 }
+                if (showFixedFocusFrame) {
+                    // Keep an opaque rectangular backing behind the rounded clip so artwork
+                    // from the scrolling row cannot show through the frame's corner cutouts.
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = rowStartPadding)
+                            .width(fixedFocusFrameWidth)
+                            .height(fixedFocusFrameHeight)
+                            .background(rowMaskColor)
+                            .clip(fixedFocusFrameShape)
+                            .clipToBounds()
+                            .zIndex(1f)
+                    ) {
+                    cyclicSelectionTransition.AnimatedContent(
+                        transitionSpec = {
+                            (fadeIn(animationSpec = tween(MODERN_CYCLIC_SELECTION_FADE_DURATION_MS)) togetherWith
+                                fadeOut(animationSpec = tween(MODERN_CYCLIC_SELECTION_FADE_DURATION_MS)))
+                                .using(null)
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.TopStart
+                    ) { logicalIndex ->
+                        val displayIndex = centeredCyclicDisplayIndex(logicalIndex)
+                        val frameItem = displayedItemIndices.getOrNull(displayIndex)
+                            ?.let { row.items.list.getOrNull(it) }
+                        if (frameItem != null &&
+                            (frameItem.payload is ModernPayload.Catalog ||
+                                frameItem.payload is ModernPayload.CollectionFolder)
+                        ) {
+                            val frameMetrics = frameItem.catalogCardMetrics(
+                                useLandscapePosters = useLandscapePosters,
+                                portraitCardWidth = portraitCatalogCardWidth,
+                                portraitCardHeight = portraitCatalogCardHeight,
+                                landscapeCardWidth = landscapeCatalogCardWidth,
+                                landscapeCardHeight = landscapeCatalogCardHeight
+                            )
+                            val frameMeta = frameItem.metaPreview
+                            val frameEnrichedMeta = frameMeta?.id?.let { enrichedPreviews.value.map[it] }
+                            ModernCarouselCard(
+                                item = frameItem,
+                                useLandscapeOverlayTreatment = useLandscapePosters,
+                                isRowActive = isActiveRow(),
+                                fixedFocusFrame = true,
+                                fixedFrameSelected = true,
+                                alwaysShowLandscapeClearlogo = alwaysShowLandscapeClearlogo,
+                                showLabels = showLabels && !showsInlineMetadata,
+                                placeholderShimmerOffsetState = placeholderShimmerOffsetState,
+                                cardCornerRadius = posterCardCornerRadius,
+                                cardWidth = frameMetrics.width,
+                                cardHeight = frameMetrics.height,
+                                focusedPosterBackdropExpandEnabled = effectiveExpandEnabled,
+                                isBackdropExpanded = false,
+                                playTrailerInExpandedCard = false,
+                                focusedPosterBackdropTrailerMuted = focusedPosterBackdropTrailerMuted,
+                                trailerPreviewUrl = null,
+                                trailerPreviewAudioUrl = null,
+                                isWatched = frameMeta?.let(isCatalogItemWatched) ?: false,
+                                enrichedLogoUrl = frameEnrichedMeta?.logo,
+                                enrichedBackdropUrl = frameEnrichedMeta?.background?.takeIf(String::isNotBlank)
+                                    ?: frameEnrichedMeta?.landscapePoster?.takeIf(String::isNotBlank),
+                                focusRequester = remember(frameItem.key) { FocusRequester() },
+                                onFocused = {},
+                                onFocusStateChanged = {},
+                                onClick = {},
+                                onLongPress = {},
+                                onBackdropInteraction = {},
+                                onTrailerEnded = {},
+                                modifier = Modifier
+                                    .width(fixedFocusFrameWidth)
+                                    .height(fixedFocusFrameHeight)
+                                    .focusProperties { canFocus = false }
+                            )
+                        }
+                    }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = rowStartPadding)
+                            .width(fixedFocusFrameWidth)
+                            .height(fixedFocusFrameHeight)
+                            .border(fixedFocusFrameBorder, fixedFocusFrameShape)
+                            .zIndex(2f)
+                    )
+                }
             }
         }
 
         if (showsInlineMetadata && isActiveRow()) {
-            row.items.list.getOrNull(focusedItemIndex)?.metaPreview?.let { selectedItem ->
-                val selectedMetadata = enrichedPreviews.value[selectedItem.id] ?: selectedItem
-                HomeRowDetailsPanel(
-                    item = selectedMetadata,
-                    showSeriesInfo = isSeriesRow || isSeriesType(selectedMetadata.apiType) ||
-                        (selectedMetadata.seasonCount ?: 0) > 0,
-                    showSeriesStatus = isSeriesRow && !isFreeboxVideosRow
-                )
+            val selectedMetadataIndex = if (supportsCyclicNavigation) cyclicSelectionIndex else focusedItemIndex
+            if (supportsCyclicNavigation) {
+                cyclicSelectionTransition.AnimatedContent(
+                    transitionSpec = {
+                        (fadeIn(animationSpec = tween(MODERN_CYCLIC_SELECTION_FADE_DURATION_MS)) togetherWith
+                            fadeOut(animationSpec = tween(MODERN_CYCLIC_SELECTION_FADE_DURATION_MS)))
+                            .using(null)
+                    }
+                ) { metadataIndex ->
+                    row.items.list.getOrNull(metadataIndex)?.metaPreview?.let { selectedItem ->
+                        val selectedMetadata = enrichedPreviews.value[selectedItem.id] ?: selectedItem
+                        HomeRowDetailsPanel(
+                            item = selectedMetadata,
+                            showSeriesInfo = isSeriesRow || isSeriesType(selectedMetadata.apiType) ||
+                                (selectedMetadata.seasonCount ?: 0) > 0,
+                            showSeriesStatus = isSeriesRow && !isFreeboxVideosRow
+                        )
+                    }
+                }
+            } else {
+                row.items.list.getOrNull(selectedMetadataIndex)?.metaPreview?.let { selectedItem ->
+                    val selectedMetadata = enrichedPreviews.value[selectedItem.id] ?: selectedItem
+                    HomeRowDetailsPanel(
+                        item = selectedMetadata,
+                        showSeriesInfo = isSeriesRow || isSeriesType(selectedMetadata.apiType) ||
+                            (selectedMetadata.seasonCount ?: 0) > 0,
+                        showSeriesStatus = isSeriesRow && !isFreeboxVideosRow
+                    )
+                }
             }
         }
     }
@@ -1620,6 +1927,9 @@ internal fun ModernRowSection(
 private fun ModernCarouselCard(
     item: ModernCarouselItem,
     useLandscapeOverlayTreatment: Boolean,
+    isRowActive: Boolean,
+    fixedFocusFrame: Boolean = false,
+    fixedFrameSelected: Boolean = false,
     alwaysShowLandscapeClearlogo: Boolean = false,
     showLabels: Boolean,
     placeholderShimmerOffsetState: State<Float>? = null,
@@ -1653,7 +1963,15 @@ private fun ModernCarouselCard(
     } else {
         cardHeight * (16f / 9f)
     }
-    val targetCardWidth = if (focusedPosterBackdropExpandEnabled && isBackdropExpanded) {
+    val baseCardIsAlreadyLandscape = cardWidth / cardHeight >= 1.5f
+    val isTvChannelCard = item.metaPreview?.type == com.nuvio.tv.domain.model.ContentType.CHANNEL ||
+        item.metaPreview?.apiType.equals("channel", ignoreCase = true)
+    val isCardVisuallyExpanded = if (fixedFocusFrame) {
+        focusedPosterBackdropExpandEnabled && fixedFrameSelected
+    } else {
+        isBackdropExpanded
+    }
+    val targetCardWidth = if (focusedPosterBackdropExpandEnabled && isCardVisuallyExpanded) {
         expandedCardWidth
     } else {
         cardWidth
@@ -1661,6 +1979,10 @@ private fun ModernCarouselCard(
     val animatedCardWidthState = if (focusedPosterBackdropExpandEnabled) {
         animateDpAsState(
             targetValue = targetCardWidth,
+            animationSpec = when {
+                fixedFocusFrame -> androidx.compose.animation.core.snap()
+                else -> androidx.compose.animation.core.spring()
+            },
             label = "modernCardWidth"
         )
     } else {
@@ -1706,12 +2028,16 @@ private fun ModernCarouselCard(
     val payload = item.payload as? ModernPayload.CollectionFolder
     val isCollectionFolder = item.payload is ModernPayload.CollectionFolder
     val effectiveIgnoreLandscapePoster = alwaysShowLandscapeClearlogo
-    val useLandscapeAsExpanded = focusedPosterBackdropExpandEnabled && isBackdropExpanded &&
+    val isLandscapeCatalogCard = useLandscapeOverlayTreatment && item.payload is ModernPayload.Catalog
+    val selectedLandscapeCatalogImage = item.imageUrl?.takeIf {
+        isLandscapeCatalogCard && it.isNotBlank()
+    }
+    val useLandscapeAsExpanded = focusedPosterBackdropExpandEnabled && isCardVisuallyExpanded &&
         !alwaysShowLandscapeClearlogo &&
         !item.metaPreview?.landscapePoster.isNullOrBlank()
-    val baseImageUrl = if (focusedPosterBackdropExpandEnabled && isBackdropExpanded) {
+    val baseImageUrl = if (focusedPosterBackdropExpandEnabled && isCardVisuallyExpanded) {
         if (useLandscapeOverlayTreatment) {
-            if (effectiveIgnoreLandscapePoster) {
+            selectedLandscapeCatalogImage ?: if (effectiveIgnoreLandscapePoster) {
                 effectiveBackdropUrl ?: item.heroPreview.backdrop ?: item.imageUrl ?: item.heroPreview.poster
             } else {
                 item.metaPreview?.landscapePoster ?: effectiveBackdropUrl ?: item.heroPreview.backdrop ?: item.imageUrl ?: item.heroPreview.poster
@@ -1722,7 +2048,7 @@ private fun ModernCarouselCard(
             item.heroPreview.backdrop ?: item.imageUrl ?: item.heroPreview.poster
         }
     } else if (useLandscapeOverlayTreatment && !isCollectionFolder) {
-        if (effectiveIgnoreLandscapePoster) {
+        selectedLandscapeCatalogImage ?: if (effectiveIgnoreLandscapePoster) {
             effectiveBackdropUrl ?: item.heroPreview.poster
         } else {
             item.metaPreview?.landscapePoster ?: effectiveBackdropUrl ?: item.heroPreview.poster
@@ -1748,6 +2074,7 @@ private fun ModernCarouselCard(
     val imageContentScale = when {
         isCollectionFolder && payload?.posterShape == PosterShape.LANDSCAPE -> ContentScale.Fit
         isCollectionFolder -> ContentScale.FillBounds
+        isTvChannelCard -> ContentScale.Fit
         else -> ContentScale.Crop
     }
     // Keep decode target stable across expand/collapse to avoid recreating image requests/painters
@@ -1792,6 +2119,31 @@ private fun ModernCarouselCard(
             builder.build()
         }
     }
+    val posterFallbackUrl = if (fixedFocusFrame && fixedFrameSelected && !isLandscapeCatalogCard) {
+        sequenceOf(item.imageUrl, item.heroPreview.poster).firstOrNull {
+            !it.isNullOrBlank() && !it.isPlaceholder() && it != imageUrl
+        }
+    } else {
+        null
+    }
+    val posterFallbackRevalidationKey =
+        com.nuvio.tv.core.image.rememberImageRevalidationKey(posterFallbackUrl)
+    val posterFallbackModel = remember(
+        context,
+        posterFallbackUrl,
+        requestWidthPx,
+        requestHeightPx,
+        posterFallbackRevalidationKey
+    ) {
+        posterFallbackUrl?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .crossfade(false)
+                .memoryCacheKey("${it}_${requestWidthPx}x${requestHeightPx}_v$posterFallbackRevalidationKey")
+                .size(width = requestWidthPx, height = requestHeightPx)
+                .build()
+        }
+    }
     val logoHeight = cardHeight * 0.34f
     val logoHeightPx = remember(logoHeight, density) {
         with(density) { logoHeight.roundToPx() }.coerceAtLeast(1)
@@ -1817,14 +2169,13 @@ private fun ModernCarouselCard(
     // Use the image model directly — Coil's memory cache handles repeated
     // requests efficiently without needing scroll-aware request swapping.
     val hasImage = !imageUrl.isNullOrBlank()
-    val shineSweepActive = isFocused && hasImage && !imageUrl.isPlaceholder() && baseImageLoaded
     val hasLandscapeLogo =
-        showLabels && (useLandscapeOverlayTreatment || isBackdropExpanded) &&
+        showLabels && (useLandscapeOverlayTreatment || isCardVisuallyExpanded) &&
             !isCollectionFolder &&
             !effectiveLogoUrl.isNullOrBlank() &&
             !landscapeLogoLoadFailed &&
             !(useLandscapeAsExpanded && !trailerFirstFrameRendered) &&
-            (effectiveIgnoreLandscapePoster || isBackdropExpanded || item.metaPreview?.landscapePoster.isNullOrBlank() || customPosterLoadFailed)
+            (effectiveIgnoreLandscapePoster || isCardVisuallyExpanded || item.metaPreview?.landscapePoster.isNullOrBlank() || customPosterLoadFailed)
     var longPressTriggered by remember { mutableStateOf(false) }
     val longPressKeyTracker = rememberLongPressKeyTracker()
     val backgroundCardColor = NuvioTheme.colors.BackgroundCard
@@ -1851,7 +2202,11 @@ private fun ModernCarouselCard(
             shape = cardShape
         )
     }
-    val effectiveFocusedBorder = if (isFastScrolling) transparentFocusBorder else focusedBorder
+    val effectiveFocusedBorder = if (isFastScrolling || fixedFocusFrame) {
+        transparentFocusBorder
+    } else {
+        focusedBorder
+    }
     val cardFocusGlow = when (payload) {
         is ModernPayload.CollectionFolder -> rememberArtworkBackedFocusGlow(
             imageUrl = imageUrl,
@@ -1860,7 +2215,7 @@ private fun ModernCarouselCard(
         )
         else -> Glow.None
     }
-    val effectiveFocusGlow = if (isFastScrolling) Glow.None else cardFocusGlow
+    val effectiveFocusGlow = if (isFastScrolling || fixedFocusFrame) Glow.None else cardFocusGlow
     val titleStyle = remember(titleMedium) {
         titleMedium.copy(fontWeight = FontWeight.Medium)
     }
@@ -1930,10 +2285,6 @@ private fun ModernCarouselCard(
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(cardShape)
-                    .shineSweepOnFocus(
-                        isFocused = shineSweepActive,
-                        restartKey = imageUrl to isBackdropExpanded
-                    )
                     .nuvioCardDepth(
                         shape = cardShape,
                         surface = CardDepthSurface.POSTERS,
@@ -1969,13 +2320,28 @@ private fun ModernCarouselCard(
                                 .placeholderCardShimmer(effectivePlaceholderShimmerOffsetState)
                         )
                     } else if (hasImage) {
+                        if (posterFallbackModel != null && !baseImageLoaded) {
+                            AsyncImage(
+                                model = posterFallbackModel,
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = imageContentScale
+                            )
+                        }
                         AsyncImage(
                             model = imageModel,
                             contentDescription = item.title,
-                            modifier = Modifier.fillMaxSize(),
-                            placeholder = backgroundPainter,
-                            error = backgroundPainter,
-                            fallback = backgroundPainter,
+                            modifier = if (isTvChannelCard && !useLandscapeOverlayTreatment && !isCardVisuallyExpanded) {
+                                Modifier
+                                    .fillMaxWidth(0.72f)
+                                    .fillMaxHeight(0.28f)
+                                    .align(if (isRowActive) Alignment.Center else Alignment.TopCenter)
+                            } else {
+                                Modifier.fillMaxSize()
+                            },
+                            placeholder = if (posterFallbackModel == null) backgroundPainter else null,
+                            error = if (posterFallbackModel == null) backgroundPainter else null,
+                            fallback = if (posterFallbackModel == null) backgroundPainter else null,
                             contentScale = imageContentScale,
                             onSuccess = { baseImageLoaded = true },
                             onError = {
@@ -2071,7 +2437,7 @@ private fun ModernCarouselCard(
                         contentScale = ContentScale.Fit,
                         alignment = Alignment.CenterStart
                     )
-                } else if (showLabels && (useLandscapeOverlayTreatment || isBackdropExpanded) && !isCollectionFolder && !(useLandscapeAsExpanded && !trailerFirstFrameRendered) && (effectiveIgnoreLandscapePoster || item.metaPreview?.landscapePoster.isNullOrBlank() || customPosterLoadFailed)) {
+                } else if (showLabels && (useLandscapeOverlayTreatment || isCardVisuallyExpanded) && !isCollectionFolder && !(useLandscapeAsExpanded && !trailerFirstFrameRendered) && (effectiveIgnoreLandscapePoster || item.metaPreview?.landscapePoster.isNullOrBlank() || customPosterLoadFailed)) {
                     Text(
                         text = item.title,
                         style = titleStyle.copy(
@@ -2093,7 +2459,7 @@ private fun ModernCarouselCard(
             }
         }
 
-        if (showLabels && !isBackdropExpanded && item.title.isNotBlank()) {
+        if (showLabels && !isCardVisuallyExpanded && item.title.isNotBlank()) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

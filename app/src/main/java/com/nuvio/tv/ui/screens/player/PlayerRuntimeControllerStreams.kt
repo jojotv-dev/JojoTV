@@ -1093,6 +1093,26 @@ internal fun PlayerRuntimeController.loadStreamsForEpisode(
     forceRefresh: Boolean,
     manualSelection: Boolean
 ) {
+    val localFreeboxEpisode = navigationArgs.freeboxEpisodes.firstOrNull { it.contentId == video.id }
+    if (localFreeboxEpisode != null) {
+        switchToEpisodeStream(
+            stream = Stream(
+                name = "Freebox",
+                title = localFreeboxEpisode.title,
+                description = localFreeboxEpisode.overview,
+                url = "freebox://media?path=${android.net.Uri.encode(localFreeboxEpisode.path)}",
+                ytId = null,
+                externalUrl = null,
+                behaviorHints = null,
+                addonName = "Freebox",
+                addonLogo = null,
+            ),
+            forcedTargetVideo = video,
+            isAutoPlay = !manualSelection,
+            forcedContentId = localFreeboxEpisode.contentId,
+        )
+        return
+    }
     if (loadIptvEpisodeIfAvailable(video)) return
 
     streamRepository.setLocalPluginSearchPaused(false)
@@ -1370,7 +1390,8 @@ internal fun PlayerRuntimeController.reloadEpisodeStreams() {
 internal fun PlayerRuntimeController.switchToEpisodeStream(
     stream: Stream,
     forcedTargetVideo: Video? = null,
-    isAutoPlay: Boolean = false
+    isAutoPlay: Boolean = false,
+    forcedContentId: String? = null,
 ) {
     if (openExternalStreamInBrowser(stream = stream, fromEpisodePanel = true)) {
         return
@@ -1383,7 +1404,7 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
             val prepared = prepareServerStream(stream)
             streamResolveJob = null
             if (prepared != null) {
-                switchToEpisodeStream(prepared, forcedTargetVideo, isAutoPlay)
+                switchToEpisodeStream(prepared, forcedTargetVideo, isAutoPlay, forcedContentId)
             } else {
                 _uiState.update { it.copy(isLoadingEpisodeStreams = false) }
             }
@@ -1398,7 +1419,7 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
             val resolved = resolveYouTubeStream(stream)
             streamResolveJob = null
             if (resolved != null) {
-                switchToEpisodeStream(resolved, forcedTargetVideo, isAutoPlay)
+                switchToEpisodeStream(resolved, forcedTargetVideo, isAutoPlay, forcedContentId)
             } else {
                 _uiState.update {
                     it.copy(
@@ -1428,6 +1449,11 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
     stillWatchingPromptJob = null
 
     flushPlaybackSnapshotForSwitchOrExit()
+
+    forcedContentId?.takeIf(String::isNotBlank)?.let { nextContentId ->
+        contentId = nextContentId
+        hasMarkedCurrentEpisodeCompleted = false
+    }
 
     // Pause current playback immediately so the old stream doesn't continue
     // playing audio/video in the background while the new episode is being prepared.
@@ -1488,6 +1514,12 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
             currentEpisode = currentEpisode,
             currentVideoId = currentVideoId,
             currentEpisodeTitle = currentEpisodeTitle,
+            episodesSelectedSeason = if (forcedContentId != null) currentSeason else it.episodesSelectedSeason,
+            episodes = if (forcedContentId != null) {
+                it.episodesAll.filter { episode -> episode.season == currentSeason }.ifEmpty { it.episodesAll }
+            } else {
+                it.episodes
+            },
             currentStreamName = stream.name ?: stream.addonName,
             currentStreamUrl = playbackUrl,
             currentStreamAddonName = stream.addonName,

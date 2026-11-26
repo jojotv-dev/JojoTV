@@ -222,7 +222,7 @@ data class BufferSettings(
         const val DEFAULT_MIN_BUFFER_MS = 15_000
         const val DEFAULT_MAX_BUFFER_MS = 45_000
         const val DEFAULT_BUFFER_FOR_PLAYBACK_MS = 5_000
-        const val DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000
+        const val DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 0
         const val DEFAULT_TARGET_BUFFER_SIZE_MB: Int = 50
         const val DEFAULT_BACK_BUFFER_DURATION_MS = 0
     }
@@ -773,6 +773,7 @@ class PlayerSettingsDataStore @Inject constructor(
     private val migrationLoadControlDefaultsAlignedDoneKey = booleanPreferencesKey("migration_load_control_defaults_aligned_done")
     private val migrationLoadControlDefaultsRetunedDoneKey = booleanPreferencesKey("migration_load_control_defaults_retuned_done")
     private val migrationLoadControlMinBufferRetunedDoneKey = booleanPreferencesKey("migration_load_control_min_buffer_retuned_done")
+    private val migrationFastResumeBufferDoneKey = booleanPreferencesKey("migration_fast_resume_buffer_done")
     private val migrationVodCacheSplitDoneKey = booleanPreferencesKey("migration_vod_cache_split_done")
     private val migrationBackBufferDurationBumpedDoneKey = booleanPreferencesKey("migration_back_buffer_duration_bumped_done")
     private val migrationMaxBufferBumpedDoneKey = booleanPreferencesKey("migration_max_buffer_bumped_done")
@@ -824,6 +825,17 @@ class PlayerSettingsDataStore @Inject constructor(
                         prefs[targetBufferSizeMbKey] = BufferSettings.DEFAULT_TARGET_BUFFER_SIZE_MB
                     }
                     prefs[migrationLoadControlDefaultsRetunedDoneKey] = true
+                }
+
+                val fastResumeBufferMigrated = prefs[migrationFastResumeBufferDoneKey] ?: false
+                if (!fastResumeBufferMigrated) {
+                    // 3 seconds was the former default. Move only that default value to the new
+                    // immediate-resume default; retain higher values the user chose for stability.
+                    if (prefs[bufferForPlaybackAfterRebufferMsKey] == 3_000) {
+                        prefs[bufferForPlaybackAfterRebufferMsKey] =
+                            BufferSettings.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+                    }
+                    prefs[migrationFastResumeBufferDoneKey] = true
                 }
 
                 val minBufferRetuned = prefs[migrationLoadControlMinBufferRetunedDoneKey] ?: false
@@ -1881,7 +1893,7 @@ class PlayerSettingsDataStore @Inject constructor(
         }
     }
     suspend fun setBufferForPlaybackMs(ms: Int) { store().edit { it[bufferForPlaybackMsKey] = ms.coerceIn(1_000, 30_000) } }
-    suspend fun setBufferForPlaybackAfterRebufferMs(ms: Int) { store().edit { it[bufferForPlaybackAfterRebufferMsKey] = ms.coerceIn(1_000, 60_000) } }
+    suspend fun setBufferForPlaybackAfterRebufferMs(ms: Int) { store().edit { it[bufferForPlaybackAfterRebufferMsKey] = ms.coerceIn(0, 60_000) } }
     suspend fun setBufferTargetSizeMb(mb: Int) { store().edit { it[targetBufferSizeMbKey] = mb.coerceAtLeast(0) } }
     suspend fun setBufferBackBufferDurationMs(ms: Int) {
         store().edit { prefs ->

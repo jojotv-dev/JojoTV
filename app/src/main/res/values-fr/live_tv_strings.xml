@@ -30,6 +30,7 @@
     <string name="iptv_vod_playback_error">Impossible de lancer ce flux IPTV.</string>
     <string name="iptv_vod_all">Tout</string>
     <string name="iptv_vod_back">Retour</string>
+    <string name="iptv_vod_refresh_list">Rafraîchir la liste</string>
     <string name="iptv_vod_favorites">Favoris</string>
     <string name="iptv_vod_empty_favorites">Aucun favori dans ce module.</string>
     <string name="iptv_vod_history">Historique</string>

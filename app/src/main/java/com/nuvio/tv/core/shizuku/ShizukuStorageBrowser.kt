@@ -35,6 +35,10 @@ internal object ShizukuStorageBrowser {
         Availability.UNAVAILABLE
     }
 
+    fun restartDevice() {
+        startProcess("sh", "-c", "reboot")
+    }
+
     fun list(path: String): List<ShizukuStorageEntry> {
         val quotedPath = shellQuote(path)
         val command = "dir=$quotedPath; [ -d \"\$dir\" ] || exit 2; " +

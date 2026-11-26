@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.profile
 
 import android.util.Log
 import androidx.lifecycle.ViewModel
+import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.local.ProfileSelectionArtworkSnapshot
 import com.nuvio.tv.data.local.ProfileSelectionArtworkStore
 import com.nuvio.tv.ui.screens.ambient.AmbientSlide
@@ -10,6 +11,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
@@ -17,10 +19,18 @@ import javax.inject.Inject
 class ProfileSelectionArtworkViewModel @Inject constructor(
     private val ambientSlideLoader: AmbientSlideLoader,
     private val artworkStore: ProfileSelectionArtworkStore,
+    private val profileManager: ProfileManager,
 ) : ViewModel() {
     private val _slides = MutableStateFlow<List<AmbientSlide>>(emptyList())
     val slides = _slides.asStateFlow()
     private var loadedProfileId: Int? = null
+
+    suspend fun observeActiveFavoriteSlides() {
+        profileManager.activeProfileReady.first { it }
+        profileManager.activeProfileId.collectLatest { profileId ->
+            loadFavoriteSlides(profileId)
+        }
+    }
 
     suspend fun loadFavoriteSlides(profileId: Int) {
         if (loadedProfileId != profileId) {

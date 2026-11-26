@@ -72,6 +72,7 @@ data class FreeboxFolderUiState(
     val episodeNumbersByItemId: Map<String, Pair<Int, Int>> = emptyMap(),
     val episodeMetadataByItemId: Map<String, TmdbEpisodeEnrichment> = emptyMap(),
     val manualArtworkByItemId: Map<String, FreeboxFolderArtwork> = emptyMap(),
+    val selectedFolderLandscapeArtworkUrl: String? = null,
 )
 
 @HiltViewModel
@@ -179,6 +180,62 @@ class FreeboxFolderViewModel @Inject constructor(
         return preview
     }
 
+    fun playerEpisodes(
+        items: List<MetaPreview> = mutableUiState.value.items,
+    ): List<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode> {
+        val current = mutableUiState.value
+        val sharedEpisodeArtwork = items.firstNotNullOfOrNull { item ->
+            item.background?.takeIf(String::isNotBlank)
+                ?: item.poster?.takeIf(String::isNotBlank)
+        }
+        val seriesArtwork = current.folderMetadata?.backdrop?.takeIf(String::isNotBlank)
+            ?: current.folderMetadata?.poster?.takeIf(String::isNotBlank)
+            ?: current.folderPresentation?.backdropUrl?.takeIf(String::isNotBlank)
+            ?: current.folderPresentation?.background?.takeIf(String::isNotBlank)
+            ?: current.folderPresentation?.landscapePoster?.takeIf(String::isNotBlank)
+            ?: current.folderPresentation?.poster?.takeIf(String::isNotBlank)
+        return items.mapNotNull { item ->
+            val (season, episodeNumber) = current.episodeNumbersByItemId[item.id] ?: return@mapNotNull null
+            if (season <= 0 || episodeNumber <= 0) return@mapNotNull null
+            val path = item.id
+                .takeIf { it.startsWith("freebox:", ignoreCase = true) }
+                ?.substringAfter(':')
+                ?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            val episode = current.episodeMetadataByItemId[item.id]
+            val artwork = current.manualArtworkByItemId[item.id]
+            com.nuvio.tv.domain.model.FreeboxPlaybackEpisode(
+                contentId = freeboxContentIdFor(
+                    path = path,
+                    sizeBytes = item.sourceFileSizeBytes,
+                    lastModifiedMs = item.sourceFileLastModifiedMs,
+                    fileId = item.sourceFileId,
+                ),
+                path = path,
+                title = episode?.title?.takeIf(String::isNotBlank) ?: item.name,
+                season = season,
+                episode = episodeNumber,
+                released = episode?.airDate,
+                thumbnail = artwork?.landscape?.takeIf(String::isNotBlank)
+                    ?: artwork?.portrait?.takeIf(String::isNotBlank)
+                    ?: episode?.thumbnail?.takeIf(String::isNotBlank)
+                    ?: item.background?.takeIf(String::isNotBlank)
+                    ?: item.poster?.takeIf(String::isNotBlank)
+                    ?: sharedEpisodeArtwork
+                    ?: seriesArtwork,
+                overview = episode?.overview?.takeIf(String::isNotBlank)
+                    ?: item.description?.takeIf(String::isNotBlank),
+                runtimeMinutes = episode?.runtimeMinutes?.takeIf { it > 0 }
+                    ?: item.runtime?.toIntOrNull()?.takeIf { it > 0 },
+            )
+        }
+            .distinctBy { it.contentId }
+            .sortedWith(
+                compareBy<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode> { it.season }
+                    .thenBy { it.episode },
+            )
+    }
+
     fun load(path: String, mediaType: String, force: Boolean = false) {
         val current = mutableUiState.value
         if (!force && current.path == path && (current.isLoading || current.items.isNotEmpty())) return
@@ -189,6 +246,24 @@ class FreeboxFolderViewModel @Inject constructor(
         val folderId = "$FREEBOX_FOLDER_ID_PREFIX$path"
         val routeContentType = ContentType.fromString(mediaType)
         val initialPresentation = freeboxRepository.homeVideoPresentation(folderId)
+        val normalizedPath = path.replace('\\', '/').trimEnd('/')
+        val currentFolderName = normalizedPath.substringAfterLast('/')
+        val seriesFolderPath = if (currentFolderName.freeboxSeasonFolderNumber() != null) {
+            normalizedPath.substringBeforeLast('/', missingDelimiterValue = "")
+                .takeIf(String::isNotBlank)
+        } else {
+            null
+        }
+        val selectedFolderLandscapeArtworkUrl = sequenceOf(seriesFolderPath, normalizedPath)
+            .filterNotNull()
+            .distinct()
+            .mapNotNull { artworkPath ->
+                freeboxRepository.folderArtwork(
+                    artworkPath,
+                    preferPathScopedVideoArtwork = true,
+                )?.landscape?.takeIf(String::isNotBlank)
+            }
+            .firstOrNull()
         mutableUiState.value = FreeboxFolderUiState(
             path = path,
             isLoading = true,
@@ -197,6 +272,7 @@ class FreeboxFolderViewModel @Inject constructor(
             folderContentType = initialPresentation?.tmdbMediaType
                 ?.takeIf { it != ContentType.UNKNOWN }
                 ?: routeContentType.takeIf { it != ContentType.UNKNOWN },
+            selectedFolderLandscapeArtworkUrl = selectedFolderLandscapeArtworkUrl,
         )
         folderPresentationJob = viewModelScope.launch {
             freeboxRepository.observeHomeVideoPresentation(folderId).collect { presentation ->

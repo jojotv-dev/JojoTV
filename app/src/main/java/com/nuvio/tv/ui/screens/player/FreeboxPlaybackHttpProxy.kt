@@ -25,10 +25,14 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+private const val FREEBOX_PROXY_LOG_TAG = "FreeboxPlaybackProxy"
+private const val FREEBOX_PROXY_SESSION_REFRESH_AFTER_IDLE_MS = 60_000L
+
 /**
  * Exposes one authenticated SMB file as a loopback HTTP resource for Media3.
- * Each GET opens an independent random-access handle, while the authenticated CIFS
- * context is reused across ranges to avoid repeating SMB negotiation and login.
+ * Each GET opens an independent random-access handle. The authenticated CIFS context is reused
+ * across nearby ranges, then refreshed after an idle pause so playback does not reuse a stale
+ * Freebox SMB session when it resumes.
  */
 internal class FreeboxPlaybackHttpProxy(
     private val repository: FreeboxRepository,
@@ -69,7 +73,11 @@ internal class FreeboxPlaybackHttpProxy(
             check(running.get()) { "Le proxy Freebox est fermé." }
             playbackBackend ?: run {
                 val openedBackend = try {
-                    JcifsPlaybackBackend(repository.openPlaybackSession(smbPath)).also {
+                    JcifsPlaybackBackend(
+                        repository = repository,
+                        smbPath = smbPath,
+                        initialSession = repository.openPlaybackSession(smbPath),
+                    ).also {
                         Log.i(TAG, "FREEBOX_PROXY_BACKEND_SELECTED backend=jCIFS")
                     }
                 } catch (jcifsError: Exception) {
@@ -236,11 +244,82 @@ internal class FreeboxPlaybackHttpProxy(
                 rangeFile.seek(requestedRange.start)
                 readOffset = requestedRange.start
                 var remaining = contentLength
+                var activeRangeFile: FreeboxPlaybackFile = checkNotNull(rangeFile)
+                var reopenAttempts = 0
+                var lastRemoteReadAtNanos = System.nanoTime()
+
+                fun reopenAtCurrentOffset(): Boolean {
+                    val replacement = backend.reopenFile()
+                    try {
+                        replacement.seek(readOffset)
+                        if (!running.get()) {
+                            replacement.close()
+                            return false
+                        }
+                        openFiles.add(replacement)
+                        if (!running.get()) {
+                            openFiles.remove(replacement)
+                            replacement.close()
+                            return false
+                        }
+                    } catch (reopenError: Exception) {
+                        openFiles.remove(replacement)
+                        runCatching { replacement.close() }
+                        throw reopenError
+                    }
+
+                    val previousRangeFile = activeRangeFile
+                    activeRangeFile = replacement
+                    remote = replacement
+                    openFiles.remove(previousRangeFile)
+                    runCatching { previousRangeFile.close() }
+                    return true
+                }
+
                 val buffer = ByteArray(BUFFER_SIZE)
                 while (remaining > 0L && running.get()) {
+                    val idleNanos = System.nanoTime() - lastRemoteReadAtNanos
+                    if (idleNanos >= TimeUnit.MILLISECONDS.toNanos(FREEBOX_PROXY_SESSION_REFRESH_AFTER_IDLE_MS)) {
+                        runCatching { reopenAtCurrentOffset() }
+                            .onSuccess { reopened ->
+                                if (!reopened && !running.get()) return
+                                if (reopened) {
+                                    Log.i(
+                                        TAG,
+                                        "FREEBOX_PROXY_RANGE_IDLE_REOPEN offset=$readOffset " +
+                                            "idleMs=${TimeUnit.NANOSECONDS.toMillis(idleNanos)}"
+                                    )
+                                }
+                            }
+                            .onFailure { error ->
+                                Log.w(TAG, "FREEBOX_PROXY_RANGE_IDLE_REOPEN_FAILED offset=$readOffset", error)
+                            }
+                        lastRemoteReadAtNanos = System.nanoTime()
+                    }
                     val count = minOf(buffer.size.toLong(), remaining).toInt()
-                    val read = rangeFile.read(buffer, 0, count)
-                    if (read <= 0) throw EOFException("SMB returned no bytes before the requested range ended")
+                    val read = try {
+                        activeRangeFile.read(buffer, 0, count).also {
+                            if (it <= 0) throw EOFException("SMB returned no bytes before the requested range ended")
+                        }
+                    } catch (error: Exception) {
+                        if (!running.get() || reopenAttempts >= MAX_RANGE_REOPEN_ATTEMPTS) throw error
+                        reopenAttempts += 1
+                        val reopened = try {
+                            reopenAtCurrentOffset()
+                        } catch (reopenError: Exception) {
+                            error.addSuppressed(reopenError)
+                            throw error
+                        }
+                        if (!reopened) return
+                        lastRemoteReadAtNanos = System.nanoTime()
+                        Log.w(
+                            TAG,
+                            "FREEBOX_PROXY_RANGE_REOPEN offset=$readOffset attempt=$reopenAttempts " +
+                                "cause=${error.javaClass.simpleName}"
+                        )
+                        continue
+                    }
+                    lastRemoteReadAtNanos = System.nanoTime()
                     readOffset += read
                     output.write(buffer, 0, read)
                     remaining -= read
@@ -382,6 +461,7 @@ internal class FreeboxPlaybackHttpProxy(
         const val HEADER_BUFFER_SIZE = 16 * 1024
         const val BUFFER_SIZE = 256 * 1024
         const val CLIENT_TIMEOUT_MS = 120_000
+        const val MAX_RANGE_REOPEN_ATTEMPTS = 1
         const val CLEANUP_WORKER_WAIT_MS = 2_000L
         const val CLEANUP_FINAL_WAIT_MS = 1_000L
         const val CLEANUP_WAIT_TIMEOUT_MS = 10_000L
@@ -391,16 +471,96 @@ internal class FreeboxPlaybackHttpProxy(
 private sealed interface FreeboxPlaybackBackend : Closeable {
     val length: Long
     fun openFile(): FreeboxPlaybackFile
+    fun reopenFile(): FreeboxPlaybackFile = openFile()
 }
 
 private class JcifsPlaybackBackend(
-    private val session: FreeboxPlaybackSession,
+    private val repository: FreeboxRepository,
+    private val smbPath: String,
+    initialSession: FreeboxPlaybackSession,
 ) : FreeboxPlaybackBackend {
-    override val length: Long get() = session.length
+    private class SessionHandle(val session: FreeboxPlaybackSession) {
+        var openFiles: Int = 0
+        var retired: Boolean = false
+    }
 
-    override fun openFile(): FreeboxPlaybackFile = session.openFile()
+    private val lock = Any()
+    private val sessions = mutableSetOf<SessionHandle>()
+    private var activeSession = SessionHandle(initialSession)
+    private var lastRangeOpenedAtNanos = System.nanoTime()
+    private var closed = false
 
-    override fun close() = session.close()
+    init {
+        sessions += activeSession
+    }
+
+    override val length: Long
+        get() = synchronized(lock) { activeSession.session.length }
+
+    override fun openFile(): FreeboxPlaybackFile = synchronized(lock) {
+        check(!closed) { "La session SMB Freebox est fermée." }
+        val nowNanos = System.nanoTime()
+        val idleNanos = nowNanos - lastRangeOpenedAtNanos
+        if (idleNanos >= TimeUnit.MILLISECONDS.toNanos(FREEBOX_PROXY_SESSION_REFRESH_AFTER_IDLE_MS)) {
+            replaceSessionLocked(repository.openPlaybackSession(smbPath))
+            Log.i(
+                FREEBOX_PROXY_LOG_TAG,
+                "FREEBOX_PROXY_SESSION_REFRESH idleMs=${TimeUnit.NANOSECONDS.toMillis(idleNanos)}"
+            )
+        }
+        lastRangeOpenedAtNanos = System.nanoTime()
+        openFileLocked(activeSession)
+    }
+
+    override fun reopenFile(): FreeboxPlaybackFile = synchronized(lock) {
+        check(!closed) { "La session SMB Freebox est fermée." }
+        replaceSessionLocked(repository.openPlaybackSession(smbPath))
+        lastRangeOpenedAtNanos = System.nanoTime()
+        openFileLocked(activeSession)
+    }
+
+    private fun replaceSessionLocked(session: FreeboxPlaybackSession) {
+        val previous = activeSession
+        activeSession = SessionHandle(session)
+        sessions += activeSession
+        previous.retired = true
+        closeRetiredSessionIfUnused(previous)
+    }
+
+    private fun openFileLocked(handle: SessionHandle): FreeboxPlaybackFile {
+        val source = handle.session.openFile()
+        handle.openFiles += 1
+        return FreeboxPlaybackFile(
+            readAt = { position, buffer, offset, requestedLength ->
+                source.seek(position)
+                source.read(buffer, offset, requestedLength)
+            },
+            resources = listOf(source, AutoCloseable { releaseFile(handle) }),
+            length = handle.session.length,
+        )
+    }
+
+    private fun releaseFile(handle: SessionHandle) {
+        synchronized(lock) {
+            handle.openFiles = (handle.openFiles - 1).coerceAtLeast(0)
+            closeRetiredSessionIfUnused(handle)
+        }
+    }
+
+    private fun closeRetiredSessionIfUnused(handle: SessionHandle) {
+        if (handle.retired && handle.openFiles == 0 && sessions.remove(handle)) {
+            handle.session.close()
+        }
+    }
+
+    override fun close() {
+        val toClose = synchronized(lock) {
+            if (closed) return
+            closed = true
+            sessions.toList().also { sessions.clear() }
+        }
+        toClose.forEach { it.session.close() }
+    }
 }
 
 private class SmbjPlaybackBackend(
@@ -414,6 +574,8 @@ private class SmbjPlaybackBackend(
     override fun openFile(): FreeboxPlaybackFile = synchronized(this) {
         firstFile?.also { firstFile = null } ?: repository.openPlaybackFile(smbPath)
     }
+
+    override fun reopenFile(): FreeboxPlaybackFile = repository.openPlaybackFile(smbPath)
 
     override fun close() = synchronized(this) {
         firstFile?.close()

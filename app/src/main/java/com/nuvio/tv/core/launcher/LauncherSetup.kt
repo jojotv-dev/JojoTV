@@ -7,7 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 
-/** Prefer the system HOME role; accessibility is only a fallback for locked-down TV firmware. */
+/** Prefer the system HOME role; use a firmware-specific fallback only after explicit opt-in. */
 internal object LauncherSetup {
     // Check the actual HOME resolver rather than trusting the role dialog's result: some TV
     // firmware can report a successful request without changing where HOME is dispatched.
@@ -21,7 +21,8 @@ internal object LauncherSetup {
         val nativeHome = isDefaultHome(context)
         observeNativeHome(context, nativeHome)
         return nativeHome || (accessibilityFallbackAllowed(context) &&
-            LauncherAccessibilityService.isServiceEnabled(context) && LauncherAccessibilityService.isOperational.value)
+            (LauncherAccessibilityService.isServiceEnabled(context) && LauncherAccessibilityService.isOperational.value ||
+                FireOsHomeButtonService.isOperational.value))
     }
 
     private const val NATIVE_HOME_OBSERVED = "native_home_observed"
@@ -29,11 +30,12 @@ internal object LauncherSetup {
     internal fun observeNativeHome(context: Context, isDefault: Boolean) {
         if (isDefault && !preferences(context).getBoolean(NATIVE_HOME_OBSERVED, false)) {
             preferences(context).edit().putBoolean(NATIVE_HOME_OBSERVED, true).apply()
+            FireOsHomeButtonService.stopForNativeHome(context)
         }
     }
 
     // After native HOME has been selected, respect a subsequent choice of a different default launcher.
-    // Explicitly selecting the existing Home override action opts back into the authorized fallback.
+    // Explicitly re-enabling a Home override opts back into the authorized fallback.
     internal fun accessibilityFallbackAllowed(context: Context): Boolean =
         !preferences(context).getBoolean(NATIVE_HOME_OBSERVED, false)
 

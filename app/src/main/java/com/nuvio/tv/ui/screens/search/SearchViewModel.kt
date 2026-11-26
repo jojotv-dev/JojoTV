@@ -471,6 +471,7 @@ class SearchViewModel @Inject constructor(
         val attemptedKeys = missing.mapTo(mutableSetOf()) { (source, type) -> source.id to type }
         iptvVodWarmupAttempted += attemptedKeys
         iptvVodWarmupJob = viewModelScope.launch {
+            val cacheWriters = LinkedHashMap<Pair<String, String>, LiveTvVodCache.BatchWriter>()
             try {
                 val batches = Channel<IptvVodSearchBatch>(Channel.UNLIMITED)
                 val requestSlots = Semaphore(2)
@@ -506,10 +507,17 @@ class SearchViewModel @Inject constructor(
                 for (batch in batches) {
                     if (profileId != profileManager.activeProfileId.value) break
                     addIptvVodSearchItems(profileId, batch.source, batch.type, batch.items)
+                    cacheWriters.getOrPut(batch.source.id to batch.type) {
+                        LiveTvVodCache.batchWriter(context, batch.source.id, batch.type)
+                    }.append(batch.items)
                 }
                 closeBatches.join()
             } finally {
-                if (iptvVodWarmupJob === coroutineContext[Job]) iptvVodWarmupJob = null
+                try {
+                    cacheWriters.values.forEach { it.finish() }
+                } finally {
+                    if (iptvVodWarmupJob === coroutineContext[Job]) iptvVodWarmupJob = null
+                }
             }
         }
     }

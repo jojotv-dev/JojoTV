@@ -40,12 +40,17 @@ internal fun HomeViewModel.observeLibraryState() {
             .collectLatest { profileId ->
                 LiveTvRepository.ensureLoaded(appContext, profileId)
                 var lastReadyVodFavorites = emptyList<LiveTvVodItem>()
-                val iptvFavorites = LiveTvRepository.uiState
+                val favoriteInputs = LiveTvRepository.uiState
                     .map { state ->
                         Triple(state.sources, state.favoriteVodKeys, state.sourceStorageReady)
                     }
                     .distinctUntilChanged()
-                    .transformLatest { (sources, favoriteKeys, storageReady) ->
+                val iptvFavorites = combine(favoriteInputs, LiveTvVodCache.cacheRevision) { input, revision ->
+                    input to revision
+                }
+                    .distinctUntilChanged()
+                    .transformLatest { (input, _) ->
+                        val (sources, favoriteKeys, storageReady) = input
                         if (!storageReady) {
                             // Keep the current Home row while the same profile's IPTV state is
                             // being reloaded. The new snapshot replaces it as soon as storage is ready.
@@ -185,7 +190,7 @@ private fun LiveTvChannel.toHomeLiveChannelPreview(): MetaPreview = MetaPreview(
     rawType = "channel",
     name = name,
     poster = logoUrl,
-    posterShape = PosterShape.LANDSCAPE,
+    posterShape = PosterShape.POSTER,
     background = null,
     logo = null,
     description = null,
@@ -288,16 +293,38 @@ internal fun MetaPreview.homeFavoriteTmdbLookupTitle(): String = normalizeLiveTv
 internal suspend fun HomeViewModel.findHomeFavoriteArtworkCandidates(
     item: MetaPreview,
     portrait: Boolean,
-): List<String> {
-    val settings = tmdbSettingsDataStore.settings.first()
-    if (!settings.enabled || !settings.useArtwork) return emptyList()
-    return tmdbService.artworkCandidatesForExactTitle(
-        title = item.homeFavoriteTmdbLookupTitle(),
-        mediaType = item.apiType,
-        portrait = portrait,
-        language = settings.language,
-        year = item.releaseInfo?.take(4)?.toIntOrNull(),
+    source: HomeFavoriteArtworkSource = HomeFavoriteArtworkSource.TMDB,
+): List<HomeFavoriteArtworkCandidate> = when (source) {
+    HomeFavoriteArtworkSource.IPTV_PROVIDER -> listOfNotNull(
+        (item.rawPosterUrl ?: item.poster ?: item.landscapePoster)
+            ?.takeIf(String::isNotBlank)
+            ?.let {
+                HomeFavoriteArtworkCandidate(
+                    it,
+                    appContext.getString(com.nuvio.tv.R.string.home_favorite_artwork_source_provider)
+                )
+            }
     )
+    HomeFavoriteArtworkSource.OFFICIAL -> emptyList()
+    HomeFavoriteArtworkSource.IPTV_ORG -> IptvOrgLogoSearch.search(item.name)
+    HomeFavoriteArtworkSource.TMDB -> {
+        val settings = tmdbSettingsDataStore.settings.first()
+        if (!settings.enabled || !settings.useArtwork) {
+            emptyList()
+        } else if (item.apiType.equals("channel", ignoreCase = true)) {
+            tmdbService.channelCompanyLogoCandidates(item.name).map { candidate ->
+                HomeFavoriteArtworkCandidate(candidate.imageUrl, candidate.label)
+            }
+        } else {
+            tmdbService.artworkCandidatesForExactTitle(
+                title = item.homeFavoriteTmdbLookupTitle(),
+                mediaType = item.apiType,
+                portrait = portrait,
+                language = settings.language,
+                year = item.releaseInfo?.take(4)?.toIntOrNull(),
+            ).map { HomeFavoriteArtworkCandidate(it, "") }
+        }
+    }
 }
 
 internal suspend fun HomeViewModel.setHomeFavoriteArtwork(

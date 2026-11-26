@@ -165,6 +165,14 @@ class YouTubeViewModel @Inject constructor(
     private val _menu = MutableStateFlow<YtItemMenu?>(null)
     val menu: StateFlow<YtItemMenu?> = _menu.asStateFlow()
 
+    private val _contentFocusRestoreRequest = MutableStateFlow(0)
+    val contentFocusRestoreRequest: StateFlow<Int> = _contentFocusRestoreRequest.asStateFlow()
+
+    /** Ask the YouTube page to return D-pad focus to its feed after playback closes. */
+    fun requestContentFocusRestore() {
+        _contentFocusRestoreRequest.update { if (it == Int.MAX_VALUE) 1 else it + 1 }
+    }
+
     private val service: com.liskovsoft.mediaserviceinterfaces.ServiceManager
         get() = YouTubeAccountScopes.engine(context, AccountScope.ONETUBE)
     private val content: ContentService get() = service.contentService

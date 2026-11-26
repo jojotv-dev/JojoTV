@@ -324,13 +324,14 @@ class WatchProgressPreferences @Inject constructor(
             )
 
             if (season != null && episode != null) {
-                // Remove specific episode progress + the series-level entry
-                // so the item disappears from continue watching
+                // Remove the requested episode and a legacy series-level entry
+                // only when that entry represents this same episode. It may be
+                // the only saved resume for a different episode in the series.
                 val key = "${contentId}_s${season}e${episode}"
                 recent.remove(key)
-                recent.remove(contentId)
                 archive.remove(key)
-                archive.remove(contentId)
+                removeSeriesLevelEntryIfMatching(recent, contentId, setOf(season to episode))
+                removeSeriesLevelEntryIfMatching(archive, contentId, setOf(season to episode))
                 Log.d(TAG, "removeProgress episodeKey=$key existsAfter=${key in recent || key in archive}")
             } else {
                 // Remove all progress for this content
@@ -364,13 +365,14 @@ class WatchProgressPreferences @Inject constructor(
             val current = readBucketsLocked(profileId)
             val recent = current.recent.toMutableMap()
             val archive = current.archive.toMutableMap()
+            val episodeKeys = episodes.toSet()
             for ((season, episode) in episodes) {
                 val key = "${contentId}_s${season}e${episode}"
                 recent.remove(key)
                 archive.remove(key)
             }
-            recent.remove(contentId)
-            archive.remove(contentId)
+            removeSeriesLevelEntryIfMatching(recent, contentId, episodeKeys)
+            removeSeriesLevelEntryIfMatching(archive, contentId, episodeKeys)
             Log.d(TAG, "removeProgressBatch contentId=$contentId removed=${episodes.size} episodes entriesAfter=${recent.size + archive.size}")
             writeBucketsLocked(profileId, current, WatchProgressBuckets(recent, archive))
         }
@@ -755,6 +757,19 @@ class WatchProgressPreferences @Inject constructor(
         }
     }
 
+    private fun removeSeriesLevelEntryIfMatching(
+        entries: MutableMap<String, WatchProgress>,
+        contentId: String,
+        episodes: Set<Pair<Int, Int>>
+    ) {
+        val seriesProgress = entries[contentId] ?: return
+        val season = seriesProgress.season ?: return
+        val episode = seriesProgress.episode ?: return
+        if ((season to episode) in episodes) {
+            entries.remove(contentId)
+        }
+    }
+
     private fun upsertProgressEntries(
         map: MutableMap<String, WatchProgress>,
         progressList: List<WatchProgress>
@@ -777,12 +792,18 @@ class WatchProgressPreferences @Inject constructor(
                 progress
             }
 
-            // Remove legacy series-level mirror key if this is an episode entry.
-            // Mirror keys caused race conditions with stale progress data.
-            if (progress.season != null && progress.episode != null) {
+            // Prune a legacy series-level mirror only when it mirrors this exact
+            // episode. A different episode may be the series' active resume.
+            val season = progress.season
+            val episode = progress.episode
+            if (season != null && episode != null) {
                 val seriesKey = progress.contentId
-                if (seriesKey != key && map.containsKey(seriesKey)) {
-                    map.remove(seriesKey)
+                if (seriesKey != key) {
+                    removeSeriesLevelEntryIfMatching(
+                        entries = map,
+                        contentId = seriesKey,
+                        episodes = setOf(season to episode)
+                    )
                 }
             }
         }

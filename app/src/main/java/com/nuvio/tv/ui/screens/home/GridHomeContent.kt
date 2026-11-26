@@ -2,7 +2,6 @@ package com.nuvio.tv.ui.screens.home
 
 import com.nuvio.tv.ui.theme.NuvioTheme
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.State
 import androidx.compose.foundation.lazy.grid.items
 import com.nuvio.tv.LocalContentFocusRequester
@@ -14,6 +13,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -125,18 +127,40 @@ fun GridHomeContent(
     onFocusedRowKeyChanged: (String?) -> Unit = {},
     scrollToTopTrigger: Int = 0
 ) {
+    val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
     val gridState = rememberLazyGridState(
         initialFirstVisibleItemIndex = gridFocusState.verticalScrollIndex,
         initialFirstVisibleItemScrollOffset = gridFocusState.verticalScrollOffset
     )
-    val continueWatchingKeys = remember(uiState.continueWatchingItems, uiState.catalogRows) {
+    val continueWatchingKeys = remember(
+        uiState.continueWatchingItems,
+        uiState.upcomingItems,
+        uiState.catalogRows
+    ) {
         continueWatchingMatchKeys(
             items = uiState.continueWatchingItems,
-            catalogItems = uiState.catalogRows.flatMap { it.items }
+            catalogItems = uiState.catalogRows.flatMap { it.items },
+            upcomingItems = uiState.upcomingItems
         )
     }
     val focusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val lastFocusedGridItemKey = remember { mutableStateOf(gridFocusState.focusedItemKey) }
+    val activeFocusRowKey = remember { mutableStateOf<String?>(null) }
+    val verticalGridBringIntoViewSpec = remember(defaultBringIntoViewSpec) {
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+        object : BringIntoViewSpec {
+            override val scrollAnimationSpec = defaultBringIntoViewSpec.scrollAnimationSpec
+
+            override fun calculateScrollDistance(
+                offset: Float,
+                size: Float,
+                containerSize: Float
+            ): Float {
+                if (activeFocusRowKey.value == INSTALLED_APPS_CATALOG_KEY) return 0f
+                return defaultBringIntoViewSpec.calculateScrollDistance(offset, size, containerSize)
+            }
+        }
+    }
     var restoredSavedGridFocus by remember { mutableStateOf(false) }
     // Saveable so the rows come back where they were left after navigating away and
     // returning. The restorer falls back to the first card when the remembered one is
@@ -152,25 +176,7 @@ fun GridHomeContent(
     val installedAppsListState = androidx.compose.foundation.lazy.rememberLazyListState()
     val installedAppsRowFocusRequester = remember { FocusRequester() }
 
-    // Improved Back navigation for CW/Upcoming rows: scroll to first item
-    val contentHasFocus = remember { mutableStateOf(false) }
     val activeCwRowKey = remember { mutableStateOf<String?>(null) }
-    val cwPendingScrollToStart = remember { mutableIntStateOf(0) }
-    val upcomingPendingScrollToStart = remember { mutableIntStateOf(0) }
-    BackHandler(enabled = contentHasFocus.value && run {
-        val key = activeCwRowKey.value ?: return@run false
-        val idx = if (key == "continue_watching") lastFocusedCwIndex.intValue else lastFocusedUpcomingIndex.intValue
-        idx > 0
-    }) {
-        val key = activeCwRowKey.value ?: return@BackHandler
-        if (key == "continue_watching") {
-            lastFocusedCwIndex.intValue = 0
-            cwPendingScrollToStart.intValue++
-        } else {
-            lastFocusedUpcomingIndex.intValue = 0
-            upcomingPendingScrollToStart.intValue++
-        }
-    }
 
     // Save scroll state when leaving
     DisposableEffect(Unit) {
@@ -487,14 +493,12 @@ fun GridHomeContent(
             result
         }
 
+        CompositionLocalProvider(LocalBringIntoViewSpec provides verticalGridBringIntoViewSpec) {
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Adaptive(minSize = gridColumnMinSize),
             modifier = Modifier
                 .fillMaxSize()
-                .onFocusChanged {
-                    contentHasFocus.value = it.hasFocus
-                }
                 .focusRequester(contentFocusRequester)
                 .focusRestorer {
                     val cwRow = activeCwRowKey.value
@@ -557,6 +561,7 @@ fun GridHomeContent(
                                 initialActiveIndex = savedHeroIndex.intValue,
                                 onItemFocus = {
                                     lastFocusedGridItemKey.value = "hero"
+                                    activeFocusRowKey.value = null
                                     activeCwRowKey.value = null
                                 },
                                 onActiveItemChanged = { item ->
@@ -618,6 +623,7 @@ fun GridHomeContent(
                                 initialActiveIndex = savedHeroIndex.intValue,
                                 onItemFocus = {
                                     lastFocusedGridItemKey.value = "hero"
+                                    activeFocusRowKey.value = null
                                     activeCwRowKey.value = null
                                 },
                                 onActiveItemChanged = { item ->
@@ -641,13 +647,6 @@ fun GridHomeContent(
                     is GridItem.ContinueWatchingRow -> {
                         Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)) {
                             if (continueWatchingItems.isNotEmpty()) {
-                                LaunchedEffect(cwPendingScrollToStart.intValue) {
-                                    if (cwPendingScrollToStart.intValue > 0) {
-                                        cwListState.scrollToItem(0, 0)
-                                        cwRowFocusRequester.let { runCatching { it.requestFocus() } }
-                                        cwPendingScrollToStart.intValue = 0
-                                    }
-                                }
                                 GridContinueWatchingSection(
                                     modifier = Modifier.fillMaxWidth(),
                                     cyclicTail = true,
@@ -658,7 +657,11 @@ fun GridHomeContent(
                                     focusRequesters = cwFocusRequesters,
                                     rowFocusRequester = cwRowFocusRequester,
                                     listState = cwListState,
-                                    onItemFocused = { lastFocusedCwIndex.intValue = it; activeCwRowKey.value = "continue_watching" },
+                                    onItemFocused = {
+                                        lastFocusedCwIndex.intValue = it
+                                        activeFocusRowKey.value = null
+                                        activeCwRowKey.value = "continue_watching"
+                                    },
                                     onItemClick = onContinueWatchingClick,
                                     onStartFromBeginning = onContinueWatchingStartFromBeginning,
                                     showManualPlayOption = showContinueWatchingManualPlayOption,
@@ -688,13 +691,6 @@ fun GridHomeContent(
                                 )
                             }
                             if (uiState.continueWatchingEnabled && uiState.upcomingItems.isNotEmpty()) {
-                                LaunchedEffect(upcomingPendingScrollToStart.intValue) {
-                                    if (upcomingPendingScrollToStart.intValue > 0) {
-                                        upcomingListState.scrollToItem(0, 0)
-                                        upcomingRowFocusRequester.let { runCatching { it.requestFocus() } }
-                                        upcomingPendingScrollToStart.intValue = 0
-                                    }
-                                }
                                 GridContinueWatchingSection(
                                     modifier = Modifier.fillMaxWidth(),
                                     cyclicTail = true,
@@ -717,7 +713,11 @@ fun GridHomeContent(
                                     focusRequesters = upcomingFocusRequesters,
                                     rowFocusRequester = upcomingRowFocusRequester,
                                     listState = upcomingListState,
-                                    onItemFocused = { lastFocusedUpcomingIndex.intValue = it; activeCwRowKey.value = "upcoming_section" },
+                                    onItemFocused = {
+                                        lastFocusedUpcomingIndex.intValue = it
+                                        activeFocusRowKey.value = null
+                                        activeCwRowKey.value = "upcoming_section"
+                                    },
                                     onItemClick = onContinueWatchingClick,
                                     onStartFromBeginning = onContinueWatchingStartFromBeginning,
                                     showManualPlayOption = showContinueWatchingManualPlayOption,
@@ -772,6 +772,7 @@ fun GridHomeContent(
                             cyclicTail = true,
                             tileWidth = uiState.installedAppTileWidthDp.dp,
                             cornerRadius = uiState.posterCardCornerRadiusDp.dp,
+                            rowBringIntoViewSpec = defaultBringIntoViewSpec,
                             listState = installedAppsListState,
                             rowFocusRequester = installedAppsRowFocusRequester,
                             horizontalPadding = 0.dp,
@@ -781,6 +782,7 @@ fun GridHomeContent(
                             },
                             onItemFocused = { index ->
                                 lastFocusedGridItemKey.value = "installed_app_${gridItem.apps.getOrNull(index)?.packageName}"
+                                activeFocusRowKey.value = INSTALLED_APPS_CATALOG_KEY
                                 activeCwRowKey.value = null
                                 onFocusedRowKeyChanged(INSTALLED_APPS_CATALOG_KEY)
                             }
@@ -809,6 +811,7 @@ fun GridHomeContent(
                             onFocused = remember(itemKey, gridItem.item) {
                                 {
                                     lastFocusedGridItemKey.value = itemKey
+                                    activeFocusRowKey.value = null
                                     activeCwRowKey.value = null
                                     // No rows here, but a card still belongs to one.
                                     onFocusedRowKeyChanged(
@@ -862,6 +865,7 @@ fun GridHomeContent(
                             onFocused = remember(itemKey) {
                                 {
                                     lastFocusedGridItemKey.value = itemKey
+                                    activeFocusRowKey.value = null
                                     activeCwRowKey.value = null
                                 }
                             },
@@ -887,7 +891,13 @@ fun GridHomeContent(
                             focusGlowEnabled = gridItem.focusGlowEnabled,
                             posterCardStyle = posterCardStyle,
                             focusRequester = focusRequesters.getOrPut(itemKey) { FocusRequester() },
-                            onFocused = remember(itemKey) { { lastFocusedGridItemKey.value = itemKey; activeCwRowKey.value = null } },
+                            onFocused = remember(itemKey) {
+                                {
+                                    lastFocusedGridItemKey.value = itemKey
+                                    activeFocusRowKey.value = null
+                                    activeCwRowKey.value = null
+                                }
+                            },
                             onClick = remember(gridItem.collectionId, gridItem.folder.id) {
                                 {
                                     onNavigateToFolderDetail(gridItem.collectionId, gridItem.folder.id)
@@ -900,6 +910,7 @@ fun GridHomeContent(
             }
 
         } // end LazyVerticalGrid
+        } // end CompositionLocalProvider
         } // end BoxWithConstraints
 
         // Sticky header overlay

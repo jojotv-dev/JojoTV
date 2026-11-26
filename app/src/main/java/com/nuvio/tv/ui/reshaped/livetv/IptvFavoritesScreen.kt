@@ -68,6 +68,7 @@ fun IptvFavoritesScreen(
     val liveTvModel: LiveTvScreenModel = hiltViewModel()
     val state by LiveTvRepository.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current.applicationContext
+    val vodCacheRevision by LiveTvVodCache.cacheRevision.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var kind by rememberSaveable { mutableStateOf(FavoriteKind.Channels) }
     var cachedVod by remember { mutableStateOf<List<LiveTvVodItem>>(emptyList()) }
@@ -87,6 +88,11 @@ fun IptvFavoritesScreen(
         }
         cachedVod = LiveTvVodCache.readFavorites(context, state.sources, state.favoriteVodKeys)
         cachedVodLoaded = true
+    }
+    LaunchedEffect(vodCacheRevision) {
+        if (cachedVodLoaded && state.sourceStorageReady) {
+            cachedVod = LiveTvVodCache.readFavorites(context, state.sources, state.favoriteVodKeys)
+        }
     }
     LaunchedEffect(selectedSeries) {
         val series = selectedSeries ?: return@LaunchedEffect

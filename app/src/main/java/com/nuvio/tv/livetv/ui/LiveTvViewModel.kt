@@ -50,6 +50,8 @@ object LiveTvAppOpens {
 @Singleton
 class LiveTvSession @Inject constructor() {
     val currentGroupId = MutableStateFlow<String?>(null)
+    /** Provider used for channel zapping after a Home-row launch; the guide group stays unchanged. */
+    var homeZapSourceId: String? = null
     /** The [LiveTvAppOpens.count] that "Start in Full Screen" last ran for. */
     var autoPlayedForOpen = -1
     /** Set when full screen opens, so Back to the guide returns to the channel, not the groups. */
@@ -269,7 +271,12 @@ class LiveTvViewModel @Inject constructor(
     // ------------------------------------------------------------ actions
 
     fun selectGroup(id: String) {
+        session.homeZapSourceId = null
         session.currentGroupId.value = id
+    }
+
+    fun clearHomeZapSource() {
+        session.homeZapSourceId = null
     }
 
     // ------------------------------------------------------------ sleep timer, quality
@@ -394,7 +401,12 @@ class LiveTvViewModel @Inject constructor(
     }
 
     /** [watchedIn]: the group it was picked from outside the guide (Quick Channels), saved as the group you watched in. */
-    fun preview(channel: LiveChannel, watchedIn: String? = null) {
+    fun preview(
+        channel: LiveChannel,
+        watchedIn: String? = null,
+        preserveHomeZapSource: Boolean = false,
+    ) {
+        if (!preserveHomeZapSource) session.homeZapSourceId = null
         if (!switchingToBackup) backupTried.clear()
         _catchup.value = null
         // Another channel from a provider that's recording: the recording holds a connection.
@@ -1452,13 +1464,18 @@ class LiveTvViewModel @Inject constructor(
         programs.value[channelKey]?.firstOrNull { it.startMs >= at }
 
     /** Channel list used for up/down zapping in the full-screen player. */
-    fun zapList(): List<LiveChannel> {
+    fun zapList(currentKey: String? = playbackState.value.channelKey): List<LiveChannel> {
         val ui = uiState.value
+        val homeSourceId = session.homeZapSourceId
+        if (!homeSourceId.isNullOrBlank()) {
+            val providerChannels = ui.allVisibleChannels.filter { it.sourceId == homeSourceId }
+            if (currentKey != null && providerChannels.any { it.key == currentKey }) return providerChannels
+        }
         return if (settings.value.zapMode == ZapMode.ALL || ui.channels.isEmpty()) ui.allVisibleChannels else ui.channels
     }
 
     fun zap(currentKey: String?, direction: Int): LiveChannel? {
-        val list = zapList()
+        val list = zapList(currentKey)
         if (list.isEmpty()) return null
         val dir = if (settings.value.reverseZap) -direction else direction
         val idx = list.indexOfFirst { it.key == currentKey }

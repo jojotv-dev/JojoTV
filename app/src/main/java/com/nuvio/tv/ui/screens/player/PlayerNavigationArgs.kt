@@ -41,7 +41,8 @@ internal data class PlayerNavigationArgs(
     val runtime: String? = null,
     val initialCastMembers: List<MetaCastMember> = emptyList(),
     val initialDirector: List<String> = emptyList(),
-    val initialDescription: String? = null
+    val initialDescription: String? = null,
+    val freeboxEpisodes: List<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode> = emptyList(),
 ) {
     companion object {
         fun from(savedStateHandle: SavedStateHandle): PlayerNavigationArgs {
@@ -87,6 +88,28 @@ internal data class PlayerNavigationArgs(
                     )
                 }
             }
+            fun presentationFreeboxEpisodes(): List<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode> {
+                val values = presentation.optJSONArray("freeboxEpisodes") ?: return emptyList()
+                return (0 until values.length()).mapNotNull { index ->
+                    val value = values.optJSONObject(index) ?: return@mapNotNull null
+                    val contentId = value.optString("contentId").trim()
+                    val path = value.optString("path").trim()
+                    val season = value.optInt("season").takeIf { it > 0 } ?: return@mapNotNull null
+                    val episode = value.optInt("episode").takeIf { it > 0 } ?: return@mapNotNull null
+                    if (contentId.isBlank() || path.isBlank()) return@mapNotNull null
+                    com.nuvio.tv.domain.model.FreeboxPlaybackEpisode(
+                        contentId = contentId,
+                        path = path,
+                        title = value.optString("title").trim().ifBlank { "S${season}E$episode" },
+                        season = season,
+                        episode = episode,
+                        released = value.optString("released").takeIf { it.isNotBlank() && it != "null" },
+                        thumbnail = value.optString("thumbnail").takeIf { it.isNotBlank() && it != "null" },
+                        overview = value.optString("overview").takeIf { it.isNotBlank() && it != "null" },
+                        runtimeMinutes = value.optInt("runtimeMinutes").takeIf { it > 0 },
+                    )
+                }.distinctBy { it.contentId }
+            }
 
             return PlayerNavigationArgs(
                 streamUrl = savedStateHandle.get<String>("streamUrl") ?: "",
@@ -127,7 +150,8 @@ internal data class PlayerNavigationArgs(
                     ?: presentation.optInt("runtimeMinutes").takeIf { it > 0 }?.let { "$it min" },
                 initialCastMembers = presentationCast(),
                 initialDirector = presentationList("director"),
-                initialDescription = presentationText("description", "overview", "plot", "synopsis")
+                initialDescription = presentationText("description", "overview", "plot", "synopsis"),
+                freeboxEpisodes = presentationFreeboxEpisodes(),
             )
         }
     }

@@ -23,10 +23,20 @@ internal data class LauncherCapabilities(
     val selectedHome: ComponentName?,
     val selectedHomeActivities: Set<ComponentName>,
     val nativeRequestFailed: Boolean,
-    val accessibilityFallbackAllowed: Boolean = true
+    val accessibilityFallbackAllowed: Boolean = true,
+    val fireOsHomeRedirectSupported: Boolean = false,
+    val fireOsHomeRedirectEnabled: Boolean = false,
+    val fireOsReadLogsGranted: Boolean = false,
+    val fireOsHomeRedirectOperational: Boolean = false
 ) {
     val mechanism: HomeMechanism
-        get() = HomeCapabilityPolicy.mechanism(isDefaultHome, accessibilityEnabled, accessibilityOperational, accessibilityFallbackAllowed)
+        get() = HomeCapabilityPolicy.mechanism(
+            isDefaultHome,
+            accessibilityEnabled,
+            accessibilityOperational,
+            accessibilityFallbackAllowed,
+            fireOsHomeRedirectOperational
+        )
 
     // An absent API is not proof of an OEM restriction (especially before Android 10).
     val restrictionEvidence: NativeHomeRestriction
@@ -77,7 +87,11 @@ internal data class LauncherCapabilities(
                 selectedHome = selected,
                 selectedHomeActivities = selectedActivities,
                 nativeRequestFailed = LauncherSetup.preferences(context).getBoolean(LauncherSetup.REQUEST_FAILED, false),
-                accessibilityFallbackAllowed = LauncherSetup.accessibilityFallbackAllowed(context)
+                accessibilityFallbackAllowed = LauncherSetup.accessibilityFallbackAllowed(context),
+                fireOsHomeRedirectSupported = FireOsHomeButtonService.isSupported(context),
+                fireOsHomeRedirectEnabled = FireOsHomeButtonService.isEnabled(context),
+                fireOsReadLogsGranted = FireOsHomeButtonService.hasReadLogsPermission(context),
+                fireOsHomeRedirectOperational = FireOsHomeButtonService.isOperational.value
             )
         }
     }

@@ -18,7 +18,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -69,29 +71,35 @@ class AvatarRepository @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val bundledCustomAvatarItems = loadBundledCustomAvatarCatalog()
-    private val storedCatalog = loadStoredCatalog()
-    private var standardMetadata =
-        (storedCatalog?.standardItems.orEmpty() + bundledCustomAvatarItems).distinctBy { it.id }
-    private var memberMetadata = storedCatalog?.memberItems.orEmpty()
-    private var standardCatalogLoaded = storedCatalog?.standardLoaded == true
-    private var memberCatalogLoaded = storedCatalog?.memberLoaded == true
-    private var cachedStandardCatalog = if (standardCatalogLoaded) {
-        standardMetadata.map(::toStandardCatalogItem)
-    } else {
-        null
-    }
-    private var cachedMemberCatalog = if (memberCatalogLoaded) {
-        memberMetadata.mapNotNull(::loadCachedMemberAvatar)
-    } else {
-        null
-    }
+    private val catalogInitializationMutex = Mutex()
+    @Volatile private var catalogInitialized = false
+    private var bundledCustomAvatarItems = emptyList<SupabaseAvatarCatalogItem>()
+    private var standardMetadata = emptyList<SupabaseAvatarCatalogItem>()
+    private var memberMetadata = emptyList<SupabaseMemberAvatarCatalogItem>()
+    private var standardCatalogLoaded = false
+    private var memberCatalogLoaded = false
+    private var cachedStandardCatalog: List<AvatarCatalogItem>? = null
+    private var cachedMemberCatalog: List<AvatarCatalogItem>? = null
     private var standardRefreshJob: Job? = null
     private var memberRefreshJob: Job? = null
     private var lastStandardRefreshAtMs = 0L
     private var lastMemberRefreshAtMs = 0L
 
+    // This singleton is injected during Application startup, so decode the persisted JSON off-main.
+    init {
+        scope.launch {
+            try {
+                ensureCatalogInitialized()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(MemberAvatarTag, "Unable to initialize cached avatar catalog", error)
+            }
+        }
+    }
+
     suspend fun getAvatarCatalog(hasMemberAccess: Boolean = false): List<AvatarCatalogItem> {
+        ensureCatalogInitialized()
         val hadStandardCache = cachedStandardCatalog != null
         val standardCatalog = getStandardAvatarCatalog()
         if (hadStandardCache) refreshStandardCatalogInBackground()
@@ -160,6 +168,7 @@ class AvatarRepository @Inject constructor(
     }
 
     suspend fun shareableImageUrl(profile: UserProfile): String? {
+        ensureCatalogInitialized()
         val storageUrl = "${serverConfiguration.backendUrl.trimEnd('/')}/storage/v1/object/"
         profile.avatarUrl?.takeIf { it.isNotBlank() }?.let { url ->
             return url.takeIf { it.startsWith(storageUrl) }
@@ -187,7 +196,9 @@ class AvatarRepository @Inject constructor(
     fun getAvatarImageUrl(avatarId: String, catalog: List<AvatarCatalogItem>): String? {
         return catalog.find { it.id == avatarId }?.imageUrl
             ?: latestCachedMemberAvatar(avatarId)?.toFileUriString()
-            ?: memberMetadata.firstOrNull { it.id == avatarId }?.let { toMemberCatalogFallbackItem(it).imageUrl }
+            ?: memberMetadata.takeIf { catalogInitialized }
+                ?.firstOrNull { it.id == avatarId }
+                ?.let { toMemberCatalogFallbackItem(it).imageUrl }
     }
 
     fun invalidateCache() {
@@ -230,6 +241,33 @@ class AvatarRepository @Inject constructor(
             } catch (error: Exception) {
                 Log.w(MemberAvatarTag, "Unable to refresh supporter avatar catalog", error)
             }
+        }
+    }
+
+    private suspend fun ensureCatalogInitialized() {
+        if (catalogInitialized) return
+        catalogInitializationMutex.withLock {
+            if (catalogInitialized) return@withLock
+            withContext(Dispatchers.IO) {
+                val storedCatalog = loadStoredCatalog()
+                bundledCustomAvatarItems = loadBundledCustomAvatarCatalog()
+                standardMetadata =
+                    (storedCatalog?.standardItems.orEmpty() + bundledCustomAvatarItems).distinctBy { it.id }
+                memberMetadata = storedCatalog?.memberItems.orEmpty()
+                standardCatalogLoaded = storedCatalog?.standardLoaded == true
+                memberCatalogLoaded = storedCatalog?.memberLoaded == true
+                cachedStandardCatalog = if (standardCatalogLoaded) {
+                    standardMetadata.map(::toStandardCatalogItem)
+                } else {
+                    null
+                }
+                cachedMemberCatalog = if (memberCatalogLoaded) {
+                    memberMetadata.mapNotNull(::loadCachedMemberAvatar)
+                } else {
+                    null
+                }
+            }
+            catalogInitialized = true
         }
     }
 

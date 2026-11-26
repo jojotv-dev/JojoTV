@@ -149,12 +149,16 @@ private fun PlayerRuntimeController.disposeExoPlayerBeforeRebuild() {
  * plays in: an engine chosen in the player, by hand or by a startup failover, holds until the
  * stream changes. Without it, the restart would fall back to the settings' engine.
  */
-internal fun PlayerRuntimeController.reinitializeCurrentStream(startPaused: Boolean = false) {
+internal fun PlayerRuntimeController.reinitializeCurrentStream(
+    startPaused: Boolean = false,
+    initialPositionOverrideMs: Long? = null,
+) {
     initializePlayer(
         url = currentStreamUrl,
         headers = currentHeaders,
         overrideInternalPlayerEngine = runtimeInternalPlayerEngineOverride,
-        startPaused = startPaused
+        startPaused = startPaused,
+        initialPositionOverrideMs = initialPositionOverrideMs,
     )
 }
 
@@ -164,7 +168,8 @@ internal fun PlayerRuntimeController.initializePlayer(
     headers: Map<String, String>,
     overrideInternalPlayerEngine: InternalPlayerEngine? = null,
     allowEngineFailover: Boolean = true,
-    startPaused: Boolean = false
+    startPaused: Boolean = false,
+    initialPositionOverrideMs: Long? = null,
 ) {
     if (url.isEmpty()) {
         _uiState.update { it.copy(error = context.getString(R.string.player_error_no_stream_url), showLoadingOverlay = false) }
@@ -622,6 +627,14 @@ internal fun PlayerRuntimeController.initializePlayer(
                             "(1.5s back buffer, no VOD cache) host=${url.safeHost()}"
                 )
                 DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                        DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                        DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                        // Resume as soon as the first samples arrive instead of waiting for the
+                        // stock two-second rebuffer threshold.
+                        /* bufferForPlaybackAfterRebufferMs = */ 0,
+                    )
                     .setBackBuffer(1_500, /* retainBackBufferFromKeyframe = */ true)
                     .build()
             }
@@ -1139,7 +1152,13 @@ internal fun PlayerRuntimeController.initializePlayer(
                 applySubtitlePreferences(preferred, secondary)
                 applyStartupSubtitlePreparation(startupSubtitlePreparation)
                 val startupSubtitleConfigurations = buildStartupSubtitleConfigurations(startupSubtitlePreparation)
-                val initialResumePosition = resolvePendingInitialResumePosition()
+                val initialResumePosition = initialPositionOverrideMs
+                    ?.coerceAtLeast(0L)
+                    ?: resolvePendingInitialResumePosition()
+                if (initialPositionOverrideMs != null) {
+                    pendingResumeProgress = null
+                    _uiState.update { it.copy(pendingSeekPosition = null) }
+                }
                 playbackAnalyticsDiagnostics.setStartupStartPosition(initialResumePosition)
                 playbackAnalyticsDiagnostics.recordRawEventLine(
                     "PLAYER_INIT: engine=EXOPLAYER host=${url.safeHost()} " +

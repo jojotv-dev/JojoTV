@@ -78,7 +78,7 @@ fun SidebarNavigation(
             .width(sidebarWidth)
             .fillMaxHeight()
             .graphicsLayer { alpha = sidebarAlpha }
-            .background(NuvioTheme.colors.BackgroundElevated)
+            .background(NuvioTheme.colors.Background)
             .padding(vertical = NuvioTheme.spacing.xl, horizontal = NuvioTheme.spacing.lg)
             .onFocusChanged { state ->
                 onFocusChange(state.hasFocus)

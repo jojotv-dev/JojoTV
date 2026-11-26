@@ -3,12 +3,20 @@
 package com.nuvio.tv.ui.screens.settings
 
 import android.app.Activity
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -66,7 +74,8 @@ fun VpnSettingsContent(initialFocusRequester: FocusRequester? = null) {
     // Read once up front so the connection card is there from the first frame and nothing below it shifts.
     var connection by remember { mutableStateOf<VpnSettingsController.Connection?>(runCatching { controller.connection() }.getOrNull()) }
     var dialog by remember { mutableStateOf<VpnDialog?>(null) }
-    var pickerMissing by remember { mutableStateOf(false) }
+    var pickerPermissionDenied by remember { mutableStateOf(false) }
+    var showInAppPicker by remember { mutableStateOf(false) }
     var pickingOpenVpn by remember { mutableStateOf(false) }
     // The top row (the connection card) takes the focus when the pane opens, and is where focus lands
     // if the row a dialog came from is gone.
@@ -79,6 +88,47 @@ fun VpnSettingsContent(initialFocusRequester: FocusRequester? = null) {
     var returnFocus by remember { mutableStateOf<FocusRequester?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) controller.importProfile(uri, pickingOpenVpn)
+    }
+    val allFilesAccess = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
+            showInAppPicker = true
+        } else {
+            pickerPermissionDenied = true
+        }
+    }
+    val storagePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) showInAppPicker = true else pickerPermissionDenied = true
+    }
+
+    fun openInAppPicker() {
+        pickerPermissionDenied = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) {
+                showInAppPicker = true
+                return
+            }
+            val appStorageSettings = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:${context.packageName}"),
+            )
+            try {
+                allFilesAccess.launch(appStorageSettings)
+            } catch (_: Exception) {
+                try {
+                    allFilesAccess.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                } catch (_: Exception) {
+                    pickerPermissionDenied = true
+                }
+            }
+        } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            showInAppPicker = true
+        } else {
+            storagePermission.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
     }
 
     DisposableEffect(controller) {
@@ -115,11 +165,15 @@ fun VpnSettingsContent(initialFocusRequester: FocusRequester? = null) {
     fun choose(openVpn: Boolean) {
         if (state?.busy == true) return
         pickingOpenVpn = openVpn
-        pickerMissing = false
+        pickerPermissionDenied = false
+        if (usesFireTvDpadPicker() || !hasSystemDocumentPicker(context)) {
+            openInAppPicker()
+            return
+        }
         try {
             picker.launch(arrayOf("*/*"))
         } catch (_: ActivityNotFoundException) {
-            pickerMissing = true
+            openInAppPicker()
         }
     }
 
@@ -177,8 +231,11 @@ fun VpnSettingsContent(initialFocusRequester: FocusRequester? = null) {
                             tone = if (current?.noticeIsError == true) SettingsNoteTone.Danger else SettingsNoteTone.Info
                         )
                     }
-                    if (pickerMissing) {
-                        SettingsNote(text = stringResource(VpnR.string.vpn_profiles_no_picker), tone = SettingsNoteTone.Danger)
+                    if (pickerPermissionDenied) {
+                        SettingsNote(
+                            text = stringResource(VpnR.string.vpn_profiles_storage_permission_required),
+                            tone = SettingsNoteTone.Danger
+                        )
                     }
                     SettingsNote(text = stringResource(VpnR.string.vpn_connection_limits))
                 }
@@ -399,6 +456,31 @@ fun VpnSettingsContent(initialFocusRequester: FocusRequester? = null) {
             }
         }
     }
+
+    if (showInAppPicker) {
+        VpnProfileFilePicker(
+            onDismiss = { showInAppPicker = false },
+            onFileSelected = { file ->
+                showInAppPicker = false
+                controller.importProfile(file, pickingOpenVpn)
+            }
+        )
+    }
+}
+
+private fun usesFireTvDpadPicker(): Boolean =
+    Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
+        (Build.MODEL.startsWith("AFT", ignoreCase = true) ||
+            Build.DEVICE.contains("AFT", ignoreCase = true)) &&
+        Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
+
+private fun hasSystemDocumentPicker(context: Context): Boolean {
+    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+        .addCategory(Intent.CATEGORY_OPENABLE)
+        .setType("*/*")
+    return runCatching {
+        context.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null
+    }.getOrDefault(false)
 }
 
 private fun modeTitle(mode: Int): Int = when (mode) {

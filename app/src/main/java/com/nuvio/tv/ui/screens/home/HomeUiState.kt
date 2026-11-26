@@ -134,7 +134,8 @@ sealed class ContinueWatchingItem {
         val originalPoster: String? = null,
         val customLandscapePoster: String? = null,
         val mdbListRatings: com.nuvio.tv.domain.model.MDBListRatings? = null,
-        val homeSourcePreview: MetaPreview? = null
+        val homeSourcePreview: MetaPreview? = null,
+        val resolvedTmdbId: String? = null
     ) : ContinueWatchingItem()
 
     @Immutable
@@ -149,40 +150,73 @@ sealed class ContinueWatchingItem {
 private fun continueWatchingIdentityAliases(value: String?): Sequence<String> {
     val normalized = value?.trim()?.takeIf(String::isNotBlank)?.lowercase(Locale.ROOT)
         ?: return emptySequence()
-    return if (normalized.startsWith("tmdb:")) {
-        sequenceOf(normalized, normalized.removePrefix("tmdb:"))
-    } else {
-        sequenceOf(normalized)
+    return when {
+        normalized.startsWith("tmdb:") -> sequenceOf(normalized, normalized.removePrefix("tmdb:"))
+        normalized.startsWith("imdb:") -> sequenceOf(normalized, normalized.removePrefix("imdb:"))
+        else -> sequenceOf(normalized)
     }
 }
 
 private val CONTINUE_WATCHING_YEAR_PATTERN = Regex("(?<!\\d)(?:19|20)\\d{2}(?!\\d)")
 private val CONTINUE_WATCHING_TITLE_SEPARATORS = Regex("[^\\p{L}\\p{N}]+")
 
+private fun continueWatchingMediaType(contentType: String?): String? =
+    when (contentType?.trim()?.lowercase(Locale.ROOT)) {
+        "movie", "film" -> "movie"
+        "series", "tv" -> "series"
+        else -> null
+    }
+
+private fun continueWatchingYear(name: String?, releaseInfo: String?): String? =
+    CONTINUE_WATCHING_YEAR_PATTERN.find(releaseInfo.orEmpty())?.value
+        ?: CONTINUE_WATCHING_YEAR_PATTERN.find(name.orEmpty())?.value
+
+private fun continueWatchingNormalizedTitle(name: String): String? {
+    val rawName = name.trim().takeIf(String::isNotBlank) ?: return null
+    val year = CONTINUE_WATCHING_YEAR_PATTERN.find(rawName)?.value
+    val nameWithoutTrailingYear = if (year == null) rawName else rawName.replace(
+        Regex("\\s*\\(?$year\\)?\\s*$"),
+        ""
+    )
+    val normalizedTitle = nameWithoutTrailingYear
+        .lowercase(Locale.ROOT)
+        .replace(CONTINUE_WATCHING_TITLE_SEPARATORS, " ")
+        .trim()
+        .takeIf(String::isNotBlank) ?: return null
+    return normalizedTitle
+}
+
+private fun continueWatchingTitleAlias(name: String?, contentType: String?): String? {
+    val mediaType = continueWatchingMediaType(contentType) ?: return null
+    val normalizedName = name?.let(::continueWatchingNormalizedTitle) ?: return null
+    return "title:$mediaType:$normalizedName"
+}
+
+private fun MetaPreview.continueWatchingMediaType(): String? = when {
+    type == ContentType.MOVIE || apiType.equals("movie", ignoreCase = true) -> "movie"
+    type == ContentType.SERIES || type == ContentType.TV ||
+        apiType.equals("series", ignoreCase = true) || apiType.equals("tv", ignoreCase = true) -> "series"
+    else -> null
+}
+
+// Keep a series badge after an episode completes while its next episode is in the same season.
+private fun ContinueWatchingItem.NextUp.belongsToUnfinishedSeason(): Boolean {
+    val nextUp = info
+    return continueWatchingMediaType(nextUp.contentType) == "series" &&
+        nextUp.seedSeason != null &&
+        nextUp.seedEpisode != null &&
+        nextUp.seedSeason == nextUp.season &&
+        !nextUp.isNewSeasonRelease
+}
+
 private fun continueWatchingTitleYearAlias(
     name: String?,
     releaseInfo: String?,
     contentType: String?
 ): String? {
-    val mediaType = when (contentType?.trim()?.lowercase(Locale.ROOT)) {
-        "movie", "film" -> "movie"
-        "series", "tv" -> "series"
-        else -> return null
-    }
-    val rawName = name?.trim()?.takeIf(String::isNotBlank) ?: return null
-    val year = CONTINUE_WATCHING_YEAR_PATTERN.find(releaseInfo.orEmpty())?.value
-        ?: CONTINUE_WATCHING_YEAR_PATTERN.find(rawName)?.value
-        ?: return null
-    val nameWithoutTrailingYear = rawName.replace(
-        Regex("\\s*\\(?$year\\)?\\s*$"),
-        ""
-    )
-    val normalizedName = nameWithoutTrailingYear
-        .lowercase(Locale.ROOT)
-        .replace(CONTINUE_WATCHING_TITLE_SEPARATORS, " ")
-        .trim()
-        .takeIf(String::isNotBlank)
-        ?: return null
+    val mediaType = continueWatchingMediaType(contentType) ?: return null
+    val year = continueWatchingYear(name, releaseInfo) ?: return null
+    val normalizedName = name?.let(::continueWatchingNormalizedTitle) ?: return null
     return "title-year:$mediaType:$year:$normalizedName"
 }
 
@@ -194,47 +228,114 @@ internal fun MetaPreview.continueWatchingIdentityKeys(): Sequence<String> {
         ?.removePrefix(HOME_IPTV_FAVORITE_ITEM_ID_PREFIX)
         ?.let { Uri.decode(it) }
 
+    val mediaType = continueWatchingMediaType()
     val titleYearAlias = continueWatchingTitleYearAlias(
         name = name,
         releaseInfo = releaseInfo,
-        contentType = when {
-            type == ContentType.MOVIE || apiType.equals("movie", ignoreCase = true) -> "movie"
-            type == ContentType.SERIES || type == ContentType.TV ||
-                apiType.equals("series", ignoreCase = true) || apiType.equals("tv", ignoreCase = true) -> "series"
-            else -> null
-        }
+        contentType = mediaType
     )
-
     return sequenceOf(id, tmdbId, tmdbId?.let { "tmdb:$it" }, imdbId, iptvFavoriteKey, titleYearAlias)
         .flatMap(::continueWatchingIdentityAliases)
 }
 
 internal fun continueWatchingMatchKeys(
     items: List<ContinueWatchingItem>,
-    catalogItems: List<MetaPreview> = emptyList()
+    catalogItems: List<MetaPreview> = emptyList(),
+    upcomingItems: List<ContinueWatchingItem> = emptyList()
 ): Set<String> {
-    val matchKeys = items.asSequence()
-        .filterIsInstance<ContinueWatchingItem.InProgress>()
-        .filter { it.progress.isInProgress() }
-        .flatMap { item ->
-            val sourcePreview = item.homeSourcePreview
-            sequenceOf(
-                item.progress.contentId,
-                item.progress.videoId,
-                sourcePreview?.id,
-                sourcePreview?.tmdbId,
-                sourcePreview?.imdbId,
-                continueWatchingTitleYearAlias(
-                    name = item.progress.name,
-                    releaseInfo = item.releaseInfo ?: sourcePreview?.releaseInfo,
-                    contentType = item.progress.contentType
-                ),
-            )
+    val allContinueWatchingItems = items + upcomingItems
+    val matchKeys = allContinueWatchingItems.asSequence()
+        .flatMap { continueWatchingItem ->
+            when (continueWatchingItem) {
+                is ContinueWatchingItem.InProgress -> {
+                    if (!continueWatchingItem.progress.isInProgress()) {
+                        emptySequence()
+                    } else {
+                        val sourcePreview = continueWatchingItem.homeSourcePreview
+                        sequenceOf(
+                            continueWatchingItem.progress.contentId,
+                            continueWatchingItem.progress.videoId,
+                            sourcePreview?.id,
+                            sourcePreview?.tmdbId,
+                            sourcePreview?.imdbId,
+                            continueWatchingTitleYearAlias(
+                                name = continueWatchingItem.progress.name,
+                                releaseInfo = continueWatchingItem.releaseInfo ?: sourcePreview?.releaseInfo,
+                                contentType = continueWatchingItem.progress.contentType
+                            ),
+                        ).plus(sourcePreview?.continueWatchingIdentityKeys() ?: emptySequence())
+                    }
+                }
+
+                is ContinueWatchingItem.NextUp -> {
+                    if (!continueWatchingItem.belongsToUnfinishedSeason()) {
+                        emptySequence()
+                    } else {
+                        val nextUp = continueWatchingItem.info
+                        sequenceOf(
+                            nextUp.contentId,
+                            nextUp.videoId,
+                            continueWatchingTitleYearAlias(
+                                name = nextUp.name,
+                                releaseInfo = nextUp.releaseInfo,
+                                contentType = nextUp.contentType
+                            )
+                        )
+                    }
+                }
+            }
         }
         .flatMap(::continueWatchingIdentityAliases)
         .toMutableSet()
 
-    if (matchKeys.isEmpty() || catalogItems.isEmpty()) return matchKeys
+    if (catalogItems.isEmpty()) return matchKeys
+
+    val catalogTitleYears = catalogItems.mapNotNull { preview ->
+        val titleAlias = continueWatchingTitleAlias(preview.name, preview.continueWatchingMediaType())
+            ?: return@mapNotNull null
+        titleAlias to continueWatchingYear(preview.name, preview.releaseInfo)
+    }.groupBy({ it.first }, { it.second })
+        .mapValues { (_, years) -> years.filterNotNull().toSet() }
+
+    allContinueWatchingItems.asSequence()
+        .filterIsInstance<ContinueWatchingItem.InProgress>()
+        .filter { it.progress.isInProgress() }
+        .flatMap { item ->
+            val sourcePreview = item.homeSourcePreview
+            val progressReleaseInfo = item.releaseInfo ?: sourcePreview?.releaseInfo
+            sequenceOf(
+                Triple(
+                    item.progress.name,
+                    continueWatchingYear(item.progress.name, progressReleaseInfo),
+                    item.progress.contentType
+                ),
+                Triple(
+                    sourcePreview?.name,
+                    continueWatchingYear(
+                        sourcePreview?.name,
+                        sourcePreview?.releaseInfo ?: progressReleaseInfo
+                    ),
+                    sourcePreview?.continueWatchingMediaType() ?: item.progress.contentType
+                )
+            ).mapNotNull { (name, year, contentType) ->
+                continueWatchingTitleAlias(name, contentType)?.let { it to year }
+            }
+        }
+        .distinct()
+        .forEach { (titleAlias, progressYear) ->
+            val catalogYears = catalogTitleYears[titleAlias] ?: return@forEach
+            val unambiguousYearMatch = when {
+                catalogYears.isEmpty() -> true
+                catalogYears.size != 1 -> false
+                progressYear == null -> true
+                else -> progressYear in catalogYears
+            }
+            if (unambiguousYearMatch) {
+                matchKeys += titleAlias
+            }
+        }
+
+    if (matchKeys.isEmpty()) return matchKeys
 
     // One progress ID can identify a card in one catalog while another row carries
     // that same content under its IMDb/TMDB alias. Close over aliases from cards that
@@ -256,7 +357,8 @@ internal fun continueWatchingMatchKeys(
 }
 
 internal fun MetaPreview.isCurrentlyInProgress(matchKeys: Set<String>): Boolean {
-    return continueWatchingIdentityKeys().any(matchKeys::contains)
+    return continueWatchingIdentityKeys().any(matchKeys::contains) ||
+        continueWatchingTitleAlias(name, continueWatchingMediaType())?.let(matchKeys::contains) == true
 }
 
 val ContinueWatchingItem.shuffleFocusKey: String?

@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
@@ -21,12 +20,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.Job
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -60,7 +61,6 @@ import com.nuvio.tv.domain.model.isPlaceholder
 import com.nuvio.tv.ui.util.StableList
 import com.nuvio.tv.ui.util.StableMap
 import com.nuvio.tv.ui.util.StableRef
-import com.nuvio.tv.ui.util.dpadVerticalFastScroll
 import com.nuvio.tv.ui.util.recompositionHighlighter
 import com.nuvio.tv.ui.components.rememberPlaceholderShimmerOffsetState
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +69,19 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+
+internal fun HeroCarouselRow.firstMediaCatalogIndexOnReturn(): Int? {
+    val isVideoCatalogRow =
+        apiType.equals("video", ignoreCase = true) ||
+            apiType.equals("movie", ignoreCase = true) ||
+            apiType.equals("series", ignoreCase = true) ||
+            apiType.equals("tv", ignoreCase = true)
+    if (!isVideoCatalogRow) return null
+
+    return continuousItemIndices().firstOrNull { index ->
+        items.list.getOrNull(index)?.payload is ModernPayload.Catalog
+    }
+}
 
 @OptIn(
     ExperimentalFoundationApi::class,
@@ -87,8 +100,6 @@ internal fun ModernHomeRowsList(
     focusState: HomeScreenFocusState,
     activeRowKey: State<String?>,
     activeItemIndex: State<Int>,
-    isFastScrolling: State<Boolean>,
-    onFastScrollingChanged: (Boolean) -> Unit,
     contentFocusRequester: FocusRequester,
     rowsViewportHeight: Dp,
     modernContinueWatchingHeroEnabled: Boolean = false,
@@ -141,6 +152,7 @@ internal fun ModernHomeRowsList(
     onPendingRowFocusCleared: () -> Unit,
     onActiveRowKeyChange: (String?) -> Unit,
     onActiveItemIndexChange: (Int) -> Unit,
+    onRequestRowFocus: (String, Int) -> Unit,
     lastHeroNavigationAtMs: State<Long>,
     onLastHeroNavigationAtMsChange: (Long) -> Unit,
     onHeroFocusSettleDelayChange: (Long) -> Unit,
@@ -159,9 +171,12 @@ internal fun ModernHomeRowsList(
     val rowListStatesMap = rowListStates.value
     val loadMoreRequestedTotalsMap = loadMoreRequestedTotals.value
     val rowFocusResetScope = rememberCoroutineScope()
+    var manualRowFocusTarget by remember { mutableStateOf<String?>(null) }
+    var rowFocusTransferJob by remember { mutableStateOf<Job?>(null) }
 
     val latestOnActiveRowKeyChange = rememberUpdatedState(onActiveRowKeyChange)
     val latestOnActiveItemIndexChange = rememberUpdatedState(onActiveItemIndexChange)
+    val latestOnRequestRowFocus = rememberUpdatedState(onRequestRowFocus)
 
     val rowFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val stableItemFocusRequestersByRow = remember { mutableMapOf<String, StableRef<MutableMap<Int, FocusRequester>>>() }
@@ -259,6 +274,116 @@ internal fun ModernHomeRowsList(
         }
     }
 
+    fun moveFocusToOrderedRow(targetPosition: Int): Boolean {
+        val targetRow = carouselRows.list.getOrNull(targetPosition) ?: return false
+        val targetKey = targetRow.key
+        val targetLastIndex = targetRow.items.list.lastIndex
+        val firstMediaItemIndex = targetRow.firstMediaCatalogIndexOnReturn()
+        val requestedIndex = when {
+            targetKey == MODERN_CONTINUE_WATCHING_ROW_KEY && lastFocusedContinueWatchingIndex.value >= 0 ->
+                lastFocusedContinueWatchingIndex.value
+            firstMediaItemIndex != null -> firstMediaItemIndex
+            else -> focusedItemByRowMap[targetKey] ?: 0
+        }.coerceIn(0, targetLastIndex.coerceAtLeast(0))
+
+        rowFocusTransferJob?.cancel()
+        manualRowFocusTarget = targetKey
+        focusedItemByRowMap[targetKey] = requestedIndex
+        latestOnActiveRowKeyChange.value(targetKey)
+        latestOnActiveItemIndexChange.value(requestedIndex)
+        latestOnRequestRowFocus.value(targetKey, requestedIndex)
+
+        val targetScrollOffset = if (targetPosition == 0) {
+            -with(density) { MODERN_ROW_HEADER_FOCUS_INSET.roundToPx() }
+        } else {
+            0
+        }
+        val rowLayoutInfo = verticalRowListState.layoutInfo
+        val targetAlignedOffset = rowLayoutInfo.viewportStartOffset - targetScrollOffset
+        // Keep every focused row at the same top anchor. A visibility threshold left the TV row
+        // lower in the viewport when it was mostly visible, with part of the Series row above it.
+        val targetAlreadyAligned = rowLayoutInfo.visibleItemsInfo
+            .firstOrNull { it.index == targetPosition }
+            ?.let { item -> kotlin.math.abs(item.offset - targetAlignedOffset) <= 1 }
+            ?: false
+
+        val targetRowFocusRequester = rowFocusRequesters.getOrPut(targetKey) { FocusRequester() }
+        stableItemFocusRequestersByRow.getOrPut(targetKey) { StableRef(mutableMapOf()) }
+        rowFocusTransferJob = rowFocusResetScope.launch {
+            try {
+                if (manualRowFocusTarget != targetKey) return@launch
+                if (!targetAlreadyAligned) {
+                    verticalRowListState.scrollToItem(targetPosition, targetScrollOffset)
+                }
+                var focusTransferred = false
+                repeat(3) {
+                    androidx.compose.runtime.withFrameNanos { }
+                    if (manualRowFocusTarget != targetKey) return@launch
+                    if (!focusTransferred) {
+                        val requester = stableItemFocusRequestersByRow[targetKey]
+                            ?.value
+                            ?.get(requestedIndex)
+                            ?: targetRowFocusRequester
+                        focusTransferred = runCatching { requester.requestFocus() }.getOrDefault(false)
+                    }
+                }
+                if (!targetAlreadyAligned && manualRowFocusTarget == targetKey) {
+                    androidx.compose.runtime.withFrameNanos { }
+                    verticalRowListState.scrollToItem(targetPosition, targetScrollOffset)
+                }
+            } finally {
+                if (manualRowFocusTarget == targetKey) {
+                    manualRowFocusTarget = null
+                    rowFocusTransferJob = null
+                }
+            }
+        }
+        return true
+    }
+
+    // Keep the tall Continue Watching hero anchored at the start when it receives focus.
+    val continueWatchingHeroIndex = carouselRows.list.indexOfFirst {
+        it.key == MODERN_CONTINUE_WATCHING_ROW_KEY
+    }
+    val activeRowPosition = carouselRows.list.indexOfFirst { it.key == activeRowKey.value }
+    LaunchedEffect(
+        activeRowKey.value,
+        activeRowPosition,
+        modernContinueWatchingHeroEnabled,
+        manualRowFocusTarget
+    ) {
+        if (activeRowPosition < 0 ||
+            manualRowFocusTarget == activeRowKey.value ||
+            (modernContinueWatchingHeroEnabled && activeRowKey.value == MODERN_CONTINUE_WATCHING_ROW_KEY)
+        ) return@LaunchedEffect
+
+        val targetScrollOffset = if (activeRowPosition == 0) {
+            -with(density) { MODERN_ROW_HEADER_FOCUS_INSET.roundToPx() }
+        } else {
+            0
+        }
+        val rowLayoutInfo = verticalRowListState.layoutInfo
+        val targetAlignedOffset = rowLayoutInfo.viewportStartOffset - targetScrollOffset
+        val targetAlreadyAligned = rowLayoutInfo.visibleItemsInfo
+            .firstOrNull { it.index == activeRowPosition }
+            ?.let { item -> kotlin.math.abs(item.offset - targetAlignedOffset) <= 1 }
+            ?: false
+
+        // Also align rows restored from saved focus, where no D-pad transition runs.
+        if (!targetAlreadyAligned) {
+            verticalRowListState.scrollToItem(activeRowPosition, targetScrollOffset)
+        }
+    }
+    LaunchedEffect(modernContinueWatchingHeroEnabled, activeRowKey.value, continueWatchingHeroIndex) {
+        androidx.compose.runtime.withFrameNanos { }
+        if (modernContinueWatchingHeroEnabled &&
+            activeRowKey.value == MODERN_CONTINUE_WATCHING_ROW_KEY &&
+            continueWatchingHeroIndex >= 0
+        ) {
+            verticalRowListState.scrollToItem(continueWatchingHeroIndex, 0)
+        }
+    }
+
     val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
 
     // Only run the shared shimmer while a row on screen actually draws it: rememberInfiniteTransition
@@ -284,7 +409,6 @@ internal fun ModernHomeRowsList(
 
     CompositionLocalProvider(
         LocalBringIntoViewSpec provides verticalRowBringIntoViewSpec,
-        LocalFastScrollActive provides isFastScrolling,
         LocalVerticalRowsScrolling provides isVerticalRowsScrollingState
     ) {
         LazyColumn(
@@ -305,7 +429,8 @@ internal fun ModernHomeRowsList(
                         event.key == Key.DirectionUp &&
                         effectiveExpandEnabled &&
                         expandedCatalogFocusKey.value != null &&
-                        activeRowKey.value == firstRowKey
+                        activeRowKey.value == firstRowKey &&
+                        firstRowKey != MODERN_CONTINUE_WATCHING_ROW_KEY
                     ) return@onPreviewKeyEvent true
                     if (event.type == KeyEventType.KeyDown &&
                         event.key == Key.DirectionDown &&
@@ -323,59 +448,9 @@ internal fun ModernHomeRowsList(
                         activeItemIndex.value == 0
                     ) return@onPreviewKeyEvent true
                     false
-                }
-                .dpadVerticalFastScroll(
-                    scrollableState = verticalRowListState,
-                    onFastScrollingChanged = onFastScrollingChanged,
-                    shouldHaltForward = {
-                        val info = verticalRowListState.layoutInfo
-                        val lastIdx = carouselRows.list.size - 1
-                        val lastVisible = info.visibleItemsInfo.lastOrNull { it.index == lastIdx }
-                        lastIdx >= 0 && lastVisible != null &&
-                            lastVisible.offset + lastVisible.size <= info.viewportEndOffset
-                    },
-                    resolveVerticalLanding = { sign ->
-                        val layoutInfo = verticalRowListState.layoutInfo
-                        val visibleItems = layoutInfo.visibleItemsInfo
-                        val lastIdx = carouselRows.list.size - 1
-                        val viewportEnd = layoutInfo.viewportEndOffset
-                        val lastRowAtBottom = lastIdx >= 0 &&
-                            visibleItems.lastOrNull { it.index == lastIdx }?.let {
-                                it.offset + it.size <= viewportEnd
-                            } == true
-                        val upwardTopRow: LazyListItemInfo? = if (sign < 0) {
-                            visibleItems.firstOrNull()?.takeIf {
-                                it.offset > -it.size / 2
-                            }
-                        } else null
-                        val targetRowIndex = when {
-                            lastRowAtBottom -> lastIdx
-                            upwardTopRow != null -> upwardTopRow.index
-                            else ->
-                                visibleItems.firstOrNull { it.offset >= 0 }?.index
-                                    ?: visibleItems.firstOrNull()?.index
-                                    ?: verticalRowListState.firstVisibleItemIndex
-                        }
-                        val targetRow = carouselRows.list.getOrNull(targetRowIndex)
-                        if (targetRow == null) null
-                        else {
-                            val firstItemIndex = targetRow.continuousItemIndices().firstOrNull() ?: 0
-                            val savedIdx = firstItemIndex.coerceIn(
-                                0,
-                                (targetRow.items.list.size - 1).coerceAtLeast(0)
-                            )
-                            focusedItemByRowMap[targetRow.key] = savedIdx
-                            latestOnActiveRowKeyChange.value(targetRow.key)
-                            latestOnActiveItemIndexChange.value(savedIdx)
-
-                            val targetItemKey = targetRow.items.list.getOrNull(savedIdx)?.key
-                                ?: "${targetRow.key}_$savedIdx"
-                            targetItemKey
-                        }
-                    },
-                ),
+                },
             contentPadding = PaddingValues(
-                bottom = if (modernContinueWatchingHeroEnabled) NuvioTheme.spacing.xl else rowsViewportHeight
+                bottom = rowsViewportHeight
             ),
             verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.xl)
         ) {
@@ -383,7 +458,7 @@ internal fun ModernHomeRowsList(
                 items = carouselRows.list,
                 key = { index, row -> "${row.key}_$index" },
                 contentType = { _, row -> row.apiType ?: "modern_home_row" }
-            ) { _, row ->
+            ) { rowIndex, row ->
                 val stableOnContinueWatchingOptions = remember(onContinueWatchingOptions) {
                     { item: ContinueWatchingItem -> onContinueWatchingOptions(item) }
                 }
@@ -392,38 +467,6 @@ internal fun ModernHomeRowsList(
                         val rowBecameActive = activeRowKey.value != rowKey
                         val itemChanged = activeItemIndex.value != index
 
-                        if (rowBecameActive) {
-                            val previousRowKey = activeRowKey.value
-                            if (previousRowKey != null && previousRowKey != rowKey) {
-                                val previousRow = latestCarouselRowsForImagePrefetch.value.list
-                                    .firstOrNull { it.key == previousRowKey }
-                                val firstPreviousItem = previousRow?.continuousItemIndices()?.firstOrNull() ?: 0
-                                focusedItemByRowMap[previousRowKey] = firstPreviousItem
-                                val previousRowState = rowListStatesMap[previousRowKey]
-                                if (previousRow != null && previousRowState != null &&
-                                    previousRow.isContinuousCatalogCarousel()
-                                ) {
-                                    val previousCycleIndices = previousRow.continuousItemIndices()
-                                    if (previousCycleIndices.size > 1) {
-                                        val firstVirtualIndex = previousRow.virtualIndexForLogicalItem(
-                                            logicalIndex = firstPreviousItem,
-                                            nearVirtualIndex = previousRowState.firstVisibleItemIndex,
-                                            cycleIndices = previousCycleIndices
-                                        )
-                                        rowFocusResetScope.launch {
-                                            previousRowState.scrollToItem(firstVirtualIndex)
-                                        }
-                                    } else {
-                                        rowFocusResetScope.launch { previousRowState.scrollToItem(0) }
-                                    }
-                                } else {
-                                    rowFocusResetScope.launch {
-                                        previousRowState?.scrollToItem(0)
-                                    }
-                                }
-                            }
-                        }
-                        
                         if (rowBecameActive || itemChanged) {
                             val now = System.currentTimeMillis()
                             val timeSinceLastHeroNav = now - lastHeroNavigationAtMs.value
@@ -478,6 +521,10 @@ internal fun ModernHomeRowsList(
                     modernContinueWatchingHeroHeight = modernContinueWatchingHeroHeight,
                     isActiveRow = isActiveRowLambda,
                     rowFocusRequester = rowFocusRequesters.getOrPut(row.key) { FocusRequester() },
+                    onMoveUp = if (rowIndex > 0) {
+                        { moveFocusToOrderedRow(rowIndex - 1) }
+                    } else null,
+                    onMoveDown = { moveFocusToOrderedRow(rowIndex + 1) },
                     rowTitleBottom = 14.dp, // rowTitleBottom
                     defaultBringIntoViewSpec = defaultBringIntoViewSpec,
                     focusStateCatalogRowScrollIndex = focusState.catalogRowScrollStates[row.key] ?: 0,

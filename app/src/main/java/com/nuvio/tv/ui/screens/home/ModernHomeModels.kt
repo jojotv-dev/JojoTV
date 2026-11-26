@@ -135,47 +135,12 @@ data class HeroCarouselRow(
     val isLoading: Boolean = false
 )
 
-internal fun HeroCarouselRow.isContinuousCatalogCarousel(): Boolean =
-    key == HOME_FREEBOX_VIDEOS_ROW_KEY ||
-        addonId?.startsWith("freebox:", ignoreCase = true) == true ||
-        apiType.equals("movie", ignoreCase = true) ||
-        apiType.equals("series", ignoreCase = true)
-
 internal fun HeroCarouselRow.continuousItemIndices(): List<Int> {
     val available = items.list.indices.filterNot { index ->
         (items.list[index].payload as? ModernPayload.Catalog)
             ?.itemId?.startsWith("__placeholder_") == true
     }
     return available.ifEmpty { items.list.indices.take(1) }
-}
-
-internal fun HeroCarouselRow.logicalItemIndexAtVirtualIndex(
-    virtualIndex: Int,
-    cycleIndices: List<Int>? = null
-): Int? {
-    if (items.list.isEmpty()) return null
-    if (!isContinuousCatalogCarousel()) return virtualIndex.takeIf { it in items.list.indices }
-    val cycle = cycleIndices ?: continuousItemIndices()
-    return if (cycle.size > 1) cycle[Math.floorMod(virtualIndex, cycle.size)]
-    else virtualIndex.takeIf { it in items.list.indices }
-}
-
-internal fun HeroCarouselRow.virtualIndexForLogicalItem(
-    logicalIndex: Int,
-    nearVirtualIndex: Int? = null,
-    cycleIndices: List<Int>? = null
-): Int {
-    if (!isContinuousCatalogCarousel()) return logicalIndex.coerceIn(0, (items.list.size - 1).coerceAtLeast(0))
-    val cycle = cycleIndices ?: continuousItemIndices()
-    if (cycle.size <= 1) return cycle.firstOrNull() ?: 0
-    val position = cycle.indexOf(logicalIndex).takeIf { it >= 0 } ?: 0
-    val anchor = Int.MAX_VALUE / 2
-    val reference = nearVirtualIndex ?: anchor
-    val base = (reference / cycle.size) * cycle.size
-    return listOf(base - cycle.size + position, base + position, base + cycle.size + position)
-        .filter { it in 0 until Int.MAX_VALUE }
-        .minByOrNull { kotlin.math.abs(it.toLong() - reference.toLong()) }
-        ?: anchor
 }
 
 @Immutable
@@ -218,7 +183,8 @@ internal data class ModernHeroSceneState(
     val trailerAudioUrl: String?,
     val trailerPlaybackKey: String?,
     val trailerMuted: Boolean,
-    val fullScreenBackdrop: Boolean
+    val fullScreenBackdrop: Boolean,
+    val heroIdentityKey: String? = null
 )
 
 internal data class ModernCatalogRowBuildCacheEntry(

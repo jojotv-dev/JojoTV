@@ -2378,7 +2378,7 @@ private fun DriveSignInDialog(prompt: com.nuvio.tv.livetv.sync.SignInPrompt, onC
         delay(80)
         runCatching { cancelFocus.requestFocus() }
     }
-    // Same layout as Nuvio's other QR sign-ins (debrid, Simkl): instructions, QR code, then the code.
+    // Same layout as Nuvio's other QR sign-ins: instructions, QR code, then the code.
     val qrBitmap = remember(prompt.qrUrl) {
         runCatching { com.nuvio.tv.core.qr.QrCodeGenerator.generate(prompt.qrUrl, 420, margin = 1) }.getOrNull()
     }

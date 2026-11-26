@@ -6,12 +6,20 @@
       <GradleProjectSettings>
         <option name="testRunner" value="CHOOSE_PER_TEST" />
         <option name="externalProjectPath" value="$PROJECT_DIR$" />
-        <option name="gradleJvm" value="#GRADLE_LOCAL_JAVA_HOME" />
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/app" />
             <option value="$PROJECT_DIR$/baselineprofile" />
+            <option value="$PROJECT_DIR$/ffmpeg-decoder-downmix" />
+            <option value="$PROJECT_DIR$/mediaservicecore" />
+            <option value="$PROJECT_DIR$/mediaservicecore/commons-io-2.8.0" />
+            <option value="$PROJECT_DIR$/mediaservicecore/j2v8" />
+            <option value="$PROJECT_DIR$/mediaservicecore/mediaserviceinterfaces" />
+            <option value="$PROJECT_DIR$/mediaservicecore/sharedutils" />
+            <option value="$PROJECT_DIR$/mediaservicecore/youtubeapi" />
+            <option value="$PROJECT_DIR$/vpn-android" />
+            <option value="$PROJECT_DIR$/vpn-core" />
           </set>
         </option>
       </GradleProjectSettings>

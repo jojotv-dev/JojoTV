@@ -9,10 +9,15 @@ object HeroBackdropState {
     @Volatile
     var lastDisplayedUrl: String? = null
 
-    fun update(url: String?) {
+    @Volatile
+    var lastDisplayedIdentityKey: String? = null
+        private set
+
+    fun update(url: String?, identityKey: String? = null) {
         currentHeroBackdropUrl = url
         if (!url.isNullOrBlank()) {
             lastDisplayedUrl = url
+            lastDisplayedIdentityKey = identityKey
         }
     }
 

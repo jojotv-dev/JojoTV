@@ -265,7 +265,7 @@ class CalendarRepository @Inject constructor(
             add(Candidate(e.id, type, e.name, e.poster, e.background, e.imdbId ?: e.id.takeIf { it.startsWith("tt") },
                 e.tmdbId ?: tmdbOf(e.id), e.addonBaseUrl, mutableSetOf(CalendarReason.LIBRARY), yearOf(e.releaseInfo)))
         }
-        // Every show in your watch history, however long ago (synced from Trakt or Simkl too):
+        // Every show in your watch history, however long ago (including Trakt history):
         // the ones between seasons are the ones you most want to hear about. Shows you've
         // dropped are left out; ended shows simply have nothing coming.
         val prog: List<WatchProgress> = withTimeoutOrNull(20_000) { progress.allProgress.first() }.orEmpty()

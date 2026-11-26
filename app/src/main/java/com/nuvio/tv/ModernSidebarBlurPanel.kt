@@ -107,20 +107,15 @@ internal fun ModernSidebarBlurPanel(
         Modifier
     }
     val colors = NuvioTheme.colors
+    val bgBackground = colors.Background
     val bgElevated = colors.BackgroundElevated
-    val bgCard = colors.BackgroundCard
     val borderBase = colors.Border
     val isAmoledBlack = bgElevated == Color.Black
-    val panelBackgroundBrush = remember(blurEnabled, isAmoledBlack, bgElevated, bgCard) {
-        val baseColor = if (isAmoledBlack) Color.Black else Color(0xFF161618)
-        val alpha = when {
-            blurEnabled -> 0.65f
-            isAmoledBlack -> 1f
-            else -> 0.97f
-        }
+    val panelBackgroundBrush = remember(bgBackground) {
+        val baseColor = bgBackground
         Brush.verticalGradient(listOf(
-            baseColor.copy(alpha = alpha),
-            baseColor.copy(alpha = alpha)
+            baseColor,
+            baseColor
         ))
     }
     val panelBorderColor = remember(isAmoledBlack, blurEnabled, borderBase) {

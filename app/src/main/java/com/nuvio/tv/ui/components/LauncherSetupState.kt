@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.nuvio.tv.core.launcher.LauncherAccessibilityService
+import com.nuvio.tv.core.launcher.FireOsHomeButtonService
 import com.nuvio.tv.core.launcher.LauncherSetup
 import com.nuvio.tv.core.launcher.LauncherCapabilities
 import com.nuvio.tv.core.launcher.HomeMechanism
@@ -38,6 +39,7 @@ internal fun rememberLauncherSetupState(): LauncherSetupState {
     val lifecycleOwner = LocalLifecycleOwner.current
     var capabilities by remember { mutableStateOf(LauncherCapabilities.detect(context)) }
     val serviceOperational by LauncherAccessibilityService.isOperational.collectAsState()
+    val fireOsServiceOperational by FireOsHomeButtonService.isOperational.collectAsState()
     val isDefaultHome = capabilities.isDefaultHome
     val isAccessibilityEnabled = capabilities.accessibilityEnabled
     var showFallback by rememberSaveable { mutableStateOf(false) }
@@ -58,7 +60,7 @@ internal fun rememberLauncherSetupState(): LauncherSetupState {
         showFallback = capabilities.mechanism == HomeMechanism.UNAVAILABLE
     }
 
-    LaunchedEffect(serviceOperational) { refresh() }
+    LaunchedEffect(serviceOperational, fireOsServiceOperational) { refresh() }
 
     DisposableEffect(lifecycleOwner, context) {
         refresh()

@@ -10,11 +10,7 @@ import com.nuvio.tv.core.tracking.availableLibrarySourceModes
 import com.nuvio.tv.core.tracking.availableWatchProgressSources
 import com.nuvio.tv.core.tracking.effectiveTrackingSourceSelection
 import com.nuvio.tv.data.local.TraktAuthDataStore
-import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressSource
-import com.nuvio.tv.data.simkl.SimklAnimeIdPreference
-import com.nuvio.tv.data.simkl.SimklAuthRepository
-import com.nuvio.tv.data.simkl.SimklSyncRepository
 import com.nuvio.tv.data.mdblist.MdbListAuthStore
 import com.nuvio.tv.domain.model.LibrarySourceMode
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -30,7 +26,6 @@ data class TrackingSettingsUiState(
     val watchProgressSource: WatchProgressSource = WatchProgressSource.NUVIO_SYNC,
     val librarySourceMode: LibrarySourceMode = LibrarySourceMode.LOCAL,
     val connectedProviderIds: Set<TrackingProviderId> = emptySet(),
-    val simklAnimeIdPreference: SimklAnimeIdPreference = SimklAnimeIdPreference.DEFAULT,
     val isReady: Boolean = false
 ) {
     val availableWatchProgressSources: List<WatchProgressSource>
@@ -43,10 +38,7 @@ data class TrackingSettingsUiState(
 @HiltViewModel
 class TrackingSettingsViewModel @Inject constructor(
     private val sourceController: TrackingSourceController,
-    private val settingsDataStore: TraktSettingsDataStore,
-    private val simklSyncRepository: SimklSyncRepository,
     traktAuthDataStore: TraktAuthDataStore,
-    simklAuthRepository: SimklAuthRepository,
     mdbListAuth: MdbListAuthStore,
     profiles: ProfileManager
 ) : ViewModel() {
@@ -55,19 +47,17 @@ class TrackingSettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val connected = combine(traktAuthDataStore.state, simklAuthRepository.state, mdbListAuth.state, profiles.activeProfileId) { trakt, simkl, mdblist, profileId ->
+            val connected = combine(traktAuthDataStore.state, mdbListAuth.state, profiles.activeProfileId) { trakt, mdblist, profileId ->
                 if (mdblist.scope.profileId != profileId) null else buildSet<TrackingProviderId> {
                     if (trakt.isAuthenticated) add(TrackingProviderId.TRAKT)
-                    if (simkl.isAuthenticated) add(TrackingProviderId.SIMKL)
                     if (mdblist.isAuthenticated) add(TrackingProviderId.MDBLIST)
                 }
             }
             combine(
                 sourceController.watchProgressSource,
                 sourceController.librarySourceMode,
-                connected,
-                settingsDataStore.simklAnimeIdPreference
-            ) { watchProgressSource, librarySourceMode, connectedProviderIds, animeIdPref ->
+                connected
+            ) { watchProgressSource, librarySourceMode, connectedProviderIds ->
                 if (connectedProviderIds == null) return@combine TrackingSettingsUiState()
                 val effective = effectiveTrackingSourceSelection(
                     requested = TrackingSourceSelection(watchProgressSource, librarySourceMode),
@@ -77,7 +67,6 @@ class TrackingSettingsViewModel @Inject constructor(
                     watchProgressSource = effective.watchProgressSource,
                     librarySourceMode = effective.librarySourceMode,
                     connectedProviderIds = connectedProviderIds,
-                    simklAnimeIdPreference = animeIdPref,
                     isReady = true
                 )
             }.collect { state ->
@@ -98,13 +87,6 @@ class TrackingSettingsViewModel @Inject constructor(
     fun selectLibrarySourceMode(mode: LibrarySourceMode) {
         viewModelScope.launch {
             sourceController.selectLibrarySourceMode(mode)
-        }
-    }
-
-    fun selectSimklAnimeIdPreference(preference: SimklAnimeIdPreference) {
-        viewModelScope.launch {
-            settingsDataStore.setSimklAnimeIdPreference(preference)
-            simklSyncRepository.invalidateProjections(preference)
         }
     }
 }

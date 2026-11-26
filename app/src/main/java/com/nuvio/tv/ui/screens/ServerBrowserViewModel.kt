@@ -16,11 +16,14 @@ import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.core.tmdb.TmdbArtworkCandidate
+import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.freebox.FreeboxRepository
 import com.nuvio.tv.data.freebox.clearReplacedFreeboxProgress
 import com.nuvio.tv.data.freebox.freeboxContentIdFor
 import com.nuvio.tv.data.local.ServerBrowserShortcut
 import com.nuvio.tv.data.local.ServerBrowserShortcutStore
+import com.nuvio.tv.data.local.TmdbSettingsDataStore
 import com.nuvio.tv.core.shizuku.SHIZUKU_STORAGE_PATH_PREFIX
 import com.nuvio.tv.core.shizuku.ShizukuStorageBrowser
 import com.nuvio.tv.data.mediaserver.ServerBrowseEntry
@@ -38,6 +41,7 @@ import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -45,8 +49,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -64,6 +76,12 @@ data class ServerBrowserEntry(
     val fileType: ServerBrowserFileType
         get() = ServerBrowserFileType.from(name, mimeType, isDirectory, isPlayable)
 }
+
+data class ServerBrowserBatchActionResult(
+    val requestedCount: Int,
+    val completedCount: Int,
+    val failures: List<String>,
+)
 
 enum class ServerBrowserFileType(val label: String) {
     DIRECTORY("Dossier"), VIDEO("Vidéo"), IMAGE("Image"), PDF("PDF"), TEXT("Texte"),
@@ -111,6 +129,7 @@ data class ServerBrowserState(
     val hasClipboard: Boolean = false,
     val clipboardIsCut: Boolean = false,
     val artworkRevision: Int = 0,
+    val folderCountRevision: Int = 0,
 )
 
 data class ServerBrowserApkDownloadProgress(
@@ -118,11 +137,49 @@ data class ServerBrowserApkDownloadProgress(
     val percent: Int,
 )
 
+data class ServerBrowserFolderCountKey(
+    val sourceId: String,
+    val path: String,
+    val showHiddenFiles: Boolean,
+)
+
+sealed interface ServerBrowserFolderCounts {
+    data object Loading : ServerBrowserFolderCounts
+    data class Ready(val folders: Int, val files: Int) : ServerBrowserFolderCounts
+    data object Unavailable : ServerBrowserFolderCounts
+}
+
+private val SERVER_BROWSER_SEASON_FOLDER = Regex(
+    """^(?:season|saison|s)[\s._-]*0*\d+(?:$|[\s._-].*)$""",
+    RegexOption.IGNORE_CASE,
+)
+private val SERVER_BROWSER_NUMBERED_EPISODE = Regex(
+    """^(?:(?:episode|épisode|ep)[\s._-]*)?\d{1,4}$""",
+    RegexOption.IGNORE_CASE,
+)
+private val SERVER_BROWSER_EPISODE_MARKER = Regex(
+    """(?:^|[ ._-])(?:s\d{1,2}[ ._-]*e\d{1,3}|\d{1,2}x\d{1,3})(?:$|[ ._-])""",
+    RegexOption.IGNORE_CASE,
+)
+private val SERVER_BROWSER_EPISODE_SUFFIX = Regex(
+    """[ ._-]*(?:s\d{1,2}[ ._-]*e\d{1,3}|\d{1,2}x\d{1,3}).*$""",
+    RegexOption.IGNORE_CASE,
+)
+private val SERVER_BROWSER_YEAR = Regex("\\b(?:19|20)\\d{2}\\b")
+private val SERVER_BROWSER_RELEASE_SUFFIX = Regex(
+    """\s+\b(?:2160p|1080p|720p|480p|4k|8k|web[ .-]?dl|webrip|blu[ .-]?ray|bluray|hdtv|x264|x265|h264|h265|hevc|hdr|dovi|aac|dts)\b.*$""",
+    RegexOption.IGNORE_CASE,
+)
+private val SERVER_BROWSER_YEAR_SUFFIX = Regex("""(?:\s*\(\s*|\s+)(?:19|20)\d{2}(?:\s*\))?\s*$""")
+
 @HiltViewModel
 class ServerBrowserViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val serverRepository: ServerRepository,
+    private val serverPlayback: com.nuvio.tv.data.mediaserver.ServerPlayback,
     private val freeboxRepository: FreeboxRepository,
+    private val tmdbService: TmdbService,
+    private val tmdbSettingsDataStore: TmdbSettingsDataStore,
     private val watchProgressRepository: WatchProgressRepository,
     private val shortcutStore: ServerBrowserShortcutStore,
 ) : ViewModel() {
@@ -143,6 +200,18 @@ class ServerBrowserViewModel @Inject constructor(
     val freebox = freeboxRepository.state
     private var loadJob: Job? = null
     private val thumbnailSemaphore = Semaphore(3)
+    private val heicThumbnailSemaphore = Semaphore(1)
+    private val thumbnailCacheTrimLock = Any()
+    private val lastThumbnailCacheTrimAtMs = mutableMapOf<String, Long>()
+    private val videoDurationSemaphore = Semaphore(1)
+    private val freeboxFolderArtworkSemaphore = Semaphore(2)
+    private val videoDurationCache = ConcurrentHashMap<String, Long>()
+    private val folderCountSemaphore = Semaphore(2)
+    private val folderCountJobs = ConcurrentHashMap<ServerBrowserFolderCountKey, Job>()
+    private val mutableFolderCounts =
+        MutableStateFlow<Map<ServerBrowserFolderCountKey, ServerBrowserFolderCounts>>(emptyMap())
+    val folderCounts: StateFlow<Map<ServerBrowserFolderCountKey, ServerBrowserFolderCounts>> =
+        mutableFolderCounts.asStateFlow()
 
     init {
         serverRepository.ensureLoaded()
@@ -193,11 +262,340 @@ class ServerBrowserViewModel @Inject constructor(
     fun customArtworkUri(sourceId: String, entry: ServerBrowserEntry): Uri? =
         preferences.getString(customArtworkKey(sourceId, entry.path), null)?.let(Uri::parse)
 
-    fun saveCustomArtwork(sourceId: String, entry: ServerBrowserEntry, uri: Uri) {
-        preferences.edit().putString(customArtworkKey(sourceId, entry.path), uri.toString()).apply()
+    fun observeHomeVideoArtwork(
+        sourceId: String,
+        entry: ServerBrowserEntry,
+        includeFolderArtwork: Boolean = false,
+    ): Flow<String?> {
+        if (sourceId != FREEBOX_SOURCE) {
+            return flowOf(null)
+        }
+
+        if (entry.fileType == ServerBrowserFileType.VIDEO) {
+            return observeHomeVideoArtworkForPath(entry.path)
+        }
+
+        if (!entry.isDirectory || !includeFolderArtwork) return flowOf(null)
+        return observeHomeFolderArtwork(entry.path)
+    }
+
+    private fun observeHomeVideoArtworkForPath(path: String): Flow<String?> = combine(
+        freeboxRepository.observeHomeVideoPresentationForPath(path),
+        freeboxRepository.state,
+    ) { presentation, _ ->
+        freeboxRepository.folderArtwork(path)?.landscape?.takeIf(String::isNotBlank)
+            ?: presentation?.background?.takeIf(String::isNotBlank)
+            ?: presentation?.poster?.takeIf(String::isNotBlank)
+    }
+
+    private fun observeHomeFolderArtwork(folderPath: String): Flow<String?> = flow {
+        emit(
+            freeboxRepository.folderArtwork(
+                folderPath,
+                preferPathScopedVideoArtwork = true,
+            )?.landscape?.takeIf(String::isNotBlank),
+        )
+        val representativeVideo = try {
+            findFirstVideoInFolder(folderPath)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+
+        if (representativeVideo == null) {
+            emitAll(
+                freeboxRepository.state.map {
+                    freeboxRepository.folderArtwork(
+                        folderPath,
+                        preferPathScopedVideoArtwork = true,
+                    )?.landscape?.takeIf(String::isNotBlank)
+                },
+            )
+            return@flow
+        }
+
+        emitAll(
+            combine(
+                freeboxRepository.observeHomeVideoPresentationForPath(representativeVideo.path),
+                freeboxRepository.state,
+            ) { presentation, _ ->
+                freeboxRepository.folderArtwork(
+                    folderPath,
+                    preferPathScopedVideoArtwork = true,
+                )?.landscape?.takeIf(String::isNotBlank)
+                    ?: freeboxRepository.folderArtwork(representativeVideo.path)
+                        ?.landscape?.takeIf(String::isNotBlank)
+                    ?: presentation?.background?.takeIf(String::isNotBlank)
+                    ?: presentation?.poster?.takeIf(String::isNotBlank)
+            },
+        )
+    }
+
+    private suspend fun findFirstVideoInFolder(folderPath: String, depth: Int = 0): ServerBrowserEntry? {
+        if (depth > 8) return null
+        val children = freeboxFolderArtworkSemaphore.withPermit {
+            remoteEntries(FREEBOX_SOURCE, folderPath)
+        }.filterNot { it.name == "." || it.name == ".." }
+        children.asSequence()
+            .filter { !it.isDirectory && it.fileType == ServerBrowserFileType.VIDEO }
+            .sortedWith(Comparator(::compareEpisodeEntries))
+            .firstOrNull()
+            ?.let { return it }
+
+        for (directory in children.asSequence()
+            .filter(ServerBrowserEntry::isDirectory)
+            .sortedWith(Comparator(::compareEpisodeEntries))) {
+            findFirstVideoInFolder(directory.path, depth + 1)?.let { return it }
+        }
+        return null
+    }
+
+    private fun compareEpisodeEntries(left: ServerBrowserEntry, right: ServerBrowserEntry): Int {
+        var order = videoEpisodeOrder(left.name).compareTo(videoEpisodeOrder(right.name))
+        if (order != 0) return order
+
+        val a = left.name.substringBeforeLast('.').lowercase()
+        val b = right.name.substringBeforeLast('.').lowercase()
+        var i = 0
+        var j = 0
+        while (i < a.length && j < b.length) {
+            if (a[i].isDigit() && b[j].isDigit()) {
+                var endA = i
+                var endB = j
+                while (endA < a.length && a[endA].isDigit()) endA++
+                while (endB < b.length && b[endB].isDigit()) endB++
+                val numberA = a.substring(i, endA).trimStart('0').ifEmpty { "0" }
+                val numberB = b.substring(j, endB).trimStart('0').ifEmpty { "0" }
+                order = numberA.length.compareTo(numberB.length)
+                if (order == 0) order = numberA.compareTo(numberB)
+                if (order != 0) return order
+                i = endA
+                j = endB
+            } else {
+                order = a[i].compareTo(b[j])
+                if (order != 0) return order
+                i++
+                j++
+            }
+        }
+        order = (a.length - i).compareTo(b.length - j)
+        return if (order != 0) order else left.path.compareTo(right.path)
+    }
+
+    private fun videoEpisodeOrder(name: String): Long {
+        val value = name.substringBeforeLast('.').lowercase()
+        val seasonEpisode = Regex("(?:^|[^a-z0-9])s(\\d{1,3})[ ._-]*e(\\d{1,4})(?!\\d)")
+            .find(value)
+        if (seasonEpisode != null) {
+            val season = seasonEpisode.groupValues[1].toLongOrNull() ?: 0L
+            val episode = seasonEpisode.groupValues[2].toLongOrNull() ?: 0L
+            return season * 100_000L + episode
+        }
+        val multiEpisode = Regex("(?:^|[^a-z0-9])(\\d{1,3})x(\\d{1,4})(?!\\d)").find(value)
+        if (multiEpisode != null) {
+            val season = multiEpisode.groupValues[1].toLongOrNull() ?: 0L
+            val episode = multiEpisode.groupValues[2].toLongOrNull() ?: 0L
+            return season * 100_000L + episode
+        }
+        val episode = Regex("(?:^|[^a-z0-9])(?:episode|épisode|ep|e)[ ._-]*(\\d{1,4})(?!\\d)")
+            .find(value)?.groupValues?.get(1)?.toLongOrNull()
+        return episode?.let { 100_000L + it } ?: Long.MAX_VALUE
+    }
+
+    suspend fun videoDurationMs(sourceId: String, entry: ServerBrowserEntry): Long? {
+        if (entry.fileType != ServerBrowserFileType.VIDEO) return null
+        val cacheKey = "$sourceId:${entry.path}:${entry.sizeBytes}:${entry.lastModifiedMs}"
+        videoDurationCache[cacheKey]?.let { return it.takeIf { duration -> duration > 0L } }
+        return videoDurationSemaphore.withPermit {
+            videoDurationCache[cacheKey]?.let { return@withPermit it.takeIf { duration -> duration > 0L } }
+            val duration = try {
+                when (sourceId) {
+                    FREEBOX_SOURCE -> freeboxRepository.videoMetadata(
+                        entry.path,
+                        entry.sizeBytes.takeIf { it > 0L },
+                    )?.durationMinutes?.times(60_000L)
+                    LOCAL_SOURCE -> withContext(Dispatchers.IO) { readLocalVideoDurationMs(entry) }
+                    else -> readServerVideoDurationMs(sourceId, entry)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w("ServerBrowserViewModel", "Impossible de lire la durée de ${entry.name}", error)
+                null
+            }
+            videoDurationCache[cacheKey] = duration?.takeIf { it > 0L } ?: -1L
+            if (videoDurationCache.size > 160) {
+                videoDurationCache.keys.firstOrNull { it != cacheKey }?.let(videoDurationCache::remove)
+            }
+            duration?.takeIf { it > 0L }
+        }
+    }
+
+    private fun readLocalVideoDurationMs(entry: ServerBrowserEntry): Long? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            val uri = entry.uri?.let(Uri::parse)
+            when {
+                uri != null -> retriever.setDataSource(context, uri)
+                File(entry.path).isFile -> retriever.setDataSource(entry.path)
+                else -> return null
+            }
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.takeIf { it > 0L }
+        } catch (_: Exception) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    private suspend fun readServerVideoDurationMs(sourceId: String, entry: ServerBrowserEntry): Long? {
+        if (entry.sizeBytes <= 0L) return null
+        val playback = serverPlayback.prepare(
+            com.nuvio.tv.data.mediaserver.ServerPlaybackTarget(
+                item = com.nuvio.tv.data.mediaserver.ServerItemRef(sourceId, "file:${entry.path}"),
+                mediaSourceId = null,
+            ),
+        )
+        return try {
+            withContext(Dispatchers.IO) { readDurationFromRangeUrl(playback.url, entry.sizeBytes) }
+        } finally {
+            serverPlayback.stop(playback.url)
+        }
+    }
+
+    private fun readDurationFromRangeUrl(url: String, fileSize: Long): Long? {
+        val dataSource = object : android.media.MediaDataSource() {
+            override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+                if (position < 0L || position >= fileSize) return -1
+                if (size <= 0) return 0
+                val requested = minOf(size.toLong(), fileSize - position).toInt()
+                val connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 5_000
+                    readTimeout = 8_000
+                    setRequestProperty("Range", "bytes=$position-${position + requested - 1L}")
+                }
+                return try {
+                    val responseCode = connection.responseCode
+                    if (responseCode != 206 && !(responseCode == 200 && position == 0L)) {
+                        throw java.io.IOException("Le serveur SMB n’a pas respecté la lecture par plage.")
+                    }
+                    connection.inputStream.use { input ->
+                        var totalRead = 0
+                        while (totalRead < requested) {
+                            val count = input.read(buffer, offset + totalRead, requested - totalRead)
+                            if (count < 0) break
+                            totalRead += count
+                        }
+                        if (totalRead > 0) totalRead else -1
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            }
+
+            override fun getSize(): Long = fileSize
+
+            override fun close() = Unit
+        }
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(dataSource)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.takeIf { it > 0L }
+        } catch (_: Exception) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+            runCatching { dataSource.close() }
+        }
+    }
+
+    suspend fun artworkCandidates(
+        entry: ServerBrowserEntry,
+        portrait: Boolean,
+    ): List<TmdbArtworkCandidate> {
+        val pathParts = entry.path.replace('\\', '/').split('/').filter(String::isNotBlank)
+        val parentTitle = pathParts.dropLast(1).lastOrNull().orEmpty()
+        val itemTitle = if (entry.isDirectory) entry.name else entry.name.substringBeforeLast('.', entry.name)
+        val normalizedItemTitle = itemTitle.replace(Regex("[._]+"), " ").trim()
+        val parentIsSeason = SERVER_BROWSER_SEASON_FOLDER.matches(parentTitle)
+        val itemIsSeason = entry.isDirectory && SERVER_BROWSER_SEASON_FOLDER.matches(itemTitle)
+        val isNumberedEpisode = SERVER_BROWSER_NUMBERED_EPISODE.matches(normalizedItemTitle)
+        val hasEpisodeMarker = SERVER_BROWSER_EPISODE_MARKER.containsMatchIn(normalizedItemTitle)
+        val fileSeriesTitle = normalizedItemTitle.replace(SERVER_BROWSER_EPISODE_SUFFIX, "").trim()
+        val searchTitle = when {
+            itemIsSeason -> parentTitle
+            (isNumberedEpisode || hasEpisodeMarker) && parentIsSeason -> pathParts.dropLast(2).lastOrNull().orEmpty()
+            hasEpisodeMarker && fileSeriesTitle.isNotBlank() -> fileSeriesTitle
+            (isNumberedEpisode || hasEpisodeMarker) -> parentTitle.ifBlank { normalizedItemTitle }
+            else -> normalizedItemTitle
+        }
+        val year = SERVER_BROWSER_YEAR.find(searchTitle)?.value?.toIntOrNull()
+        val cleanTitle = searchTitle
+            .replace(SERVER_BROWSER_RELEASE_SUFFIX, "")
+            .replace(SERVER_BROWSER_YEAR_SUFFIX, "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (cleanTitle.isBlank()) return emptyList()
+
+        val mediaTypes = when {
+            itemIsSeason || isNumberedEpisode || hasEpisodeMarker || parentIsSeason -> listOf("tv")
+            entry.isDirectory -> listOf("tv", "movie")
+            else -> listOf("movie", "tv")
+        }
+        val language = tmdbSettingsDataStore.settings.first().language
+        val perTypeLimit = if (mediaTypes.size > 1) 10 else 20
+        val candidates = mutableListOf<TmdbArtworkCandidate>()
+        for (mediaType in mediaTypes) {
+            candidates += tmdbService.artworkCandidatesForExactTitleWithMatches(
+                title = cleanTitle,
+                mediaType = mediaType,
+                portrait = portrait,
+                language = language,
+                year = year,
+            ).take(perTypeLimit)
+        }
+        return candidates.distinctBy { "${it.match.contentType}:${it.match.tmdbId}:${it.imageUrl}" }.take(20)
+    }
+
+    suspend fun saveCustomArtwork(
+        sourceId: String,
+        entry: ServerBrowserEntry,
+        portrait: Boolean,
+        imageUrl: String?,
+        candidate: TmdbArtworkCandidate?,
+    ) {
+        val selectedMatch = candidate?.takeIf { it.imageUrl == imageUrl }?.match
+        require(imageUrl.isNullOrBlank() || selectedMatch != null) {
+            "La vignette choisie n’est pas associée à une fiche TMDB."
+        }
+        if (sourceId == FREEBOX_SOURCE) {
+            val isInSeasonFolder = entry.path.replace('\\', '/').split('/').any {
+                SERVER_BROWSER_SEASON_FOLDER.matches(it)
+            }
+            freeboxRepository.setFolderArtwork(
+                relativePath = entry.path,
+                portrait = portrait,
+                imageUrl = imageUrl,
+                tmdbId = selectedMatch?.tmdbId,
+                tmdbContentType = selectedMatch?.contentType?.toApiString(),
+                matchVideosByName = !isInSeasonFolder,
+            )
+        }
+
+        val artworkKey = customArtworkKey(sourceId, entry.path)
+        if (imageUrl.isNullOrBlank()) {
+            preferences.edit().remove(artworkKey).apply()
+        } else {
+            preferences.edit().putString(artworkKey, imageUrl).apply()
+        }
         mutableState.value = mutableState.value.copy(artworkRevision = mutableState.value.artworkRevision + 1)
         shortcutStore.shortcuts.value.firstOrNull { it.sourceId == sourceId && it.path == entry.path }?.let { shortcut ->
-            shortcutStore.add(shortcut.copy(thumbnailUri = uri.toString()))
+            shortcutStore.add(shortcut.copy(thumbnailUri = imageUrl))
         }
     }
 
@@ -215,15 +613,16 @@ class ServerBrowserViewModel @Inject constructor(
     }
 
     fun copyToClipboard(sourceId: String, entries: List<ServerBrowserEntry>, cut: Boolean) {
-        require(entries.isNotEmpty()) { "Sélectionnez au moins un élément." }
-        require(entries.all { supportsCopyActions(sourceId, it.path) }) {
+        val targets = entries.distinctBy(ServerBrowserEntry::path)
+        require(targets.isNotEmpty()) { "Sélectionnez au moins un élément." }
+        require(targets.all { supportsCopyActions(sourceId, it.path) }) {
             "La lecture n’est pas disponible pour cet emplacement local. Vérifiez les autorisations de stockage."
         }
-        require(!cut || entries.all { supportsWriteActions(sourceId, it.path) }) {
+        require(!cut || targets.all { supportsWriteActions(sourceId, it.path) }) {
             "L’écriture n’est pas disponible pour cet emplacement local. Vérifiez les autorisations de stockage."
         }
         val array = JSONArray()
-        entries.forEach { entry ->
+        targets.forEach { entry ->
             array.put(
                 JSONObject()
                     .put("sourceId", sourceId)
@@ -240,7 +639,10 @@ class ServerBrowserViewModel @Inject constructor(
         mutableState.value = mutableState.value.copy(hasClipboard = true, clipboardIsCut = cut)
     }
 
-    suspend fun pasteClipboard(destinationSourceId: String, destinationPath: String) {
+    suspend fun pasteClipboard(
+        destinationSourceId: String,
+        destinationPath: String,
+    ): ServerBrowserBatchActionResult {
         require(supportsWriteActions(destinationSourceId, destinationPath)) {
             "Cet emplacement ne permet pas l’écriture. Vérifiez les autorisations de stockage."
         }
@@ -250,58 +652,109 @@ class ServerBrowserViewModel @Inject constructor(
         val remainingClipboard = clipboard.toMutableList()
         val destinationEntries = remoteEntries(destinationSourceId, destinationPath)
         val existingNames = destinationEntries.map { it.name.lowercase() }.toMutableSet()
+        val failures = mutableListOf<String>()
+        var completedCount = 0
 
         for (source in clipboard) {
-            val sourceParent = parentBrowserPath(source.sourceId, source.path)
-            if (cut && source.sourceId == destinationSourceId &&
-                sameBrowserPath(source.sourceId, sourceParent, destinationPath)
-            ) {
-                remainingClipboard.remove(source)
-                persistClipboard(remainingClipboard)
-                continue
-            }
-            val destinationEntryPath = joinBrowserPath(destinationSourceId, destinationPath, source.name)
-            require(source.name.lowercase() !in existingNames) {
-                "Un élément nommé « ${source.name} » existe déjà dans ce dossier."
-            }
-            if (source.isDirectory && source.sourceId == destinationSourceId) {
-                require(!sameBrowserPath(source.sourceId, destinationPath, source.path) &&
-                    !isBrowserPathDescendant(source.sourceId, destinationPath, source.path)
+            var transferTargetPath: String? = null
+            var transferStarted = false
+            var transferCompleted = false
+            try {
+                val sourceParent = parentBrowserPath(source.sourceId, source.path)
+                if (cut && source.sourceId == destinationSourceId &&
+                    sameBrowserPath(source.sourceId, sourceParent, destinationPath)
                 ) {
-                    "Impossible de copier un dossier dans lui-même."
+                    remainingClipboard.remove(source)
+                    persistClipboard(remainingClipboard)
+                    completedCount++
+                    continue
                 }
-            }
-            val createdPath = transferEntry(source, destinationSourceId, destinationEntryPath)
-            existingNames += source.name.lowercase()
-            if (cut) {
-                try {
-                    deleteRemoteEntry(source.sourceId, source.path, source.isDirectory)
-                } catch (error: Exception) {
-                    runCatching { deleteRemoteEntry(destinationSourceId, createdPath, source.isDirectory) }
-                    throw error
+                val destinationEntryPath = joinBrowserPath(destinationSourceId, destinationPath, source.name)
+                transferTargetPath = destinationEntryPath
+                require(source.name.lowercase() !in existingNames) {
+                    "Un élément nommé « ${source.name} » existe déjà dans ce dossier."
                 }
-                if (source.sourceId == destinationSourceId) {
-                    shortcutStore.renameTree(source.sourceId, source.path, createdPath, source.name)
-                } else {
-                    val movedShortcuts = shortcutStore.shortcuts.value.filter {
-                        it.sourceId == source.sourceId &&
-                            (it.path == source.path || it.path.startsWith("${source.path.trimEnd('/')}/"))
-                    }
-                    shortcutStore.removeTree(source.sourceId, source.path)
-                    movedShortcuts.forEach { shortcut ->
-                        val newPath = createdPath + shortcut.path.removePrefix(source.path.trimEnd('/'))
-                        shortcutStore.add(shortcut.copy(sourceId = destinationSourceId, path = newPath))
+                if (source.isDirectory && source.sourceId == destinationSourceId) {
+                    require(!sameBrowserPath(source.sourceId, destinationPath, source.path) &&
+                        !isBrowserPathDescendant(source.sourceId, destinationPath, source.path)
+                    ) {
+                        "Impossible de copier un dossier dans lui-même."
                     }
                 }
-                remainingClipboard.remove(source)
-                persistClipboard(remainingClipboard)
+                transferStarted = true
+                val createdPath = transferEntry(source, destinationSourceId, destinationEntryPath)
+                transferCompleted = true
+                if (cut) {
+                    try {
+                        deleteRemoteEntry(source.sourceId, source.path, source.isDirectory)
+                    } catch (error: Exception) {
+                        runCatching { deleteRemoteEntry(destinationSourceId, createdPath, source.isDirectory) }
+                        throw error
+                    }
+                    if (source.sourceId == destinationSourceId) {
+                        shortcutStore.renameTree(source.sourceId, source.path, createdPath, source.name)
+                    } else {
+                        val movedShortcuts = shortcutStore.shortcuts.value.filter {
+                            it.sourceId == source.sourceId &&
+                                (it.path == source.path || it.path.startsWith("${source.path.trimEnd('/')}/"))
+                        }
+                        shortcutStore.removeTree(source.sourceId, source.path)
+                        movedShortcuts.forEach { shortcut ->
+                            val newPath = createdPath + shortcut.path.removePrefix(source.path.trimEnd('/'))
+                            shortcutStore.add(shortcut.copy(sourceId = destinationSourceId, path = newPath))
+                        }
+                    }
+                    remainingClipboard.remove(source)
+                    persistClipboard(remainingClipboard)
+                }
+                existingNames += source.name.lowercase()
+                completedCount++
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (transferStarted && !transferCompleted) {
+                    transferTargetPath?.let { target ->
+                        runCatching { deleteRemoteEntry(destinationSourceId, target, source.isDirectory) }
+                    }
+                }
+                failures += "${source.name}: ${error.localizedMessage?.takeIf(String::isNotBlank) ?: "échec du transfert"}"
+                if (cut) {
+                    // Leave failed move entries in the clipboard so they can be retried.
+                    persistClipboard(remainingClipboard)
+                }
             }
         }
 
-        if (cut) {
-            preferences.edit().remove(CLIPBOARD_ENTRIES).remove(CLIPBOARD_IS_CUT).apply()
-            mutableState.value = mutableState.value.copy(hasClipboard = false, clipboardIsCut = false)
+        if (cut) persistClipboard(remainingClipboard)
+        return ServerBrowserBatchActionResult(
+            requestedCount = clipboard.size,
+            completedCount = completedCount,
+            failures = failures,
+        )
+    }
+
+    suspend fun deleteEntries(
+        sourceId: String,
+        entries: List<ServerBrowserEntry>,
+    ): ServerBrowserBatchActionResult {
+        val targets = entries.distinctBy(ServerBrowserEntry::path)
+        val failures = mutableListOf<String>()
+        var completedCount = 0
+        targets.forEach { entry ->
+            try {
+                deleteEntry(sourceId, entry)
+                completedCount++
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                failures += "${entry.name}: ${error.localizedMessage?.takeIf(String::isNotBlank) ?: "échec de suppression"}"
+            }
         }
+        return ServerBrowserBatchActionResult(
+            requestedCount = targets.size,
+            completedCount = completedCount,
+            failures = failures,
+        )
     }
 
     suspend fun renameEntry(sourceId: String, entry: ServerBrowserEntry, newName: String) {
@@ -401,7 +854,13 @@ class ServerBrowserViewModel @Inject constructor(
             val sourceId = item.optString("sourceId").takeIf(String::isNotBlank) ?: return@mapNotNull null
             val path = item.optString("path").takeIf(String::isNotBlank) ?: return@mapNotNull null
             val name = item.optString("name").takeIf(String::isNotBlank) ?: return@mapNotNull null
-            ClipboardEntry(sourceId, path, name, item.optBoolean("isDirectory"), item.optBoolean("isPlayable"))
+            ClipboardEntry(
+                sourceId = sourceId,
+                path = path,
+                name = name,
+                isDirectory = item.optBoolean("isDirectory"),
+                isPlayable = item.optBoolean("isPlayable"),
+            )
         }
     }.getOrDefault(emptyList())
 
@@ -450,6 +909,45 @@ class ServerBrowserViewModel @Inject constructor(
         else -> serverRepository.browse(sourceId, path).map { it.toBrowserEntry() }
     }
 
+    fun requestFolderCounts(sourceId: String, path: String, showHiddenFiles: Boolean) {
+        val key = ServerBrowserFolderCountKey(sourceId, path, showHiddenFiles)
+        if (key in mutableFolderCounts.value || folderCountJobs.containsKey(key)) return
+
+        mutableFolderCounts.value = mutableFolderCounts.value + (key to ServerBrowserFolderCounts.Loading)
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val children = folderCountSemaphore.withPermit { remoteEntries(sourceId, path) }
+                    .filter { child ->
+                        child.name != "." && child.name != ".." &&
+                            (showHiddenFiles || !child.name.startsWith('.'))
+                    }
+                mutableFolderCounts.value = mutableFolderCounts.value + (
+                    key to ServerBrowserFolderCounts.Ready(
+                        folders = children.count(ServerBrowserEntry::isDirectory),
+                        files = children.count { !it.isDirectory },
+                    )
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                mutableFolderCounts.value = mutableFolderCounts.value + (key to ServerBrowserFolderCounts.Unavailable)
+            }
+        }
+        folderCountJobs[key] = job
+        job.invokeOnCompletion { folderCountJobs.remove(key, job) }
+        job.start()
+    }
+
+    fun invalidateFolderCounts(sourceId: String) {
+        folderCountJobs.entries
+            .filter { it.key.sourceId == sourceId }
+            .forEach { (key, job) ->
+                folderCountJobs.remove(key, job)
+                job.cancel()
+            }
+        mutableFolderCounts.value = mutableFolderCounts.value.filterKeys { it.sourceId != sourceId }
+    }
+
     private suspend fun transferEntry(
         source: ClipboardEntry,
         destinationSourceId: String,
@@ -460,7 +958,13 @@ class ServerBrowserViewModel @Inject constructor(
             try {
                 remoteEntries(source.sourceId, source.path).forEach { child ->
                     transferEntry(
-                        ClipboardEntry(source.sourceId, child.path, child.name, child.isDirectory, child.isPlayable),
+                        ClipboardEntry(
+                            sourceId = source.sourceId,
+                            path = child.path,
+                            name = child.name,
+                            isDirectory = child.isDirectory,
+                            isPlayable = child.isPlayable,
+                        ),
                         destinationSourceId,
                         joinBrowserPath(destinationSourceId, actualDestinationPath, child.name),
                     )
@@ -474,7 +978,25 @@ class ServerBrowserViewModel @Inject constructor(
             val temporary = File(context.cacheDir, "browser_transfer_${UUID.randomUUID()}.tmp")
             try {
                 downloadRemoteFile(source.sourceId, source.path, temporary)
-                uploadRemoteFile(destinationSourceId, destinationPath, temporary)
+                val expectedSize = temporary.length()
+                try {
+                    uploadRemoteFile(destinationSourceId, destinationPath, temporary)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (uploadError: Exception) {
+                    val uploadedEntry = try {
+                        remoteEntries(destinationSourceId, parentBrowserPath(destinationSourceId, destinationPath))
+                            .firstOrNull { it.name.equals(source.name, ignoreCase = true) }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (uploadedEntry == null || uploadedEntry.isDirectory || uploadedEntry.sizeBytes != expectedSize) {
+                        throw uploadError
+                    }
+                }
+                destinationPath
             } finally {
                 temporary.delete()
             }
@@ -944,6 +1466,20 @@ class ServerBrowserViewModel @Inject constructor(
 
     suspend fun prepareThumbnailUri(sourceId: String, entry: ServerBrowserEntry): Uri? {
         if (entry.fileType != ServerBrowserFileType.IMAGE) return null
+        if (entry.isHeicImage()) {
+            val thumbnailUri = if (sourceId == LOCAL_SOURCE) {
+                heicThumbnailSemaphore.withPermit {
+                    prepareHeicImageUri(sourceId, entry, maxDimension = 384)
+                }
+            } else {
+                thumbnailSemaphore.withPermit {
+                    heicThumbnailSemaphore.withPermit {
+                        prepareHeicImageUri(sourceId, entry, maxDimension = 384)
+                    }
+                }
+            }
+            thumbnailUri?.let { return it }
+        }
         if (sourceId == LOCAL_SOURCE) return entry.uri?.let(Uri::parse)
 
         return thumbnailSemaphore.withPermit {
@@ -994,7 +1530,93 @@ class ServerBrowserViewModel @Inject constructor(
         }
     }
 
+    private suspend fun prepareHeicImageUri(
+        sourceId: String,
+        entry: ServerBrowserEntry,
+        maxDimension: Int,
+    ): Uri? = withContext(Dispatchers.IO) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.P) return@withContext null
+        val directoryName = if (maxDimension <= 512) "server_browser_thumbnails" else "server_browser_files"
+        val directory = File(context.cacheDir, directoryName).apply { mkdirs() }
+        val cacheKey = "${thumbnailCacheKey(sourceId, entry.path, entry.sizeBytes)}_${entry.lastModifiedMs}"
+        val cachedFile = File(directory, "heic_${cacheKey}_${maxDimension}.jpg")
+        if (cachedFile.isFile && cachedFile.length() > 0L) {
+            cachedFile.setLastModified(System.currentTimeMillis())
+            return@withContext FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                cachedFile,
+            )
+        }
+
+        val pendingFile = File(directory, "heic_${cacheKey}_${maxDimension}.part")
+        try {
+            val entryUri = entry.uri?.let(Uri::parse)
+            val source = when {
+                sourceId == LOCAL_SOURCE && entryUri?.scheme == "content" ->
+                    android.graphics.ImageDecoder.createSource(context.contentResolver, entryUri)
+                sourceId == LOCAL_SOURCE && entryUri?.scheme == "file" ->
+                    android.graphics.ImageDecoder.createSource(File(entryUri.path.orEmpty()))
+                sourceId == LOCAL_SOURCE && File(entry.path).isFile ->
+                    android.graphics.ImageDecoder.createSource(File(entry.path))
+                else -> {
+                    pendingFile.delete()
+                    copyEntryToCache(sourceId, entry, pendingFile)
+                    if (!pendingFile.isFile || pendingFile.length() == 0L) return@withContext null
+                    android.graphics.ImageDecoder.createSource(pendingFile)
+                }
+            }
+            val bitmap = android.graphics.ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                val maxSourceDimension = maxOf(info.size.width, info.size.height).coerceAtLeast(1)
+                val scale = minOf(1.0, maxDimension.toDouble() / maxSourceDimension)
+                decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.isMutableRequired = false
+                decoder.setTargetSize(
+                    (info.size.width * scale).toInt().coerceAtLeast(1),
+                    (info.size.height * scale).toInt().coerceAtLeast(1),
+                )
+            }
+            try {
+                val temporaryJpeg = File(directory, "${cachedFile.name}.part")
+                try {
+                    temporaryJpeg.outputStream().use { output ->
+                        check(bitmap.compress(Bitmap.CompressFormat.JPEG, 85, output)) {
+                            "Impossible d’enregistrer l’image HEIC convertie."
+                        }
+                    }
+                    if (!temporaryJpeg.renameTo(cachedFile) && (!cachedFile.isFile || cachedFile.length() == 0L)) {
+                        throw IllegalStateException("Impossible de finaliser l’image HEIC convertie.")
+                    }
+                } finally {
+                    temporaryJpeg.delete()
+                }
+            } finally {
+                bitmap.recycle()
+            }
+            trimThumbnailCache(directory)
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                cachedFile,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.w("ServerBrowserViewModel", "Impossible de convertir l’image HEIC ${entry.name}", error)
+            null
+        } finally {
+            pendingFile.delete()
+        }
+    }
+
+    private fun ServerBrowserEntry.isHeicImage(): Boolean =
+        fileType == ServerBrowserFileType.IMAGE &&
+            name.substringAfterLast('.', "").lowercase() in setOf("heic", "heif")
+
     suspend fun prepareFileUri(sourceId: String, entry: ServerBrowserEntry): Uri {
+        if (entry.isHeicImage()) {
+            prepareHeicImageUri(sourceId, entry, maxDimension = 3_840)?.let { return it }
+        }
         val isShizukuLocalFile = sourceId == LOCAL_SOURCE && entry.path.startsWith(SHIZUKU_STORAGE_PATH_PREFIX)
         val localFileUri = if (sourceId == LOCAL_SOURCE && !isShizukuLocalFile) {
             entry.uri?.let(Uri::parse) ?: error("L’URI de ce fichier local est indisponible.")
@@ -1117,6 +1739,7 @@ class ServerBrowserViewModel @Inject constructor(
     }
 
     fun load(sourceId: String, path: String) {
+        invalidateFolderCounts(sourceId)
         mutableState.value = mutableState.value.copy(
             isLoading = true,
             error = null,
@@ -1146,6 +1769,7 @@ class ServerBrowserViewModel @Inject constructor(
                     localStorageAccessGranted = hasLocalStorageAccess(),
                     showHiddenFiles = showHiddenFiles,
                     isGridView = preferences.getBoolean(viewModePreferenceKey(sourceId, path), DEFAULT_GRID_VIEW),
+                    folderCountRevision = mutableState.value.folderCountRevision + 1,
                 )
             } catch (error: CancellationException) {
                 throw error
@@ -1547,16 +2171,29 @@ class ServerBrowserViewModel @Inject constructor(
         "custom_artwork_${thumbnailCacheKey(sourceId, path, 0L)}"
 
     private fun trimThumbnailCache(directory: File) {
+        val directoryKey = directory.absolutePath
+        val now = System.currentTimeMillis()
+        val shouldTrim = synchronized(thumbnailCacheTrimLock) {
+            val lastTrimAt = lastThumbnailCacheTrimAtMs[directoryKey] ?: 0L
+            if (now - lastTrimAt < THUMBNAIL_CACHE_TRIM_INTERVAL_MS) {
+                false
+            } else {
+                lastThumbnailCacheTrimAtMs[directoryKey] = now
+                true
+            }
+        }
+        if (!shouldTrim) return
+
         val files = directory.listFiles()?.filter { it.isFile && !it.name.endsWith(".part") }.orEmpty()
         val staleBefore = System.currentTimeMillis() - THUMBNAIL_MAX_AGE_MS
-        files.filter { it.lastModified() < staleBefore }.forEach(File::delete)
+        val retainedFiles = files.filter { file ->
+            file.lastModified() >= staleBefore || !file.delete()
+        }
+        var totalBytes = retainedFiles.sumOf(File::length)
+        if (totalBytes <= THUMBNAIL_CACHE_MAX_BYTES) return
 
-        var totalBytes = directory.listFiles()
-            ?.filter { it.isFile && !it.name.endsWith(".part") }
-            ?.sumOf(File::length)
-            ?: 0L
-        files.sortedBy(File::lastModified).forEach { file ->
-            if (totalBytes <= THUMBNAIL_CACHE_MAX_BYTES) return
+        for (file in retainedFiles.sortedBy(File::lastModified)) {
+            if (totalBytes <= THUMBNAIL_CACHE_MAX_BYTES) break
             val size = file.length()
             if (file.delete()) totalBytes -= size
         }
@@ -1574,6 +2211,7 @@ class ServerBrowserViewModel @Inject constructor(
         private const val FILE_CACHE_MAX_AGE_MS = 3L * 24L * 60L * 60L * 1000L
         private const val THUMBNAIL_CACHE_MAX_BYTES = 64L * 1024L * 1024L
         private const val THUMBNAIL_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L
+        private const val THUMBNAIL_CACHE_TRIM_INTERVAL_MS = 30_000L
         private const val FILE_COPY_ATTEMPTS = 2
         private const val FILE_COPY_RETRY_DELAY_MS = 350L
         private val VIDEO_EXTENSIONS = setOf("mkv", "mp4", "avi", "mov", "m4v", "ts", "webm", "mpg", "mpeg", "m2ts")

@@ -223,6 +223,7 @@ private fun LiveTvScreenContent(
     }
     val scope = rememberCoroutineScope()
     var filterKey by rememberSaveable { mutableStateOf(FILTER_FAVORITES) }
+    var confirmedCategoryKey by rememberSaveable { mutableStateOf<String?>(null) }
     var showSourceDialog by remember { mutableStateOf(false) }
     var launching by remember { mutableStateOf(false) }
     // A timeline OK can confirm an inline preview first; OK on the channel-name cell plays immediately.
@@ -544,8 +545,10 @@ private fun LiveTvScreenContent(
                         holdSelection = holdCategory,
                         viewModel = viewModel,
                         selectedKey = filterKey,
+                        confirmedKey = confirmedCategoryKey,
                         selectedFocus = categoryFocus,
                         onSelect = { filterKey = it },
+                        onConfirm = { confirmedCategoryKey = it },
                         // OK on a category shows its channels.
                         onPicked = { toGuide() },
                         onNewList = { naming = true },
@@ -572,10 +575,6 @@ private fun LiveTvScreenContent(
                             },
                     )
                 }
-                Box(
-                    Modifier.fillMaxHeight().width(1.dp)
-                        .background(NuvioTheme.colors.SurfaceVariant)
-                )
                 Column(modifier = Modifier.weight(0.73f).fillMaxHeight()) {
                     LiveTvHeader(
                         guide = guide,
@@ -987,8 +986,10 @@ private fun LiveTvCategoryColumn(
     holdSelection: androidx.compose.runtime.MutableState<Boolean>,
     viewModel: LiveTvScreenModel,
     selectedKey: String,
+    confirmedKey: String?,
     selectedFocus: FocusRequester,
     onSelect: (String) -> Unit,
+    onConfirm: (String) -> Unit,
     onPicked: () -> Unit,
     onNewList: () -> Unit,
     onEditList: (String) -> Unit,
@@ -1116,13 +1117,17 @@ private fun LiveTvCategoryColumn(
                 LiveTvCategoryItem(
                     label = entry.label,
                     selected = false,
+                    confirmed = confirmedKey == entry.key,
                     anchor = index == 0,
                     selectedModifier = selectedModifier,
                     // Consumes the guide's ◀ mark, so a later category focus picks as usual.
                     holdSelection = holdSelection,
                     count = entry.count,
                     icon = if (entry.action) Icons.Filled.Add else null,
-                    onClick = { onChoose(entry.key) },
+                    onClick = {
+                        onConfirm(entry.key)
+                        onChoose(entry.key)
+                    },
                 ) {}
             }
             return@LazyColumn
@@ -1132,6 +1137,7 @@ private fun LiveTvCategoryColumn(
             LiveTvCategoryItem(
                 label = entry.label,
                 selected = selectedKey == entry.key,
+                confirmed = confirmedKey == entry.key,
                 selectedModifier = selectedModifier,
                 holdSelection = holdSelection,
                 count = entry.count,
@@ -1156,10 +1162,14 @@ private fun LiveTvCategoryColumn(
                 onDrop = { movingKey = null },
                 icon = entry.icon ?: if (entry.action) Icons.Filled.Add else null,
                 onClick = if (isMoving) {
-                    { movingKey = null }
+                    {
+                        onConfirm(entry.key)
+                        movingKey = null
+                    }
                 } else {
                     entry.sourceId?.let { id ->
                         {
+                            onConfirm(entry.key)
                             val folding = !entry.folded
                             if (folding && (filterFor(selectedKey) as? LiveTvFilter.SourceGroup)?.id == id) {
                                 // Keep selection on the provider when its selected child rows are hidden.
@@ -1167,8 +1177,14 @@ private fun LiveTvCategoryColumn(
                             }
                             collapsed[id] = folding
                         }
-                    } ?: if (entry.action) onNewList else {
+                    } ?: if (entry.action) {
                         {
+                            onConfirm(entry.key)
+                            onNewList()
+                        }
+                    } else {
+                        {
+                            onConfirm(entry.key)
                             onSelect(entry.key)
                             onPicked()
                         }
@@ -1194,6 +1210,7 @@ private fun LiveTvCategoryColumn(
 private fun LiveTvCategoryItem(
     label: String,
     selected: Boolean,
+    confirmed: Boolean = false,
     selectedModifier: Modifier,
     /** Takes [selectedModifier] without being shown as selected. */
     anchor: Boolean = false,
@@ -1274,25 +1291,25 @@ private fun LiveTvCategoryItem(
             },
         shape = CardDefaults.shape(shape),
         border = CardDefaults.border(
-            border = when {
-                moving -> Border(BorderStroke(2.dp, NuvioTheme.colors.Secondary))
-                selected -> Border(BorderStroke(1.dp, NuvioTheme.colors.Secondary.copy(alpha = 0.72f)))
-                else -> Border.None
+            border = if (confirmed) Border(BorderStroke(2.dp, NuvioTheme.colors.Secondary)) else Border.None,
+            focusedBorder = if (confirmed) {
+                Border(BorderStroke(2.dp, NuvioTheme.colors.Secondary))
+            } else {
+                Border(BorderStroke(2.dp, NuvioTheme.colors.TextPrimary))
             },
-            focusedBorder = Border(BorderStroke(2.dp, NuvioTheme.colors.FocusRing))
         ),
         colors = CardDefaults.colors(
             containerColor = when {
-                moving -> NuvioTheme.colors.Secondary.copy(alpha = 0.25f)
-                selected -> NuvioTheme.colors.FocusBackground
+                confirmed -> NuvioTheme.colors.Secondary
+                selected -> NuvioTheme.colors.SurfaceVariant
                 filterControl -> NuvioTheme.colors.SurfaceVariant
                 else -> Color.Transparent
             },
-            focusedContainerColor = if (moving) NuvioTheme.colors.Secondary else NuvioTheme.colors.FocusBackground,
+            focusedContainerColor = if (confirmed) NuvioTheme.colors.Secondary else NuvioTheme.colors.SurfaceVariant,
         ),
         scale = CardDefaults.scale(focusedScale = if (moving) 1.05f else 1.02f),
     ) {
-        val content = if (focused && moving) NuvioTheme.colors.OnSecondary
+        val content = if (confirmed) NuvioTheme.colors.OnSecondary
             else if (focused || selected || moving) NuvioTheme.colors.TextPrimary
             else NuvioTheme.colors.TextSecondary
         Row(
@@ -1337,7 +1354,7 @@ private fun LiveTvCategoryItem(
                 Text(
                     text = count.toString(),
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (focused) Color.Black.copy(alpha = 0.6f) else NuvioTheme.colors.TextTertiary,
+                    color = if (confirmed) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextTertiary,
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }

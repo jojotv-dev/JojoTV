@@ -46,6 +46,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import com.nuvio.tv.ui.util.dpadVerticalFastScroll
 import com.nuvio.tv.ui.util.asStable
@@ -164,6 +169,7 @@ fun ClassicHomeContent(
     val nestedPrefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 2) }
 
     val scope = rememberCoroutineScope()
+    val activeRowKeyState = remember { mutableStateOf<String?>(null) }
     val columnListState = rememberLazyListState(
         initialFirstVisibleItemIndex = focusState.verticalScrollIndex,
         initialFirstVisibleItemScrollOffset = focusState.verticalScrollOffset,
@@ -181,6 +187,7 @@ fun ClassicHomeContent(
                 size: Float,
                 containerSize: Float
             ): Float {
+                if (activeRowKeyState.value == com.nuvio.tv.core.apps.INSTALLED_APPS_CATALOG_KEY) return 0f
                 val distance = offset - topInsetPx
                 if (kotlin.math.abs(distance) < 1f) return 0f
                 if (distance < 0f && !columnListState.canScrollBackward) return 0f
@@ -233,16 +240,10 @@ fun ClassicHomeContent(
     val lastFocusedCwIndex = rememberSaveable { mutableIntStateOf(-1) }
     val lastFocusedUpcomingIndex = rememberSaveable { mutableIntStateOf(-1) }
 
-    // Improved Back navigation: when focused item is not the first in a row,
-    // scroll the row to the start and focus the first item instead of opening the sidebar.
-    // Disabled when content doesn't have focus (e.g. sidebar is open).
+    // Keep the current Back behavior for the hero. Back from every other row
+    // reaches MainActivity and opens the sidebar at its selected destination.
     val contentHasFocus = remember { mutableStateOf(false) }
     val cwFocusedIndex = remember { mutableIntStateOf(-1) }
-    // Observable version of currentFocusSnapshot.rowKey so BackHandler recomposes
-    // when focus moves between CW/Upcoming and catalog rows.
-    val activeRowKeyState = remember { mutableStateOf<String?>(null) }
-    val cwPendingScrollToStart = remember { mutableIntStateOf(0) }
-    val upcomingPendingScrollToStart = remember { mutableIntStateOf(0) }
 
     fun focusFirstItemWhenLeavingRow(nextRowKey: String) {
         val previousRowKey = activeRowKeyState.value ?: return
@@ -269,25 +270,15 @@ fun ClassicHomeContent(
     }
     BackHandler(enabled = contentHasFocus.value && run {
         val rowKey = activeRowKeyState.value ?: return@run false
-        val isCwRow = rowKey == "continue_watching" || rowKey == "upcoming_section"
-        val itemIndex = if (isCwRow) cwFocusedIndex.intValue else (rowFocusedItemIndex[rowKey] ?: 0)
-        itemIndex > 0
+        rowKey == "hero_carousel" && (rowFocusedItemIndex[rowKey] ?: 0) > 0
     }) {
         val rowKey = activeRowKeyState.value ?: return@BackHandler
-        val isCw = rowKey == "continue_watching"
-        val isUpcoming = rowKey == "upcoming_section"
-        if (isCw || isUpcoming) {
-            cwFocusedIndex.intValue = 0
-            currentFocusSnapshot.itemIndex = 0
-            if (isCw) cwPendingScrollToStart.intValue++ else upcomingPendingScrollToStart.intValue++
-        } else {
-            val listState = rowStates[rowKey]
-            rowFocusedItemIndex[rowKey] = 0
-            currentFocusSnapshot.itemIndex = 0
-            scope.launch {
-                listState?.scrollToItem(0, 0)
-                rowFocusRequesters[rowKey]?.let { runCatching { it.requestFocus() } }
-            }
+        val listState = rowStates[rowKey]
+        rowFocusedItemIndex[rowKey] = 0
+        currentFocusSnapshot.itemIndex = 0
+        scope.launch {
+            listState?.scrollToItem(0, 0)
+            rowFocusRequesters[rowKey]?.let { runCatching { it.requestFocus() } }
         }
     }
 
@@ -625,13 +616,6 @@ fun ClassicHomeContent(
     val continueWatchingRowContent: @Composable () -> Unit = {
         Column(verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg)) {
             if (uiState.continueWatchingEnabled && uiState.continueWatchingItems.isNotEmpty()) {
-                LaunchedEffect(cwPendingScrollToStart.intValue) {
-                    if (cwPendingScrollToStart.intValue > 0) {
-                        cwListState.scrollToItem(0, 0)
-                        cwRowFocusRequester.let { runCatching { it.requestFocus() } }
-                        cwPendingScrollToStart.intValue = 0
-                    }
-                }
                 ContinueWatchingSection(
                     items = remember(uiState.continueWatchingItems, uiState.customPosterUrlPattern, uiState.customPosterEnabledScreens, uiState.continueWatchingHeroArtworkOverrides) {
                         uiState.continueWatchingItems.withCustomPosterUrls(
@@ -699,13 +683,6 @@ fun ClassicHomeContent(
                 )
             }
             if (uiState.continueWatchingEnabled && uiState.upcomingItems.isNotEmpty()) {
-                LaunchedEffect(upcomingPendingScrollToStart.intValue) {
-                    if (upcomingPendingScrollToStart.intValue > 0) {
-                        upcomingListState.scrollToItem(0, 0)
-                        upcomingRowFocusRequester.let { runCatching { it.requestFocus() } }
-                        upcomingPendingScrollToStart.intValue = 0
-                    }
-                }
                 ContinueWatchingSection(
                     items = remember(uiState.upcomingItems, uiState.customPosterUrlPattern, uiState.customPosterEnabledScreens, uiState.continueWatchingHeroArtworkOverrides) {
                         uiState.upcomingItems.withCustomPosterUrls(
@@ -781,6 +758,17 @@ fun ClassicHomeContent(
         state = columnListState,
         modifier = Modifier
             .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown &&
+                    event.key == Key.DirectionDown &&
+                    visibleHomeRows.getOrNull(currentFocusSnapshot.rowIndex + 1) is HomeRow.InstalledApps
+                ) {
+                    // The scroll spec aligns focused rows near the header. Mark the destination
+                    // before focus moves so Applications keeps the current Home framing.
+                    activeRowKeyState.value = com.nuvio.tv.core.apps.INSTALLED_APPS_CATALOG_KEY
+                }
+                false
+            }
             .onFocusChanged {
                 val hadContentFocus = contentHasFocus.value
                 contentHasFocus.value = it.hasFocus
@@ -943,10 +931,15 @@ fun ClassicHomeContent(
 
                     val showsInlineMetadata = catalogRow.type == ContentType.MOVIE ||
                         catalogRow.type == ContentType.SERIES || catalogRow.type == ContentType.TV
-                    val continueWatchingKeys = remember(uiState.continueWatchingItems, uiState.catalogRows) {
+                    val continueWatchingKeys = remember(
+                        uiState.continueWatchingItems,
+                        uiState.upcomingItems,
+                        uiState.catalogRows
+                    ) {
                         continueWatchingMatchKeys(
                             items = uiState.continueWatchingItems,
-                            catalogItems = uiState.catalogRows.flatMap { it.items }
+                            catalogItems = uiState.catalogRows.flatMap { it.items },
+                            upcomingItems = uiState.upcomingItems
                         )
                     }
                     Column {
@@ -1072,6 +1065,7 @@ fun ClassicHomeContent(
                         cyclicTail = true,
                         tileWidth = uiState.installedAppTileWidthDp.dp,
                         cornerRadius = uiState.posterCardCornerRadiusDp.dp,
+                        rowBringIntoViewSpec = defaultBringIntoViewSpec,
                         listState = rowStates.getOrPut(rowKey) {
                             LazyListState(
                                 firstVisibleItemIndex = if (restore) 0

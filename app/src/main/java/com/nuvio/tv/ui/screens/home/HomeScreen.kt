@@ -16,16 +16,19 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Divider
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
@@ -35,6 +38,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -108,6 +112,14 @@ private data class HomeFavoriteArtworkTarget(
     val portrait: Boolean,
 )
 
+@Composable
+private fun homeFavoriteArtworkSourceLabel(source: HomeFavoriteArtworkSource): String = when (source) {
+    HomeFavoriteArtworkSource.IPTV_PROVIDER -> stringResource(R.string.home_favorite_artwork_source_provider)
+    HomeFavoriteArtworkSource.OFFICIAL -> stringResource(R.string.home_favorite_artwork_source_official)
+    HomeFavoriteArtworkSource.IPTV_ORG -> stringResource(R.string.home_favorite_artwork_source_iptv_org)
+    HomeFavoriteArtworkSource.TMDB -> stringResource(R.string.home_favorite_artwork_source_tmdb)
+}
+
 private fun MetaPreview.freeboxRelativePath(): String? = when {
     id.startsWith(FREEBOX_FOLDER_ID_PREFIX) -> id.removePrefix(FREEBOX_FOLDER_ID_PREFIX)
     id.startsWith("freebox:", ignoreCase = true) -> id.substringAfter(':')
@@ -122,6 +134,9 @@ private const val FREEBOX_HOME_ROWS_REFRESH_INTERVAL_MS = 30_000L
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     onNavigateToDetail: (String, String, String) -> Unit,
+    onNavigateToIptvVodMovieDetail: (String, String) -> Unit = { tmdbId, _ ->
+        onNavigateToDetail("tmdb:$tmdbId", "movie", "")
+    },
     onPlayFreeboxVideoFromBeginning: (MetaPreview) -> Unit = { item ->
         onNavigateToDetail(item.id, item.apiType, item.sourceAddonBaseUrl.orEmpty())
     },
@@ -145,9 +160,10 @@ fun HomeScreen(
     showCalendarShortcut: Boolean = false,
     onNavigateToCalendar: () -> Unit = {},
     onNavigateToServers: () -> Unit = {},
+    onNavigateToServerSource: (String) -> Unit = { onNavigateToServers() },
     onManageHomeApps: () -> Unit = {},
-    onNavigateToApps: () -> Unit = {},
-    onNavigateToSettings: () -> Unit = {}
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToApps: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -211,7 +227,10 @@ fun HomeScreen(
     var isLoadingFreeboxArtwork by remember { mutableStateOf(false) }
     var freeboxArtworkError by remember { mutableStateOf<String?>(null) }
     var favoriteArtworkTarget by remember { mutableStateOf<HomeFavoriteArtworkTarget?>(null) }
-    var favoriteArtworkCandidates by remember { mutableStateOf<List<String>>(emptyList()) }
+    var favoriteArtworkCandidates by remember { mutableStateOf<List<HomeFavoriteArtworkCandidate>>(emptyList()) }
+    var favoriteArtworkSource by remember { mutableStateOf(HomeFavoriteArtworkSource.TMDB) }
+    var favoriteArtworkManualUrl by remember { mutableStateOf("") }
+    var favoriteArtworkSearchId by remember { mutableIntStateOf(0) }
     var isLoadingFavoriteArtwork by remember { mutableStateOf(false) }
     var isFavoriteArtworkBusy by remember { mutableStateOf(false) }
     var favoriteArtworkError by remember { mutableStateOf<String?>(null) }
@@ -228,6 +247,53 @@ fun HomeScreen(
     var freeboxFolderOptionsError by remember { mutableStateOf<String?>(null) }
     val homeActionScope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    fun loadFavoriteArtworkSource(item: MetaPreview, portrait: Boolean, source: HomeFavoriteArtworkSource) {
+        favoriteArtworkSearchId += 1
+        val searchId = favoriteArtworkSearchId
+        favoriteArtworkSource = source
+        favoriteArtworkCandidates = emptyList()
+        favoriteArtworkError = null
+        if (source == HomeFavoriteArtworkSource.OFFICIAL) {
+            isLoadingFavoriteArtwork = false
+            return
+        }
+        isLoadingFavoriteArtwork = true
+        homeActionScope.launch {
+            try {
+                val candidates = viewModel.findHomeFavoriteArtworkCandidates(item, portrait, source)
+                if (favoriteArtworkSearchId == searchId) {
+                    favoriteArtworkCandidates = candidates
+                    if (candidates.isEmpty()) {
+                        favoriteArtworkError = context.getString(R.string.home_favorite_artwork_no_candidates)
+                    }
+                }
+            } catch (error: Exception) {
+                if (favoriteArtworkSearchId == searchId) {
+                    favoriteArtworkError = error.message ?: context.getString(R.string.home_favorite_artwork_no_candidates)
+                }
+            } finally {
+                if (favoriteArtworkSearchId == searchId) isLoadingFavoriteArtwork = false
+            }
+        }
+    }
+
+    fun addOfficialArtworkUrl() {
+        favoriteArtworkCandidates = emptyList()
+        val imageUrl = favoriteArtworkManualUrl.trim()
+        val uri = runCatching { Uri.parse(imageUrl) }.getOrNull()
+        if (uri == null || uri.scheme !in setOf("https", "http") || uri.host.isNullOrBlank()) {
+            favoriteArtworkError = context.getString(R.string.home_favorite_artwork_invalid_url)
+            return
+        }
+        favoriteArtworkError = null
+        favoriteArtworkCandidates = listOf(
+            HomeFavoriteArtworkCandidate(
+                imageUrl = imageUrl,
+                label = context.getString(R.string.home_favorite_artwork_official_candidate)
+            )
+        )
+    }
 
     LaunchedEffect(scrollToTopTrigger) {
         if (scrollToTopTrigger != handledDrawerDismissTrigger) {
@@ -269,7 +335,7 @@ fun HomeScreen(
     }
     val onCatalogItemLongPress: (MetaPreview, String, Boolean) -> Unit = remember {
         { item, addonBaseUrl, isFavoriteHomeRow ->
-            if (!item.apiType.equals("channel", ignoreCase = true)) {
+            if (!item.apiType.equals("channel", ignoreCase = true) || isFavoriteHomeRow) {
                 val target = HomePosterOptionsTarget(item, addonBaseUrl, isFavoriteHomeRow)
                 if (item.id.startsWith(FREEBOX_FOLDER_ID_PREFIX)) {
                     freeboxFolderOptionsError = null
@@ -287,6 +353,9 @@ fun HomeScreen(
     }
 
     val onNavigateToDetailStable = remember(onNavigateToDetail) { onNavigateToDetail }
+    val onNavigateToIptvVodMovieDetailStable = remember(onNavigateToIptvVodMovieDetail) {
+        onNavigateToIptvVodMovieDetail
+    }
     val onContinueWatchingClickStable = remember(onContinueWatchingClick) { onContinueWatchingClick }
     val onContinueWatchingStartFromBeginningStable = remember(onContinueWatchingStartFromBeginning) { onContinueWatchingStartFromBeginning }
     val onContinueWatchingPlayManuallyStable = remember(onContinueWatchingPlayManually) { onContinueWatchingPlayManually }
@@ -569,6 +638,7 @@ fun HomeScreen(
                                 viewModel = viewModel,
                                 uiState = uiState,
                                 onNavigateToDetail = onNavigateToDetailStable,
+                                onNavigateToIptvVodMovieDetail = onNavigateToIptvVodMovieDetailStable,
                                 onContinueWatchingClick = onContinueWatchingClickStable,
                                 onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginningStable,
                                 onContinueWatchingPlayManually = onContinueWatchingPlayManuallyStable,
@@ -622,12 +692,14 @@ fun HomeScreen(
             HomeTopBarHeader(
                 showCalendarShortcut = showCalendarShortcut,
                 onCalendarClick = onNavigateToCalendar,
-                onServersClick = onNavigateToServers,
                 onAppsClick = onNavigateToApps,
+                onServersClick = onNavigateToServers,
+                onServerSourceSelected = onNavigateToServerSource,
                 onSettingsClick = { showSettingsDrawer = true },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .zIndex(2f)
+                    .offset(y = (-10).dp)
             )
         }
 
@@ -835,10 +907,13 @@ fun HomeScreen(
                         android.widget.Toast.makeText(
                             context,
                             context.getString(R.string.home_freebox_delete_video_success),
-                            android.widget.Toast.LENGTH_SHORT,
+                            android.widget.Toast.LENGTH_LONG,
                         ).show()
                     } catch (error: Exception) {
-                        freeboxCatalogVideoDeleteError = error.message ?: context.getString(R.string.cw_action_delete_from_freebox)
+                        val message = error.message?.takeIf(String::isNotBlank)
+                            ?: context.getString(R.string.home_freebox_delete_video_failure)
+                        freeboxCatalogVideoDeleteError = message
+                        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
                     } finally {
                         isFreeboxCatalogVideoDeleteBusy = false
                     }
@@ -932,10 +1007,19 @@ fun HomeScreen(
 
     val selectedContinueWatchingArtwork = continueWatchingArtworkTarget
     if (selectedContinueWatchingArtwork != null) {
+        val isYouTubeArtwork = (selectedContinueWatchingArtwork as? ContinueWatchingItem.InProgress)
+            ?.progress?.contentId
+            ?.let { com.nuvio.tv.youtube.YouTubeProgress.isYouTubeId(it) } == true
         HomeArtworkPickerDialog(
             title = stringResource(R.string.cw_hero_artwork_title),
-            subtitle = stringResource(R.string.cw_hero_artwork_subtitle),
-            emptyMessage = stringResource(R.string.cw_hero_artwork_empty),
+            subtitle = stringResource(
+                if (isYouTubeArtwork) R.string.cw_hero_artwork_youtube_subtitle
+                else R.string.cw_hero_artwork_subtitle
+            ),
+            emptyMessage = stringResource(
+                if (isYouTubeArtwork) R.string.cw_hero_artwork_youtube_empty
+                else R.string.cw_hero_artwork_empty
+            ),
             resetLabel = stringResource(R.string.cw_hero_artwork_reset),
             portrait = false,
             candidates = continueWatchingArtworkCandidates,
@@ -991,10 +1075,13 @@ fun HomeScreen(
                         android.widget.Toast.makeText(
                             context,
                             context.getString(R.string.home_freebox_delete_video_success),
-                            android.widget.Toast.LENGTH_SHORT,
+                            android.widget.Toast.LENGTH_LONG,
                         ).show()
                     } catch (error: Exception) {
-                        freeboxVideoDeleteError = error.message ?: context.getString(R.string.cw_action_delete_from_freebox)
+                        val message = error.message?.takeIf(String::isNotBlank)
+                            ?: context.getString(R.string.home_freebox_delete_video_failure)
+                        freeboxVideoDeleteError = message
+                        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
                     } finally {
                         isFreeboxVideoDeleteBusy = false
                     }
@@ -1026,21 +1113,13 @@ fun HomeScreen(
         fun openFavoriteArtworkPicker(portrait: Boolean) {
             posterOptionsTarget = null
             favoriteArtworkTarget = HomeFavoriteArtworkTarget(item, portrait)
-            favoriteArtworkCandidates = emptyList()
-            favoriteArtworkError = null
-            isLoadingFavoriteArtwork = true
-            homeActionScope.launch {
-                try {
-                    favoriteArtworkCandidates = viewModel.findHomeFavoriteArtworkCandidates(item, portrait)
-                    if (favoriteArtworkCandidates.isEmpty()) {
-                        favoriteArtworkError = context.getString(R.string.home_favorite_artwork_empty)
-                    }
-                } catch (error: Exception) {
-                    favoriteArtworkError = error.message ?: context.getString(R.string.home_favorite_artwork_empty)
-                } finally {
-                    isLoadingFavoriteArtwork = false
-                }
+            favoriteArtworkManualUrl = ""
+            val source = if (item.apiType.equals("channel", ignoreCase = true)) {
+                HomeFavoriteArtworkSource.IPTV_PROVIDER
+            } else {
+                HomeFavoriteArtworkSource.TMDB
             }
+            loadFavoriteArtworkSource(item, portrait, source)
         }
         HomePosterOptionsDialog(
             title = item.name,
@@ -1087,16 +1166,40 @@ fun HomeScreen(
     }
 
     favoriteArtworkTarget?.let { artworkTarget ->
+        val isChannelArtwork = artworkTarget.item.apiType.equals("channel", ignoreCase = true)
         HomeArtworkPickerDialog(
             title = stringResource(
                 if (artworkTarget.portrait) R.string.home_favorite_artwork_portrait_title
                 else R.string.home_favorite_artwork_landscape_title
             ),
-            subtitle = stringResource(R.string.home_favorite_artwork_subtitle, artworkTarget.item.name),
-            emptyMessage = stringResource(R.string.home_favorite_artwork_empty),
+            subtitle = stringResource(
+                if (isChannelArtwork) R.string.home_favorite_artwork_channel_subtitle
+                else R.string.home_favorite_artwork_subtitle,
+                artworkTarget.item.name
+            ),
+            emptyMessage = stringResource(R.string.home_favorite_artwork_no_candidates),
             resetLabel = stringResource(R.string.home_freebox_artwork_reset),
             portrait = artworkTarget.portrait,
-            candidates = favoriteArtworkCandidates,
+            candidates = favoriteArtworkCandidates.map { it.imageUrl },
+            candidateLabels = favoriteArtworkCandidates.map { it.label },
+            sourceOptions = if (isChannelArtwork) listOf(
+                HomeFavoriteArtworkSource.IPTV_PROVIDER,
+                HomeFavoriteArtworkSource.OFFICIAL,
+                HomeFavoriteArtworkSource.IPTV_ORG,
+                HomeFavoriteArtworkSource.TMDB
+            ) else emptyList(),
+            selectedSource = favoriteArtworkSource.takeIf { isChannelArtwork },
+            onSourceSelected = if (isChannelArtwork) { source ->
+                loadFavoriteArtworkSource(artworkTarget.item, artworkTarget.portrait, source)
+            } else null,
+            manualArtworkUrl = favoriteArtworkManualUrl,
+            onManualArtworkUrlChanged = {
+                favoriteArtworkManualUrl = it
+                favoriteArtworkCandidates = emptyList()
+                favoriteArtworkError = null
+            },
+            onAddManualArtworkUrl = ::addOfficialArtworkUrl,
+            fitCandidateImages = isChannelArtwork,
             isLoading = isLoadingFavoriteArtwork,
             isBusy = isFavoriteArtworkBusy,
             error = favoriteArtworkError,
@@ -1296,6 +1399,7 @@ private fun ModernHomeRoute(
     viewModel: HomeViewModel,
     uiState: HomeUiState,
     onNavigateToDetail: (String, String, String) -> Unit,
+    onNavigateToIptvVodMovieDetail: (String, String) -> Unit,
     onContinueWatchingClick: (ContinueWatchingItem) -> Unit,
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit,
@@ -1307,6 +1411,9 @@ private fun ModernHomeRoute(
     isCatalogItemWatched: (MetaPreview) -> Boolean,
     onCatalogItemLongPress: (MetaPreview, String, Boolean) -> Unit
 ) {
+    val resolveIptvVodTmdbId: suspend (String, String, String?) -> String? = remember(viewModel) {
+        { title, type, year -> viewModel.resolveIptvVodTmdbId(title, type, year) }
+    }
     val focusState by viewModel.focusState.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
     val modernPresentation by viewModel.modernHomePresentation.collectAsStateWithLifecycle()
@@ -1353,6 +1460,8 @@ private fun ModernHomeRoute(
         trailerPreviewUrls = viewModel.trailerPreviewUrls,
         trailerPreviewAudioUrls = viewModel.trailerPreviewAudioUrls,
         onNavigateToDetail = onNavigateToDetail,
+        onNavigateToIptvVodMovieDetail = onNavigateToIptvVodMovieDetail,
+        onResolveIptvVodTmdbId = resolveIptvVodTmdbId,
         onContinueWatchingClick = onContinueWatchingClick,
         onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginning,
         onContinueWatchingPlayManually = onContinueWatchingPlayManually,
@@ -1659,7 +1768,15 @@ internal fun HomeArtworkPickerDialog(
     resetLabel: String? = null,
     portrait: Boolean,
     candidates: List<String>,
+    candidateLabels: List<String> = emptyList(),
     candidateDetails: List<TmdbArtworkCandidate> = emptyList(),
+    sourceOptions: List<HomeFavoriteArtworkSource> = emptyList(),
+    selectedSource: HomeFavoriteArtworkSource? = null,
+    onSourceSelected: ((HomeFavoriteArtworkSource) -> Unit)? = null,
+    manualArtworkUrl: String = "",
+    onManualArtworkUrlChanged: ((String) -> Unit)? = null,
+    onAddManualArtworkUrl: (() -> Unit)? = null,
+    fitCandidateImages: Boolean = false,
     isLoading: Boolean,
     isBusy: Boolean,
     error: String?,
@@ -1687,8 +1804,51 @@ internal fun HomeArtworkPickerDialog(
         width = artworkDialogWidth,
         usePlatformDefaultWidth = false,
     ) {
+        if (sourceOptions.isNotEmpty() && onSourceSelected != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                sourceOptions.forEach { source ->
+                    Button(
+                        onClick = { onSourceSelected(source) },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.colors(
+                            containerColor = if (source == selectedSource) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundCard,
+                            contentColor = NuvioTheme.colors.TextPrimary,
+                        ),
+                    ) {
+                        Text(homeFavoriteArtworkSourceLabel(source), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        if (selectedSource == HomeFavoriteArtworkSource.OFFICIAL && onManualArtworkUrlChanged != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = manualArtworkUrl,
+                    onValueChange = onManualArtworkUrlChanged,
+                    label = { Text(stringResource(R.string.home_favorite_artwork_official_url_label)) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = { onAddManualArtworkUrl?.invoke() },
+                    enabled = !isBusy,
+                    colors = ButtonDefaults.colors(
+                        containerColor = NuvioTheme.colors.BackgroundCard,
+                        contentColor = NuvioTheme.colors.TextPrimary,
+                    ),
+                ) { Text(stringResource(R.string.home_favorite_artwork_official_add)) }
+            }
+        }
         when {
             isLoading -> LoadingIndicator()
+            selectedSource == HomeFavoriteArtworkSource.OFFICIAL && candidates.isEmpty() -> Text(
+                error ?: stringResource(R.string.home_favorite_artwork_official_help),
+                color = NuvioTheme.colors.TextSecondary,
+            )
             candidates.isEmpty() -> Text(
                 error ?: emptyMessage ?: stringResource(R.string.home_freebox_artwork_empty),
                 color = NuvioTheme.colors.TextSecondary,
@@ -1701,9 +1861,10 @@ internal fun HomeArtworkPickerDialog(
                     var isFocused by remember(imageUrl) { mutableStateOf(false) }
                     val candidateDetail = candidateDetails.getOrNull(index)
                         ?.takeIf { it.imageUrl == imageUrl }
-                    val candidateLabel = if (candidateDetail == null) {
-                        stringResource(R.string.home_freebox_artwork_candidate, index + 1)
-                    } else {
+                    val candidateLabel = candidateLabels.getOrNull(index)?.takeIf(String::isNotBlank)
+                        ?: if (candidateDetail == null) {
+                            stringResource(R.string.home_freebox_artwork_candidate, index + 1)
+                        } else {
                         val typeLabel = stringResource(
                             if (candidateDetail.match.contentType == ContentType.SERIES) {
                                 R.string.home_freebox_artwork_candidate_series
@@ -1772,13 +1933,21 @@ internal fun HomeArtworkPickerDialog(
                                 modifier = Modifier
                                     .width(if (portrait) 112.dp else 188.dp)
                                     .height(if (portrait) 160.dp else 112.dp)
+                                    .background(if (fitCandidateImages) NuvioTheme.colors.BackgroundCard else Color.Transparent)
+                                    .clip(NuvioTheme.configuredShape(RoundedCornerShape(10.dp))),
+                                contentAlignment = Alignment.Center,
                             ) {
                                 AsyncImage(
                                     model = imageUrl,
                                     contentDescription = stringResource(R.string.home_freebox_artwork_candidate, index + 1),
-                                    contentScale = ContentScale.Crop,
+                                    contentScale = if (fitCandidateImages) ContentScale.Fit else ContentScale.Crop,
                                     modifier = Modifier
-                                        .fillMaxSize()
+                                        .then(
+                                            if (fitCandidateImages) Modifier
+                                                .fillMaxWidth(0.72f)
+                                                .height(if (portrait) 44.dp else 56.dp)
+                                            else Modifier.fillMaxSize()
+                                        )
                                         .clip(NuvioTheme.configuredShape(RoundedCornerShape(10.dp))),
                                 )
                                 if (isFocused) {

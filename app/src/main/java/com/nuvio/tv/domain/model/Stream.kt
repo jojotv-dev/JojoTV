@@ -211,7 +211,7 @@ data class AddonStreams(
 
 private val supportedStreamSchemes = setOf(
     "http", "https", "rtmp", "rtmps", "rtsp", "udp", "file", "content",
-    "android.resource", "smb"
+    "android.resource", "smb", "freebox"
 )
 
 private fun String.isSupportedStreamUrl(): Boolean = runCatching {

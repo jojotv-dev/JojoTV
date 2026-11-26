@@ -202,7 +202,6 @@ fun HeroCarousel(
                 item = item,
                 showImdbRatings = showImdbRatings,
                 showBackdrop = showBackdrop,
-                isHeroFocused = isFocused,
                 mdbListShowOnHero = mdbListShowOnHero,
                 mdbListRatingOrder = mdbListRatingOrder,
                 descriptionAutoScrollEnabled = descriptionAutoScrollEnabled,
@@ -261,7 +260,6 @@ private fun HeroCarouselSlide(
     item: MetaPreview,
     showImdbRatings: Boolean,
     showBackdrop: Boolean,
-    isHeroFocused: Boolean,
     mdbListShowOnHero: Boolean = false,
     mdbListRatingOrder: List<String> = com.nuvio.tv.domain.model.MDBListSettings.DEFAULT_RATING_ORDER,
     descriptionAutoScrollEnabled: Boolean = false,
@@ -321,13 +319,7 @@ private fun HeroCarouselSlide(
             HeroCarouselBackdrop(
                 item = item,
                 fullPage = false,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .shineSweepOnFocus(
-                        isFocused = isHeroFocused,
-                        restartKey = item.id,
-                        startDelayMillis = HERO_CAROUSEL_CROSSFADE_MS + 32L,
-                    )
+                modifier = Modifier.fillMaxSize()
             )
         }
 

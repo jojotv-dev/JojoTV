@@ -46,7 +46,6 @@ private fun IntroDbSegment?.toSkipIntervalOrNull(type: String): SkipInterval? {
 @Singleton
 class SkipIntroRepository @Inject constructor(
     private val introDbApi: IntroDbApi,
-    private val simklResolver: SimklIdResolver,
     private val tmdbService: TmdbService
 ) {
     private val cache = ConcurrentHashMap<String, List<SkipInterval>>()
@@ -63,7 +62,6 @@ class SkipIntroRepository @Inject constructor(
             val value = parts.getOrNull(1) ?: return@firstNotNullOfOrNull null
             when (parts[0]) {
                 "tmdb" -> value.toIntOrNull()?.let { tmdbService.tmdbToImdb(it, "movie") }
-                "mal", "kitsu" -> simklResolver.resolveIds(parts[0], value)?.imdb
                 else -> null
             }
         } ?: return emptyList()
@@ -93,16 +91,10 @@ class SkipIntroRepository @Inject constructor(
         val cacheKey = "mal:$malId:$episode"
         cache[cacheKey]?.let { return it }
 
-        val simklIds = simklResolver.resolveIds("mal", malId)
-        val resolvedImdbId = imdbId ?: simklIds?.imdb
-        if (resolvedImdbId == null || !introDbConfigured) return emptyList()
-
-        val tvdb = if (imdbSeason == null && simklIds != null) {
-            simklResolver.resolveEpisodeTvdb("mal", malId, episode)
-        } else null
-        val introDbSeason = imdbSeason ?: tvdb?.first ?: return emptyList()
-        val introDbEpisode = imdbEpisode ?: tvdb?.second ?: episode
-        return fetchFromIntroDb(resolvedImdbId, introDbSeason, introDbEpisode)
+        val resolvedImdbId = imdbId ?: return emptyList()
+        val introDbSeason = imdbSeason ?: return emptyList()
+        if (!introDbConfigured) return emptyList()
+        return fetchFromIntroDb(resolvedImdbId, introDbSeason, imdbEpisode ?: episode)
             .also { cache[cacheKey] = it }
     }
 
@@ -116,17 +108,10 @@ class SkipIntroRepository @Inject constructor(
         val cacheKey = "kitsu:$kitsuId:$episode"
         cache[cacheKey]?.let { return it }
 
-        // Resolve all IDs via Simkl
-        val simklIds = simklResolver.resolveIds("kitsu", kitsuId)
-        val resolvedImdbId = imdbId ?: simklIds?.imdb
-        if (resolvedImdbId == null || !introDbConfigured) return emptyList()
-
-        val tvdb = if (imdbSeason == null && simklIds != null) {
-            simklResolver.resolveEpisodeTvdb("kitsu", kitsuId, episode)
-        } else null
-        val introDbSeason = imdbSeason ?: tvdb?.first ?: return emptyList()
-        val introDbEpisode = imdbEpisode ?: tvdb?.second ?: episode
-        return fetchFromIntroDb(resolvedImdbId, introDbSeason, introDbEpisode)
+        val resolvedImdbId = imdbId ?: return emptyList()
+        val introDbSeason = imdbSeason ?: return emptyList()
+        if (!introDbConfigured) return emptyList()
+        return fetchFromIntroDb(resolvedImdbId, introDbSeason, imdbEpisode ?: episode)
             .also { cache[cacheKey] = it }
     }
 

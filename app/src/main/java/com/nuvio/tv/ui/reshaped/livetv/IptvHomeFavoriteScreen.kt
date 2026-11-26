@@ -63,6 +63,7 @@ private data class HomeIptvFavoriteEntry(val source: LiveTvSource, val item: Liv
 @Composable
 fun IptvHomeFavoriteScreen(
     favoriteKey: String,
+    homeLandscapeArtworkUrl: String? = null,
     onBack: () -> Unit,
     onOpenMovieDetails: (Int, String) -> Unit,
     onNavigateToDetail: (String, String, String?) -> Unit = { _, _, _ -> },
@@ -230,14 +231,41 @@ fun IptvHomeFavoriteScreen(
             ),
             episodes = visibleEpisodes.map { row ->
                 val episodeMetadata = seriesPresentation?.episodes?.get(row.season to row.episode)
+                fun artworkIdentity(url: String): String = url.trim()
+                    .substringBefore('?')
+                    .substringBefore('#')
+                    .replace(Regex("/(?:original|w\\d+|h\\d+)(?=/)", RegexOption.IGNORE_CASE), "")
+                    .lowercase(Locale.ROOT)
+
+                val seriesArtworkIdentities = sequenceOf(
+                    currentEntry.item.posterUrl,
+                    metadata?.poster,
+                    metadata?.backdrop,
+                )
+                    .filterNotNull()
+                    .filter(String::isNotBlank)
+                    .map { it.trim() }
+                    .map(::artworkIdentity)
+                    .toSet()
+                fun episodeArtworkOrNull(url: String?): String? = url
+                    ?.takeIf(String::isNotBlank)
+                    ?.takeUnless { artwork -> artworkIdentity(artwork) in seriesArtworkIdentities }
+
+                val tmdbEpisodeArtwork = episodeArtworkOrNull(episodeMetadata?.thumbnail)
+                val providerEpisodeArtwork = episodeArtworkOrNull(row.item.posterUrl)
+                val seriesBackdropFallback = metadata?.backdrop?.takeIf(String::isNotBlank)
+                    ?: metadata?.poster?.takeIf(String::isNotBlank)
+                    ?: currentEntry.item.posterUrl.takeIf(String::isNotBlank)
                 EpisodeRailItem(
                     id = row.item.favoriteKey,
                     title = String.format(Locale.getDefault(), episodeNumberFormat, row.episode),
                     subtitle = normalizeLiveTvVodTitleForTmdb(
                         episodeMetadata?.title?.takeIf(String::isNotBlank) ?: row.item.title,
                     ),
-                    imageUrl = episodeMetadata?.thumbnail?.takeIf(String::isNotBlank)
-                        ?: row.item.posterUrl.takeIf(String::isNotBlank),
+                    imageUrl = tmdbEpisodeArtwork
+                        ?: providerEpisodeArtwork
+                        ?: homeLandscapeArtworkUrl?.takeIf(String::isNotBlank)
+                        ?: seriesBackdropFallback,
                     airDate = episodeMetadata?.airDate,
                     overview = episodeMetadata?.overview,
                     runtimeMinutes = episodeMetadata?.runtimeMinutes,

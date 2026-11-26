@@ -43,6 +43,8 @@ class LauncherAccessibilityService : AccessibilityService() {
      * shortly after boot, as a default launcher would be.
      */
     private fun openAfterBoot() {
+        // The boot receiver uses the Fire OS-specific 3 second launch path for API 25 devices.
+        if (FireOsHomeButtonService.isSupported(this)) return
         if (SystemClock.elapsedRealtime() > BOOT_WINDOW_MS) return
         if (LauncherSetup.isDefaultHome(this) || !LauncherSetup.accessibilityFallbackAllowed(this)) return
         Handler(Looper.getMainLooper()).postDelayed({ launchHome(SystemClock.uptimeMillis()) }, BOOT_OPEN_DELAY_MS)

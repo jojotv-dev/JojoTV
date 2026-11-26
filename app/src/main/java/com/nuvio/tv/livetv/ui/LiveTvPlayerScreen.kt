@@ -115,7 +115,10 @@ fun LiveTvPlayerScreen(
 
     DisposableEffect(Unit) {
         viewModel.playback.attach()
-        onDispose { viewModel.playback.detach() }
+        onDispose {
+            viewModel.playback.detach()
+            viewModel.clearHomeZapSource()
+        }
     }
     KeepScreenAwake(true)
 
@@ -388,7 +391,9 @@ fun LiveTvPlayerScreen(
     }
 
     fun zap(direction: Int) {
-        viewModel.zap(playback.channelKey, direction)?.let { viewModel.preview(it) }
+        viewModel.zap(playback.channelKey, direction)?.let {
+            viewModel.preview(it, preserveHomeZapSource = true)
+        }
     }
 
     // What's on now, and the poster Nuvio's catalogs would show for it (looked up ahead of time,

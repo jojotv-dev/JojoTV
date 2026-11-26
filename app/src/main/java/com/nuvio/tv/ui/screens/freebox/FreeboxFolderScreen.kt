@@ -70,9 +70,15 @@ fun FreeboxFolderScreen(
     mediaType: String,
     viewModel: FreeboxFolderViewModel = hiltViewModel(),
     onOpenFolder: (String, String) -> Unit,
-    onPlayVideo: (MetaPreview) -> Unit,
+    onPlayVideo: (
+        MetaPreview,
+        List<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode>,
+    ) -> Unit,
     onBack: () -> Unit,
-    onPlayVideoFromBeginning: (MetaPreview) -> Unit = onPlayVideo,
+    onPlayVideoFromBeginning: (
+        MetaPreview,
+        List<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode>,
+    ) -> Unit = onPlayVideo,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val defaultTitle = stringResource(R.string.freebox_folder_title)
@@ -93,6 +99,21 @@ fun FreeboxFolderScreen(
     val context = LocalContext.current
     val isEpisodeFolder = remember(state.items) {
         state.items.isNotEmpty() && state.items.none { it.id.startsWith(FREEBOX_FOLDER_ID_PREFIX) }
+    }
+    val freeboxPlayerEpisodes = remember(
+        state.items,
+        state.episodeNumbersByItemId,
+        state.episodeMetadataByItemId,
+        state.manualArtworkByItemId,
+    ) {
+        viewModel.playerEpisodes(state.items)
+    }
+    fun playerEpisodesFor(item: MetaPreview): List<com.nuvio.tv.domain.model.FreeboxPlaybackEpisode> {
+        val path = item.id
+            .takeIf { it.startsWith("freebox:", ignoreCase = true) }
+            ?.substringAfter(':')
+            ?: return emptyList()
+        return freeboxPlayerEpisodes.takeIf { episodes -> episodes.any { it.path == path } }.orEmpty()
     }
     var selectedSeason by rememberSaveable(path) { mutableStateOf<Int?>(null) }
 
@@ -145,10 +166,17 @@ fun FreeboxFolderScreen(
                 ),
             )
         }
-        val sharedEpisodeArtwork = state.items.firstNotNullOfOrNull { item ->
-            item.background?.takeIf(String::isNotBlank)
-                ?: item.poster?.takeIf(String::isNotBlank)
-        }
+        val selectedHomeLandscapeArtworkUrl = state.selectedFolderLandscapeArtworkUrl
+            ?.takeIf(String::isNotBlank)
+            ?: presentation?.background?.takeIf(String::isNotBlank)
+            ?: presentation?.landscapePoster?.takeIf(String::isNotBlank)
+        val seriesBackdropUrl = metadata?.backdrop?.takeIf(String::isNotBlank)
+            ?: metadata?.poster?.takeIf(String::isNotBlank)
+            ?: presentation?.background?.takeIf(String::isNotBlank)
+            ?: presentation?.landscapePoster?.takeIf(String::isNotBlank)
+            ?: presentation?.poster?.takeIf(String::isNotBlank)
+            ?: state.items.firstNotNullOfOrNull { it.background?.takeIf(String::isNotBlank) }
+            ?: state.items.firstNotNullOfOrNull { it.poster?.takeIf(String::isNotBlank) }
         EpisodeBackdropLayout(
             info = EpisodeBackdropInfo(
                 title = metadata?.localizedTitle?.takeIf(String::isNotBlank)
@@ -157,13 +185,7 @@ fun FreeboxFolderScreen(
                 tmdbId = state.folderTmdbId ?: presentation?.tmdbId?.toIntOrNull(),
                 logoUrl = metadata?.logo?.takeIf(String::isNotBlank)
                     ?: presentation?.logo?.takeIf(String::isNotBlank),
-                backdropUrl = metadata?.backdrop
-                    ?: metadata?.poster
-                    ?: presentation?.background?.takeIf(String::isNotBlank)
-                    ?: presentation?.landscapePoster?.takeIf(String::isNotBlank)
-                    ?: presentation?.poster?.takeIf(String::isNotBlank)
-                    ?: state.items.firstNotNullOfOrNull(MetaPreview::background)
-                    ?: state.items.firstNotNullOfOrNull(MetaPreview::poster),
+                backdropUrl = seriesBackdropUrl,
                 genres = presentationGenres,
                 year = (metadata?.releaseInfo ?: presentation?.releaseInfo)?.take(4),
                 releaseInfo = metadata?.releaseInfo ?: presentation?.releaseInfo,
@@ -206,12 +228,13 @@ fun FreeboxFolderScreen(
                     id = item.id,
                     title = item.name,
                     subtitle = episode?.title?.takeIf(String::isNotBlank) ?: item.name,
-                    imageUrl = state.manualArtworkByItemId[item.id]?.landscape?.takeIf(String::isNotBlank)
+                    imageUrl = episode?.thumbnail?.takeIf(String::isNotBlank)
+                        ?: state.manualArtworkByItemId[item.id]?.landscape?.takeIf(String::isNotBlank)
                         ?: state.manualArtworkByItemId[item.id]?.portrait?.takeIf(String::isNotBlank)
-                        ?: episode?.thumbnail?.takeIf(String::isNotBlank)
                         ?: item.background?.takeIf(String::isNotBlank)
                         ?: item.poster?.takeIf(String::isNotBlank)
-                        ?: sharedEpisodeArtwork,
+                        ?: selectedHomeLandscapeArtworkUrl
+                        ?: seriesBackdropUrl,
                     airDate = episode?.airDate,
                     overview = episode?.overview,
                     runtimeMinutes = episode?.runtimeMinutes?.takeIf { it > 0 }
@@ -226,7 +249,7 @@ fun FreeboxFolderScreen(
             onEpisodeClick = { railItem ->
                 state.items.firstOrNull { it.id == railItem.id }
                     ?.let(viewModel::playerPreview)
-                    ?.let(onPlayVideo)
+                    ?.let { item -> onPlayVideo(item, playerEpisodesFor(item)) }
             },
             onEpisodeLongClick = { railItem ->
                 state.items.firstOrNull { it.id == railItem.id }?.let { videoOptionsItem = it }
@@ -307,7 +330,8 @@ fun FreeboxFolderScreen(
                             if (item.id.startsWith(FREEBOX_FOLDER_ID_PREFIX)) {
                                 onOpenFolder(item.id.removePrefix(FREEBOX_FOLDER_ID_PREFIX), mediaType)
                             } else {
-                                onPlayVideo(viewModel.playerPreview(item))
+                                val preview = viewModel.playerPreview(item)
+                                onPlayVideo(preview, playerEpisodesFor(item))
                             }
                         },
                     )
@@ -331,7 +355,8 @@ fun FreeboxFolderScreen(
                 videoOptionsItem = null
             },
             onStartFromBeginning = {
-                onPlayVideoFromBeginning(viewModel.playerPreview(selectedVideoOptions))
+                val preview = viewModel.playerPreview(selectedVideoOptions)
+                onPlayVideoFromBeginning(preview, playerEpisodesFor(preview))
                 videoOptionsItem = null
             },
             onChangePortraitArtwork = {
@@ -443,10 +468,13 @@ fun FreeboxFolderScreen(
                         android.widget.Toast.makeText(
                             context,
                             context.getString(R.string.home_freebox_delete_video_success),
-                            android.widget.Toast.LENGTH_SHORT,
+                            android.widget.Toast.LENGTH_LONG,
                         ).show()
                     } catch (error: Exception) {
-                        videoDeleteError = error.message ?: context.getString(R.string.cw_action_delete_from_freebox)
+                        val message = error.message?.takeIf(String::isNotBlank)
+                            ?: context.getString(R.string.home_freebox_delete_video_failure)
+                        videoDeleteError = message
+                        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
                     } finally {
                         isDeletingVideo = false
                     }

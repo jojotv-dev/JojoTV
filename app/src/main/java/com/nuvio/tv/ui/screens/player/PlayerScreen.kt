@@ -2262,6 +2262,7 @@ private fun ExoPlayerSurface(
     val playerView = remember(context, player) {
         PlayerView(context).apply {
             useController = false
+            setKeepContentOnPlayerReset(true)
             isFocusable = false
             isFocusableInTouchMode = false
             descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
@@ -2956,17 +2957,27 @@ private fun PlayerControlsOverlay(
                                     .thenBy { it.title }
                             )
                     }
-                    val currentEpisodeIndex = orderedEpisodes.indexOfFirst {
-                        it.season == uiState.currentSeason && it.episode == uiState.currentEpisode
-                    }
+                    val currentEpisodeIndexById = orderedEpisodes.indexOfFirst { it.id == uiState.currentVideoId }
+                    val currentEpisodeIndex = currentEpisodeIndexById.takeIf { it >= 0 }
+                        ?: orderedEpisodes.indexOfFirst {
+                            it.season == uiState.currentSeason && it.episode == uiState.currentEpisode
+                        }
                     val previousEpisode = orderedEpisodes.getOrNull(currentEpisodeIndex - 1)
+                    val localNextEpisode = currentEpisodeIndex
+                        .takeIf { it >= 0 }
+                        ?.let { orderedEpisodes.getOrNull(it + 1) }
                     val showPreviousEpisodeButton = !isLivePlayback && hasEpisodeContext && previousEpisode != null
                     val hasSubtitleControl = uiState.subtitleTracks.isNotEmpty() || uiState.addonSubtitles.isNotEmpty()
                     val hasAudioControl = uiState.audioTracks.isNotEmpty()
-                    val showNextEpisodeButton = !isLivePlayback && hasEpisodeContext && uiState.nextEpisode?.hasAired == true &&
-                        (uiState.postPlayMode as? PostPlayMode.AutoPlay)?.let {
-                            !it.searching && it.countdownSec == null
-                        } != false
+                    val hasNextEpisode = if (uiState.isFreeboxEpisodePlayback) {
+                        localNextEpisode != null
+                    } else {
+                        uiState.nextEpisode?.hasAired == true &&
+                            (uiState.postPlayMode as? PostPlayMode.AutoPlay)?.let {
+                                !it.searching && it.countdownSec == null
+                            } != false
+                    }
+                    val showNextEpisodeButton = !isLivePlayback && hasEpisodeContext && hasNextEpisode
                     val selectedAudioTrack = uiState.audioTracks.firstOrNull { it.index == uiState.selectedAudioTrackIndex }
                         ?: uiState.audioTracks.firstOrNull { it.isSelected }
                     val selectedSubtitleTrack = uiState.subtitleTracks.firstOrNull { it.index == uiState.selectedSubtitleTrackIndex }
@@ -3002,7 +3013,12 @@ private fun PlayerControlsOverlay(
                             contentDescription = "Épisode précédent",
                             onClick = {
                                 previousEpisode?.let { episode ->
-                                    viewModel.onEvent(PlayerEvent.OnEpisodeSelected(episode, manualSelection = false))
+                                    viewModel.onEvent(
+                                        PlayerEvent.OnEpisodeSelected(
+                                            episode,
+                                            manualSelection = uiState.isFreeboxEpisodePlayback,
+                                        ),
+                                    )
                                 }
                             },
                             label = "Précédent",
@@ -3029,7 +3045,17 @@ private fun PlayerControlsOverlay(
                         ControlButton(
                             icon = Icons.Default.SkipNext,
                             contentDescription = stringResource(R.string.next_episode_label),
-                            onClick = onPlayNextEpisode,
+                            onClick = {
+                                if (uiState.isFreeboxEpisodePlayback) {
+                                    localNextEpisode?.let { episode ->
+                                        viewModel.onEvent(
+                                            PlayerEvent.OnEpisodeSelected(episode, manualSelection = true),
+                                        )
+                                    }
+                                } else {
+                                    onPlayNextEpisode()
+                                }
+                            },
                             label = "Suivant",
                             upFocusRequester = progressUpTarget,
                             onDownKey = onHideControls,
@@ -3364,7 +3390,7 @@ private fun ControlButton(
             focusedContainerColor = NuvioTheme.colors.Secondary,
             contentColor = contentColor,
             disabledContentColor = Color.White.copy(alpha = 0.38f),
-            focusedContentColor = NuvioTheme.colors.OnSecondary
+            focusedContentColor = Color.White
         ),
         shape = IconButtonDefaults.shape(shape = NuvioTheme.configuredShape(RoundedCornerShape(18.dp)))
     ) {
@@ -3382,7 +3408,7 @@ private fun ControlButton(
             } else if (!textIcon.isNullOrBlank()) {
                 Text(
                     text = textIcon,
-                    color = if (!enabled) Color.White.copy(alpha = 0.38f) else if (isFocused) NuvioTheme.colors.OnSecondary else Color.White,
+                    color = if (!enabled) Color.White.copy(alpha = 0.38f) else Color.White,
                     fontSize = textIconFontSize,
                     lineHeight = textIconLineHeight,
                     fontWeight = FontWeight.Black,

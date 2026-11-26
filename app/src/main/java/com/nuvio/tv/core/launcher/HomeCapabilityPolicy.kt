@@ -1,13 +1,20 @@
 package com.nuvio.tv.core.launcher
 
-internal enum class HomeMechanism { NATIVE, ACCESSIBILITY, UNAVAILABLE }
+internal enum class HomeMechanism { NATIVE, ACCESSIBILITY, FIRE_OS_LOGCAT, UNAVAILABLE }
 internal enum class NativeHomeRestriction { NONE_OBSERVED, ROLE_RESOLVER_MISMATCH, REQUEST_FAILED, UNKNOWN }
 
 /** Pure policy shared by startup and capability reporting; never infers support from install source. */
 internal object HomeCapabilityPolicy {
-    fun mechanism(defaultHome: Boolean, enabled: Boolean, operational: Boolean, fallbackAllowed: Boolean = true): HomeMechanism = when {
+    fun mechanism(
+        defaultHome: Boolean,
+        enabled: Boolean,
+        operational: Boolean,
+        fallbackAllowed: Boolean = true,
+        fireOsLogcatOperational: Boolean = false
+    ): HomeMechanism = when {
         defaultHome -> HomeMechanism.NATIVE
         enabled && operational && fallbackAllowed -> HomeMechanism.ACCESSIBILITY
+        fireOsLogcatOperational && fallbackAllowed -> HomeMechanism.FIRE_OS_LOGCAT
         else -> HomeMechanism.UNAVAILABLE
     }
 

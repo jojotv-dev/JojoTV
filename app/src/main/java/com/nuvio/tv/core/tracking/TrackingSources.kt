@@ -6,7 +6,8 @@ import com.nuvio.tv.domain.model.LibrarySourceMode
 val WatchProgressSource.providerId: TrackingProviderId?
     get() = when (this) {
         WatchProgressSource.TRAKT -> TrackingProviderId.TRAKT
-        WatchProgressSource.SIMKL -> TrackingProviderId.SIMKL
+        // Legacy persisted values are treated as local sync now that Simkl is unsupported.
+        WatchProgressSource.SIMKL -> null
         WatchProgressSource.MDBLIST -> TrackingProviderId.MDBLIST
         WatchProgressSource.NUVIO_SYNC -> null
     }
@@ -15,7 +16,7 @@ val LibrarySourceMode.providerId: TrackingProviderId?
     get() = when (this) {
         LibrarySourceMode.LOCAL -> null
         LibrarySourceMode.TRAKT -> TrackingProviderId.TRAKT
-        LibrarySourceMode.SIMKL -> TrackingProviderId.SIMKL
+        LibrarySourceMode.SIMKL -> null
         LibrarySourceMode.MDBLIST -> TrackingProviderId.MDBLIST
     }
 
@@ -59,7 +60,6 @@ fun availableWatchProgressSources(
 ): List<WatchProgressSource> = buildList {
     add(WatchProgressSource.NUVIO_SYNC)
     if (TrackingProviderId.TRAKT in connectedProviderIds) add(WatchProgressSource.TRAKT)
-    if (TrackingProviderId.SIMKL in connectedProviderIds) add(WatchProgressSource.SIMKL)
     if (TrackingProviderId.MDBLIST in connectedProviderIds) add(WatchProgressSource.MDBLIST)
 }
 
@@ -68,6 +68,5 @@ fun availableLibrarySourceModes(
 ): List<LibrarySourceMode> = buildList {
     add(LibrarySourceMode.LOCAL)
     if (TrackingProviderId.TRAKT in connectedProviderIds) add(LibrarySourceMode.TRAKT)
-    if (TrackingProviderId.SIMKL in connectedProviderIds) add(LibrarySourceMode.SIMKL)
     if (TrackingProviderId.MDBLIST in connectedProviderIds) add(LibrarySourceMode.MDBLIST)
 }

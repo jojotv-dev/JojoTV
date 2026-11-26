@@ -10,9 +10,9 @@ import com.nuvio.tv.core.tracking.TrackingProviderId
 fun LibraryListTab.localizedMembershipTitle(): String {
     val provider = when (TrackingProviderId.fromStorage(trackingProviderId)) {
         TrackingProviderId.TRAKT -> stringResource(R.string.trakt_name)
-        TrackingProviderId.SIMKL -> stringResource(R.string.simkl_name)
         TrackingProviderId.MDBLIST -> stringResource(R.string.mdblist_name)
         null -> null
+        else -> null
     }
     return provider?.let { "$it · ${localizedTitle()}" } ?: localizedTitle()
 }
